@@ -5,6 +5,10 @@
 #define BRAILAB_WRAPPER_EXPORTS
 #include "brailab_wrapper.h"
 
+#ifndef BL_ITEM_INDEX
+#define BL_ITEM_INDEX 4
+#endif
+
 #include <windows.h>
 #include <mmsystem.h>
 #include <intrin.h>
@@ -112,11 +116,32 @@ struct StreamItem {
 // ------------------------------------------------------------
 // Command queue
 // ------------------------------------------------------------
-struct Cmd {
-	enum Type { CMD_SPEAK, CMD_QUIT } type = CMD_SPEAK;
-	uint32_t cancelSnapshot = 0;
+struct CmdPart {
+	enum Kind { PART_TEXT = 0, PART_INDEX = 1 } kind = PART_TEXT;
 	std::wstring text;
+	int index = 0;
+
+	CmdPart() = default;
+	static CmdPart Text(std::wstring t) {
+		CmdPart p;
+		p.kind = PART_TEXT;
+		p.text = std::move(t);
+		return p;
+	}
+	static CmdPart Index(int i) {
+		CmdPart p;
+		p.kind = PART_INDEX;
+		p.index = i;
+		return p;
+	}
+};
+
+struct Cmd {
+	enum Type { CMD_SPEAK, CMD_UTTERANCE, CMD_QUIT } type = CMD_SPEAK;
+	uint32_t cancelSnapshot = 0;
+	std::wstring text; // used for CMD_SPEAK
 	bool noIntonation = false;
+	std::vector<CmdPart> parts; // used for CMD_UTTERANCE
 };
 
 struct BL_STATE {
@@ -174,6 +199,10 @@ struct BL_STATE {
 	std::mutex cmdMtx;
 	std::condition_variable cmdCv;
 	std::deque<Cmd> cmdQ;
+	// Composite utterance builder (protected by cmdMtx)
+	bool buildActive = false;
+	bool buildNoIntonation = false;
+	std::vector<CmdPart> buildParts;
 	bool quitting = false;
 	std::thread worker;
 
@@ -596,6 +625,122 @@ static void workerLoop(BL_STATE* s) {
 			clearOutputQueueLocked(s);
 		}
 
+		// Composite utterance: multiple text chunks + index markers, single DONE at end.
+		if (cmd.type == Cmd::CMD_UTTERANCE) {
+			// Apply settings ON THIS THREAD (fixes TLS/thread-affinity engines).
+			{
+				std::lock_guard<std::mutex> tg(s->ttsMtx);
+				seh_ttsSetInt(s->ttsSetTempo, s->desiredTempo.load(std::memory_order_relaxed));
+				seh_ttsSetInt(s->ttsSetPitch, s->desiredPitch.load(std::memory_order_relaxed));
+				seh_ttsSetInt(s->ttsSetVolume, s->desiredVolume.load(std::memory_order_relaxed));
+			}
+
+			bool anyWork = false;
+			bool stopped = false;
+
+			for (const auto& part : cmd.parts) {
+				if (WaitForSingleObject(s->stopEvent, 0) == WAIT_OBJECT_0) { stopped = true; break; }
+				if (s->cancelToken.load(std::memory_order_relaxed) != snap) { stopped = true; break; }
+
+				if (part.kind == CmdPart::PART_INDEX) {
+					pushMarker(s, BL_ITEM_INDEX, part.index, gen);
+					anyWork = true;
+					continue;
+				}
+
+				std::wstring safePart = sanitizeForBrailab(part.text.c_str());
+				if (safePart.empty()) continue;
+				anyWork = true;
+
+				// Reset doneEvent per chunk (manual-reset event).
+				ResetEvent(s->doneEvent);
+				s->lastAudioTick.store(0, std::memory_order_relaxed);
+
+				int startOk = 0;
+				{
+					std::lock_guard<std::mutex> tg(s->ttsMtx);
+					if (cmd.noIntonation && s->ttsStartSayNoIntonationW) {
+						startOk = seh_ttsStartSayNoIntW(s->ttsStartSayNoIntonationW, safePart.c_str());
+					} else {
+						startOk = seh_ttsStartSayW(s->ttsStartSayW, safePart.c_str());
+					}
+				}
+
+				if (!startOk) {
+					s->activeGen.store(0, std::memory_order_relaxed);
+					pushMarker(s, BL_ITEM_ERROR, 1001, gen);
+					stopped = true;
+					break;
+				}
+
+				// Wait for done or stop/cancel, with watchdog
+				const auto t0 = std::chrono::steady_clock::now();
+				const auto maxDur = std::chrono::seconds(180);
+				HANDLE waits[2] = { s->doneEvent, s->stopEvent };
+
+				while (true) {
+					DWORD w = WaitForMultipleObjects(2, waits, FALSE, 50);
+
+					if (w == WAIT_OBJECT_0) {
+						// doneEvent
+						break;
+					}
+					if (w == WAIT_OBJECT_0 + 1) {
+						stopped = true;
+						break;
+					}
+
+					if (s->cancelToken.load(std::memory_order_relaxed) != snap) {
+						stopped = true;
+						break;
+					}
+
+					if (std::chrono::steady_clock::now() - t0 > maxDur) {
+						pushMarker(s, BL_ITEM_ERROR, 1002, gen);
+						stopped = true;
+						break;
+					}
+				}
+
+				if (stopped) {
+					// Stop inside worker thread (TLS-safe)
+					{
+						std::lock_guard<std::mutex> tg(s->ttsMtx);
+						seh_ttsStop(s->ttsStop);
+					}
+					break;
+				}
+
+				// Small tail-grace: wait until no new audio has arrived for ~30ms (max 250ms)
+				ULONGLONG graceStart = GetTickCount64();
+				while (true) {
+					ULONGLONG last = s->lastAudioTick.load(std::memory_order_relaxed);
+					ULONGLONG now = GetTickCount64();
+
+					if (last != 0 && (now - last) >= 30) break;
+					if ((now - graceStart) >= 250) break;
+
+					// allow cancel
+					if (WaitForSingleObject(s->stopEvent, 5) == WAIT_OBJECT_0) { stopped = true; break; }
+					if (s->cancelToken.load(std::memory_order_relaxed) != snap) { stopped = true; break; }
+				}
+				if (stopped) {
+					{
+						std::lock_guard<std::mutex> tg(s->ttsMtx);
+						seh_ttsStop(s->ttsStop);
+					}
+					break;
+				}
+			}
+
+			// gate off BEFORE DONE marker so no audio appears after DONE
+			s->activeGen.store(0, std::memory_order_relaxed);
+
+			// If we aborted (stop/cancel), we still emit DONE so reader doesn't wait forever.
+			pushMarker(s, BL_ITEM_DONE, 0, gen);
+			continue;
+		}
+
 		std::wstring safe = sanitizeForBrailab(cmd.text.c_str());
 		if (safe.empty()) {
 			s->activeGen.store(0, std::memory_order_relaxed);
@@ -829,6 +974,55 @@ extern "C" BL_API int __cdecl bl_startSpeakW(BL_STATE* s, const wchar_t* text, i
 		std::lock_guard<std::mutex> lk(s->cmdMtx);
 		s->cmdQ.push_back(std::move(cmd));
 	}
+	s->cmdCv.notify_one();
+	return 0;
+}
+
+extern "C" BL_API int __cdecl bl_beginUtterance(BL_STATE* s, int noIntonation) {
+	if (!s) return 1;
+	std::lock_guard<std::mutex> lk(s->cmdMtx);
+	s->buildParts.clear();
+	s->buildActive = true;
+	s->buildNoIntonation = (noIntonation != 0);
+	return 0;
+}
+
+extern "C" BL_API int __cdecl bl_addTextUtteranceW(BL_STATE* s, const wchar_t* text) {
+	if (!s || !text) return 1;
+	std::lock_guard<std::mutex> lk(s->cmdMtx);
+	if (!s->buildActive) return 2;
+	s->buildParts.push_back(CmdPart::Text(text));
+	return 0;
+}
+
+extern "C" BL_API int __cdecl bl_addIndexUtterance(BL_STATE* s, int index) {
+	if (!s) return 1;
+	std::lock_guard<std::mutex> lk(s->cmdMtx);
+	if (!s->buildActive) return 2;
+	s->buildParts.push_back(CmdPart::Index(index));
+	return 0;
+}
+
+extern "C" BL_API int __cdecl bl_commitUtterance(BL_STATE* s) {
+	if (!s) return 1;
+
+	Cmd cmd;
+	cmd.type = Cmd::CMD_UTTERANCE;
+	cmd.cancelSnapshot = s->cancelToken.load(std::memory_order_relaxed);
+
+	{
+		std::lock_guard<std::mutex> lk(s->cmdMtx);
+		if (!s->buildActive) return 2;
+
+		cmd.noIntonation = s->buildNoIntonation;
+		cmd.parts = std::move(s->buildParts);
+
+		s->buildParts.clear();
+		s->buildActive = false;
+
+		s->cmdQ.push_back(std::move(cmd));
+	}
+
 	s->cmdCv.notify_one();
 	return 0;
 }
