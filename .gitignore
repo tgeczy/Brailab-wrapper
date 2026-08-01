@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# Rights uncleared -- the 1996 CD material and anything extracted from it is
+# not ours to redistribute.  The emulator is; its inputs are not.
+BRAILAB-archive/
+jatekok_x/
+JATEKOK/
+
+# Rendered audio is the output of that same software, so it stays local too.
+*.wav
