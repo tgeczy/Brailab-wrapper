@@ -91,8 +91,10 @@ CLIP = 32767
 #: through the upper resonators than /i/ does -- so raw output level swings
 #: ~30 dB between utterances.  For a screen reader that is the thing to fix:
 #: matching loudness means matching RMS, not peak.  Chosen to leave room for
-#: the ~7x peak-to-RMS ratio of this material.
-TARGET_RMS = 4000.0
+#: the ~7x peak-to-RMS ratio of this material, and set to the level TTS.dll
+#: itself renders at -- measured 4588 RMS against our 4000 on the same
+#: sentence, which Tomi heard as the emulator sitting slightly quiet.
+TARGET_RMS = 4600.0
 
 #: Fraction of peak below which a sample counts as silence for that measurement.
 _SPEECH_FLOOR = 0.05
@@ -108,7 +110,7 @@ _SPEECH_FLOOR = 0.05
 #: that was fixed).  With the offset gone the sweep is nearly flat and gentle
 #: wins: none 10.04 dB LSD, 3000 Hz 10.03, 800 Hz 10.36.  Tomi then picked the
 #: no-tilt render by ear, so it is off entirely.
-SOURCE_TILT_HZ = 450.0
+SOURCE_TILT_HZ = None
 
 #: Exponent applied to the frame amplitude, compressing its dynamic range.
 #: MAME's ampl_table spans ~42 dB across the 4-bit AM field, which makes the
@@ -193,7 +195,7 @@ CODEC_OFFSET = 0
 #: the formants rather than only at them -- five formants score 4x closer to the
 #: real engine (0.00145 vs 0.00035), and Tomi picked a five-formant render by
 #: ear.  Optimise against the metric that matches the complaint.
-MALE_FORMANTS = 4
+MALE_FORMANTS = 5
 
 #: Parameters are held constant over a block this long and interpolated between
 #: blocks.  The datasheet is specific about this: amplitude, pitch, formant
