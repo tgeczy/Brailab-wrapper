@@ -29,9 +29,23 @@ through the ordinary bl_startSpeakW path, which the wrapper does capture.
 Measured results
 ----------------
 Bit 4 is not optional: 0x0F and 0x07 render *nothing*, which is exactly why
-ModeSpec force-ORs 0x10.  Every other bit changes the audio -- 0x1B, 0x1D,
-0x1E, 0x3F, 0x5F, 0x9F and 0xFF all produce distinct output.  So there are at
-least seven live mode bits and only one of them was ever exposed.
+ModeSpec force-ORs 0x10.
+
+Everything else is inert, for speech at least.  An earlier reading of this
+sweep concluded all seven bits were live, on the evidence that each mode's
+audio hashed differently -- but the capture is real time and jittery, and the
+SAME mode hashes differently on every run.  Aligned RMS difference puts the
+run-to-run noise floor at -4.4 dB and every mode other than 0x17 between -0.4
+and -7.4 dB of the base: entirely overlapping.  Only bit 3 survives, and it is
+the one that was already documented.
+
+So: never use a hash to detect a difference in a real-time capture, and always
+run the same condition twice before believing a difference between two others.
+Bits 0 and 1 are tested inside String_to_TTSText, but they gate per-character
+transforms, so they most likely shape the output text buffer, not the voice.
+
+Which settles a bigger question: furcsa is not reachable from TTS.dll.  The
+emulated TALKHUN in talkhun_emu/ remains the only way to get it.
 """
 import ctypes
 import hashlib
