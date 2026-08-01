@@ -10,3 +10,22 @@ JATEKOK/
 # Rendered audio is the output of that same software, so it stays local too.
 *.wav
 mode_sweep/
+
+# NVDA add-on: build output and the packaged bundle.  The bundle contains
+# TTS.dll and the ROM images, which are the BraiLab authors' and not cleared
+# for redistribution -- it is built for release, never committed.
+nvda_driver/**/build/
+nvda_driver/**/dist/
+*.nvda-addon
+nvda_driver/**/synthDrivers/Brailab/TTS.dll
+nvda_driver/**/synthDrivers/Brailab/*.BIN
+
+# Superseded by NVDA 2026.1's own SynthDriverProxy32 bridge: brailab.py imports
+# _bridge.clients.synthDriverHost32 and never touches any of this.  build.cmd
+# also still calls py -3.14-32, which is not installed.  Kept on disk for now,
+# out of the repo.
+nvda_driver/**/synthDrivers/_ipc.py
+nvda_driver/**/synthDrivers/host_brailab32.py
+nvda_driver/**/synthDrivers/brailab_host32.exe
+nvda_driver/**/brailab_host32.spec
+nvda_driver/**/build.cmd
