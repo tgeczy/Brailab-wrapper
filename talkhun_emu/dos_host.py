@@ -264,6 +264,10 @@ class DosHost:
         self._pending_irq = None
         self._no_irq = False
         self._slice_end = None
+        #: Block on keyboard reads instead of returning nothing.
+        #: Interactive callers set this; headless runs must not,
+        #: or a program waiting for input never terminates.
+        self.block_on_input = False
         self._irq0_tick = -1
         self._ticks = 0
         self._build()
@@ -766,12 +770,30 @@ class DosHost:
         elif ah == 0x0F:
             uc.reg_write(UC_X86_REG_AX, (SCREEN_COLS << 8) | 0x03)
 
+    def _wait_for_key(self):
+        """Re-execute the current INT so a blocking read really blocks.
+
+        Unicorn's hook leaves IP after the `int n`, so stepping it back two
+        bytes makes the guest ask again on the next instruction.  Without this
+        a wait-for-key returns immediately with whatever was in AX, which the
+        program takes for a keystroke -- a typing tutor reads a stream of
+        garbage and a menu picks its own entries.
+
+        Only for interactive use: a headless run has nobody to press anything,
+        so there it still returns nothing and lets the program finish.
+        """
+        if not self.block_on_input:
+            return False
+        uc = self.uc
+        uc.reg_write(UC_X86_REG_IP, (uc.reg_read(UC_X86_REG_IP) - 2) & 0xFFFF)
+        return True
+
     def _bios_key(self, ah):
         uc = self.uc
         if ah in (0x00, 0x10):
             if self.keys:
                 uc.reg_write(UC_X86_REG_AX, self.keys.pop(0))
-            else:
+            elif not self._wait_for_key():
                 uc.reg_write(UC_X86_REG_AX, 0)
         elif ah in (0x01, 0x11):
             f = uc.reg_read(UC_X86_REG_EFLAGS)
@@ -818,6 +840,8 @@ class DosHost:
             self._console_out(buf[:end if end >= 0 else 0]
                               .decode('cp852', 'replace'))
         elif ah in (0x01, 0x07, 0x08):          # character input
+            if not self.keys and self._wait_for_key():
+                return
             # Interactive programs sit on these waiting for a keypress; with no
             # handler they never advance past their first prompt and never
             # speak.  Returns 0 when the queue is empty rather than blocking,

@@ -164,6 +164,7 @@ class Session:
         self.host, self.dev = brailab_device.boot(
             os.path.dirname(self.path),
             archive_dir=os.environ.get('BRAILAB_ARCHIVE'), config=cfg)
+        self.host.block_on_input = True   # a real user is here to type
         self.dev.reset()
         self.seen = 0
         self.quiet = 0
