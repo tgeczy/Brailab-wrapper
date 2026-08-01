@@ -57,6 +57,14 @@ MAX_LEAD_S = 6.0
 #: a flush whenever the buffer dips is the surest way to produce them.
 MIN_BATCH = 8
 
+#: Holding Ctrl skips speech.  The real card let you hear the leading edge of
+#: what you were skipping past -- a whispery blip per fragment -- so you knew
+#: the machine was still working rather than dead.  Silence would be easier
+#: and worse.
+BLIP_S = 0.035
+BLIP_LEVEL = 0.45
+BLIP_LEAD_S = 0.12
+
 #: Playback format.  The synthesiser works at 10 kHz like the chip; the card
 #: gets 44.1 stereo because that is what plays cleanly everywhere.
 OUT_RATE = 44100
@@ -179,6 +187,8 @@ class Session:
         self.quiet = 0
         self.last_pitch = None
         self._last_len = 0
+        self.ctrl_held = _ctrl_watcher()
+        self._shutup = False
         # A second engine, only for menu prompts.  Speaking them through the
         # guest would write on the game's screen and disturb what the resident
         # driver is tracking; this one is independent and sounds identical.
@@ -237,6 +247,41 @@ class Session:
         except Exception:
             pass
 
+    def check_shutup(self):
+        """Ctrl skips through speech, as the real card did.
+
+        Tomi's account of the hardware is precise and worth following exactly:
+        holding Ctrl did NOT pause the program.  The game kept running at its
+        own pace, the driver kept handing over frames, and those frames were
+        thrown away -- but you heard the leading edge of each one as a blip, a
+        whispery stutter that told you that you were skipping rather than that
+        the machine had died.
+
+        So: discard the backlog, leave the guest running, and play a few
+        milliseconds off the front of whatever is being skipped.
+        """
+        if not self.ctrl_held():
+            self._shutup = False
+            return False
+        if not self._shutup:
+            self._shutup = True
+            self.speaker.flush()
+        new = self.dev.seq[self.seen:]
+        self.seen = len(self.dev.seq)
+        self._last_len = len(self.dev.seq)
+        frames = [it for it in new if it[0] == 'frame']
+        if frames and self.speaker.seconds_queued < BLIP_LEAD_S:
+            head = frames[:2]
+            if self.last_pitch is not None:
+                head = [('pitch', self.last_pitch)] + head
+            try:
+                pcm = synth.render(head, furcsa=self.furcsa)
+                n = int(synth.SAMPLE_RATE * BLIP_S)
+                self.speaker.play((pcm[:n] * BLIP_LEVEL).astype(pcm.dtype))
+            except Exception:
+                pass
+        return True
+
     # -- driver control --------------------------------------------------
     def apply(self, seq):
         try:
@@ -294,9 +339,12 @@ class Session:
         self.say_ui('Indul: %s.' % os.path.basename(self.path))
         try:
             while self.host.exited is None:
+                self.check_shutup()
                 # throttle on how much audio is queued, not on the clock
                 while self.speaker.seconds_queued > MAX_LEAD_S:
                     if msvcrt and msvcrt.kbhit():
+                        break
+                    if self.check_shutup():
                         break
                     time.sleep(0.02)
                 if msvcrt:
@@ -313,7 +361,8 @@ class Session:
                     break
                 # when the card is nearly dry, take whatever is ready rather
                 # than holding out for a full batch
-                self.pump_speech(force=self.quiet >= QUIET_SLICES)
+                if not self.check_shutup():
+                    self.pump_speech(force=self.quiet >= QUIET_SLICES)
         finally:
             self.pump_speech(force=True)
             self.speaker.drain()
@@ -340,6 +389,27 @@ def read_key(block=False):
     if c in SIMPLE:
         return SIMPLE[c]
     return ord(c[0]) & 0xFF
+
+
+def _ctrl_watcher():
+    """Return a callable reporting whether Ctrl is held in this console.
+
+    msvcrt never reports a bare Ctrl -- it is a modifier, so getch() does not
+    fire for it -- but Windows will say so directly.  The foreground check
+    keeps a Ctrl pressed in some other window from silencing the game.
+    """
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        def held():
+            if kernel32.GetConsoleWindow() != user32.GetForegroundWindow():
+                return False
+            return bool(user32.GetAsyncKeyState(0x11) & 0x8000)   # VK_CONTROL
+        return held
+    except Exception:
+        return lambda: False
 
 
 #: AX values the menu steers by.
