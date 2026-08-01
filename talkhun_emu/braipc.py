@@ -48,8 +48,13 @@ QUIET_SLICES = 1
 #: buffer whenever synthesis takes a moment, and every one of those gaps is
 #: heard as the speech cutting out mid-word.  Running ahead into a buffer and
 #: throttling on its depth gives smooth speech and still-bounded latency.
-LEAD_S = 1.2
-MAX_LEAD_S = 2.5
+LEAD_S = 1.5
+MAX_LEAD_S = 6.0
+#: Never render a batch smaller than this unless the guest has actually gone
+#: quiet.  Each render() call restarts the resonator state, so a run of one-
+#: and two-frame batches is heard as exactly the stutter it is -- and forcing
+#: a flush whenever the buffer dips is the surest way to produce them.
+MIN_BATCH = 8
 
 #: Playback format.  The synthesiser works at 10 kHz like the chip; the card
 #: gets 44.1 stereo because that is what plays cleanly everywhere.
@@ -193,7 +198,8 @@ class Session:
             return
         self.quiet = 0
         if not force and nframes < BATCH_FRAMES:
-            return
+            if not (self.speaker.starved and nframes >= MIN_BATCH):
+                return
         stamps = self.dev.seq_time[self.seen:len(self.dev.seq)]
         self.seen = len(self.dev.seq)
         for kind, val in new:
@@ -289,8 +295,7 @@ class Session:
                     break
                 # when the card is nearly dry, take whatever is ready rather
                 # than holding out for a full batch
-                self.pump_speech(force=self.speaker.starved
-                                 or self.quiet >= QUIET_SLICES)
+                self.pump_speech(force=self.quiet >= QUIET_SLICES)
         finally:
             self.pump_speech(force=True)
             self.speaker.drain()
