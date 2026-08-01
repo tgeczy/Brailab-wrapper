@@ -130,13 +130,23 @@ ASPIRATION = 0.0
 #:   'offset'     -- PI is a per-frame deviation from the utterance's anchor
 #:                   pitch, recomputed each frame.  THIS IS THE CHIP'S BEHAVIOUR.
 #:   'cumulative' -- MAME's MEA-8000 model, pitch += PI every frame.
-#: MAME accumulates, and copying that gave a 37-42% monotonic pitch sag across
-#: an utterance -- heard by Tomi as "a broken cassette", a tape slowing down.
+#: MAME accumulates, and copying that gave a 37-42% monotonic pitch sag -- heard
+#: by Tomi as "a broken cassette", a tape slowing down.  That verdict was real
+#: but the experiment was not: it was measured on "mama.", a SINGLE intonation
+#: unit, where there is no second pitch mark to reload the register and the
+#: increments can only pile up.  On multi-clause text each pitch mark reloads
+#: the anchor, every clause gets its own contour, and nothing accumulates
+#: across the utterance.  Measured against TTS.dll on the same sentences,
+#: cumulative reproduces its shape including the clause-final fall (ours 71 Hz
+#: against its 70), where offset renders a dead-flat plateau spanning 4 Hz
+#: against TTS.dll's 157.  The PI field is almost entirely 0 and +/-1, so as
+#: offsets it can only ever move +/-4 Hz -- it is an increment, which is what
+#: the MEA-8000 pitch register does: load the anchor, add PI each frame.
 #: Measuring the real engine settled it: its F0 is essentially FLAT (mama.
 #: 119/116/115/111/116/119/116/115/115, mean 116, 7% spread) and sits right on
 #: the anchor of 46 units x 2.5 Hz = 115 Hz.  With PI as an offset the dominant
 #: codes 30 and 31 map to -2 and -1 Hz, i.e. 113-114 Hz -- flat, and matching.
-PITCH_MODE = 'offset'
+PITCH_MODE = 'cumulative'
 
 #: Multiplier on every formant bandwidth.  BW8_TAB is reconstructed, and if the
 #: real values are wider than assumed the cascade turns into a row of sharp
