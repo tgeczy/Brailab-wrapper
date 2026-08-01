@@ -14,6 +14,7 @@ Why this exists:
 
 - `brailab_wrapper.dll` (built from the sources here)
 - A Python NVDA synth driver (`synthDrivers/brailab.py`) that uses the wrapper
+- **`talkhun_emu/` — an emulator of the BraiLab PC itself** (see below)
 
 ## What’s NOT in this repo
 
@@ -45,6 +46,41 @@ The wrapper also:
 ### Runtime
 - NVDA (the driver is written for modern NVDA versions; tested with NVDA 2025.x)
 - Brailab `tts.dll` (provided via the NVDA driver release package, not this repo)
+
+## `talkhun_emu/` — the BraiLab PC emulator
+
+The wrapper above gives you the *voice*. This gives you the *machine*.
+
+It runs the DOS programs written for BraiLab PC in the late 80s and 90s, with
+the speech coming out of your speakers — and it does so by loading the original
+**`TALKHUN.COM`** and running it, resident, inside an emulated DOS. That is the
+real 1991 code, not a reimplementation. It watches `INT 10h` and speaks whatever
+a program prints, exactly as it did on real hardware; the I2C traffic it
+bit-bangs at the parallel port is decoded here and synthesised by a software
+PCF-8200.
+
+None of those programs were written to know about speech. They just printed,
+and something else did the talking.
+
+```
+python talkhun_emu/braipc.py            # browse for a program and run it
+python talkhun_emu/speak.py "mama."     # just the synthesiser
+```
+
+`F12` opens a settings menu — tempo, pitch, furcsa — which speaks itself, so it
+needs no screen reader. Holding `Ctrl` skips through speech the way the real
+card did, blips and all.
+
+**`TALKHUN.COM` is not in this repo.** It is Vaspöri Teréz and Arató András's
+work, not ours to redistribute; point `BRAILAB_ARCHIVE` at a folder containing
+it.
+
+**The games are not here either.** They are Hungarian blind-community software
+from the 1990s and belong in a public archive rather than in this repository.
+
+The technical basis is Arató's 1992 candidate dissertation, *A BraiLab beszélő
+számítógépcsalád*, public at the Hungarian Electronic Library:
+<https://mek.oszk.hu/02000/02025/02025.htm>
 
 ## Building `brailab_wrapper.dll` (32-bit)
 
