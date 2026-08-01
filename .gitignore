@@ -9,3 +9,4 @@ JATEKOK/
 
 # Rendered audio is the output of that same software, so it stays local too.
 *.wav
+mode_sweep/
