@@ -539,11 +539,30 @@ class DosHost:
                     uc.emu_stop()
 
     # -- program loading ---------------------------------------------------
-    def _make_psp(self, seg, tail=b''):
+    def _make_env(self, path):
+        r"""Build a DOS 3+ environment block and return its segment.
+
+        The tail matters more than the variables: after the strings and their
+        terminator comes a word 0001 and the program's own full path, which is
+        how a program finds its own image on disk.  A self-extracting archive
+        needs that to read the archive out of itself -- with the environment
+        segment left at zero it prints its banner, fails to open anything and
+        exits, which is indistinguishable from a corrupt archive.
+        """
+        name = os.path.basename(path).upper().encode('cp852', 'replace')
+        env = (b'PATH=C:\\\x00COMSPEC=C:\\COMMAND.COM\x00\x00'
+               + struct.pack('<H', 1) + b'C:\\' + name + b'\x00')
+        seg = self.mem.alloc((len(env) + 15) // 16 + 1)
+        if seg is None:
+            return 0
+        self.uc.mem_write(seg * 16, env)
+        return seg
+
+    def _make_psp(self, seg, tail=b'', env_seg=0):
         psp = bytearray(0x100)
         psp[0:2] = b'\xcd\x20'
         psp[2:4] = struct.pack('<H', LAST_SEG)
-        psp[0x2C:0x2E] = struct.pack('<H', 0)
+        psp[0x2C:0x2E] = struct.pack('<H', env_seg)
         psp[0x50:0x53] = b'\xcd\x21\xcb'
         psp[0x80] = min(len(tail), 0x7E)
         psp[0x81:0x81 + len(tail)] = tail[:0x7E]
@@ -566,7 +585,7 @@ class DosHost:
             if psp_seg is None:
                 raise DosError('out of memory loading %s' % path)
             load_seg = psp_seg + 0x10
-            self._make_psp(psp_seg, tail)
+            self._make_psp(psp_seg, tail, self._make_env(path))
             self.uc.mem_write(load_seg * 16, image)
             # apply relocations
             for i in range(nreloc):
@@ -581,7 +600,7 @@ class DosHost:
         psp_seg = self.mem.alloc(need)
         if psp_seg is None:
             raise DosError('out of memory loading %s' % path)
-        self._make_psp(psp_seg, tail)
+        self._make_psp(psp_seg, tail, self._make_env(path))
         self.uc.mem_write(psp_seg * 16 + 0x100, data)
         return psp_seg, 0x100, psp_seg, 0xFFFE, psp_seg
 
@@ -890,9 +909,45 @@ class DosHost:
             # calls vanish into the shim.
             self.hooked_vectors.add(al)
             ok()
-        elif ah == 0x3C:                        # create file
+        elif ah == 0x39:                        # create directory
+            try:
+                os.makedirs(self._path(ds, dx), exist_ok=True)
+                ok()
+            except OSError:
+                uc.reg_write(UC_X86_REG_AX, 3)
+                self._cf(True)
+        elif ah == 0x3A:                        # remove directory
+            try:
+                os.rmdir(self._path(ds, dx))
+                ok()
+            except OSError:
+                uc.reg_write(UC_X86_REG_AX, 3)
+                self._cf(True)
+        elif ah == 0x41:                        # delete file
+            try:
+                os.remove(self._path(ds, dx))
+                ok()
+            except OSError:
+                uc.reg_write(UC_X86_REG_AX, 2)
+                self._cf(True)
+        elif ah == 0x57:                        # get/set file date and time
+            # Nothing here cares what the timestamp is, but a self-extracting
+            # archive stamps every file it writes and treats a failure as a
+            # failed extraction.
+            if al == 0x00:
+                uc.reg_write(UC_X86_REG_CX, 0x6000)     # 12:00:00
+                uc.reg_write(UC_X86_REG_DX, 0x2101)     # 1 Jan 1996
+            ok()
+        elif ah in (0x3C, 0x5B):                # create file / create new
             try:
                 p = self._path(ds, dx)
+                if ah == 0x5B and os.path.exists(p):
+                    uc.reg_write(UC_X86_REG_AX, 80)     # already exists
+                    self._cf(True)
+                    return
+                d = os.path.dirname(p)
+                if d:
+                    os.makedirs(d, exist_ok=True)
                 f = open(p, 'w+b')
                 h = self.next_handle
                 self.next_handle += 1
