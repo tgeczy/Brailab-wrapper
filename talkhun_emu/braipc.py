@@ -57,11 +57,35 @@ MAX_LEAD_S = 6.0
 #: a flush whenever the buffer dips is the surest way to produce them.
 MIN_BATCH = 8
 
+def _blip(pcm):
+    """Shape a skipped fragment the way an aborted transmission sounded.
+
+    TALKHUN's send loop tests the stop key before every frame (0x521d) and on
+    a hit jumps straight to `ret`, abandoning the burst -- which also skips the
+    closing `00 A0` control write the chip normally gets at 0x523d.  So the
+    part is left mid-utterance with no stop command and no next frame to
+    interpolate towards, and the sound decays instead of ending.  A hard cut
+    gives a click; the decay is what Tomi remembers as whispery.
+    """
+    import numpy as np
+    n = min(len(pcm), int(synth.SAMPLE_RATE * BLIP_S))
+    if n <= 0:
+        return pcm[:0]
+    seg = pcm[:n].astype(np.float64) * BLIP_LEVEL
+    fade = int(synth.SAMPLE_RATE * BLIP_FADE_S)
+    if fade > 1 and n > fade:
+        # raised cosine, so the tail rolls off rather than stopping dead
+        seg[-fade:] *= 0.5 * (1.0 + np.cos(np.linspace(0.0, np.pi, fade)))
+    return seg.astype(pcm.dtype)
+
+
 #: Holding Ctrl skips speech.  The real card let you hear the leading edge of
 #: what you were skipping past -- a whispery blip per fragment -- so you knew
 #: the machine was still working rather than dead.  Silence would be easier
 #: and worse.
-BLIP_S = 0.035
+BLIP_S = 0.055
+#: Most of the blip is its decay -- see _blip().
+BLIP_FADE_S = 0.040
 BLIP_LEVEL = 0.45
 BLIP_LEAD_S = 0.12
 
@@ -275,9 +299,7 @@ class Session:
             if self.last_pitch is not None:
                 head = [('pitch', self.last_pitch)] + head
             try:
-                pcm = synth.render(head, furcsa=self.furcsa)
-                n = int(synth.SAMPLE_RATE * BLIP_S)
-                self.speaker.play((pcm[:n] * BLIP_LEVEL).astype(pcm.dtype))
+                self.speaker.play(_blip(synth.render(head, furcsa=self.furcsa)))
             except Exception:
                 pass
         return True
