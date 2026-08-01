@@ -34,6 +34,9 @@ STATUS_READY = 0x20         # bit 4 clear, bit 5 still healthy
 
 #: Wall-clock a frame represents, before the FS/FD multipliers.
 FRAME_MS = 12.8
+#: How far ahead of real time the busy line may run -- the adapter's frame
+#: buffer.  Must stay under the driver's four-BIOS-tick (~220 ms) poll timeout.
+FIFO_S = 0.100
 
 #: Control sequences the driver is configured with.  On a real machine these
 #: arrived as `copy BIOS10BE com4` lines in HUN.BAT; the names are Hungarian,
@@ -111,14 +114,27 @@ class BraiLabDevice:
         self._data = data
 
     def _start(self):
+        """START -- or a repeated START, which also ends the previous transfer.
+
+        Discarding whatever was in flight here loses every transaction the
+        driver closes with Sr rather than STOP, and loses it without a trace:
+        the frames that do survive still decode perfectly, so the stream looks
+        healthy and is merely incomplete.
+        """
+        self._finish()
         self.bits = []
         self._cur = []
         self._active = True
 
     def _stop(self):
-        """Classify a completed transaction by its length, as the engine does."""
+        self._finish()
         self.bits = []
-        body, self._cur, self._active = self._cur[1:], [], False
+        self._cur = []
+        self._active = False
+
+    def _finish(self):
+        """Classify a completed transaction by its length, as the engine does."""
+        body = self._cur[1:]                # drop the 0x20 device address
         if not body:
             return
         if len(body) == 5:
@@ -137,11 +153,18 @@ class BraiLabDevice:
             self._singles += 1
 
     def _speak(self, frame):
-        """Charge the adapter for the time this frame will take to say."""
+        """Charge the adapter for the time this frame will take to say.
+
+        Bounded by a small FIFO, as the real part had.  Charging every queued
+        frame in full lets the busy line run arbitrarily far ahead of the
+        guest's clock, and the driver's ready poll gives up after four BIOS
+        ticks -- so an over-faithful busy line silently drops frames mid-word
+        and skips the start sequence that carries pitch.
+        """
         d = decode_frame(frame)
         ms = FRAME_MS * FD_MULT[d['FD']]
         base = max(self.now, self._busy_until)
-        self._busy_until = base + ms / 1000.0
+        self._busy_until = min(base + ms / 1000.0, self.now + FIFO_S)
 
     # -- the handshake -----------------------------------------------------
     def status(self):
@@ -160,6 +183,22 @@ class BraiLabDevice:
         return STATUS_READY
 
     def rearm(self):
+        self._armed = True
+
+    def reset(self):
+        """Forget captured traffic, including the settings/pitch parity.
+
+        `_singles` decides which of a start sequence's two single-byte writes
+        is the pitch; carrying it over from the driver's own configuration
+        traffic inverts that for the whole session.
+        """
+        for lst in (self.frames, self.controls, self.pitches, self.seq,
+                    self.utterances, self.bytes_out):
+            del lst[:]
+        self._singles = 0
+        self._cur = []
+        self.bits = []
+        self._busy_until = 0.0
         self._armed = True
 
 
@@ -198,8 +237,7 @@ def boot(games_dir, archive_dir=None, talkhun='TALKHUN.COM', cpu_hz=None,
     if res != 'tsr':
         raise RuntimeError('%s did not go resident (got %r)' % (talkhun, res))
 
-    dev.frames.clear()          # drop the driver's own init frame
-    dev.utterances.clear()
     for seq in config:
         host.send_com4(seq)
+    dev.reset()                 # the driver's own init traffic is not speech
     return host, dev
