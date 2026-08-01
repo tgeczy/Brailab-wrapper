@@ -104,8 +104,10 @@ TRAMPOLINED = (0x08, 0x09, 0x10, 0x13, 0x14, 0x16, 0x17, 0x1A,
 MARKER_BASE = 0xF0
 
 
-class DosError(RuntimeError):
-    pass
+class DosError(OSError):
+    """Derived from OSError so a refused path reaches the guest as a failed
+    open rather than tearing down the emulator: every file handler already
+    turns an OSError into the appropriate DOS error code."""
 
 
 def render_speaker(events, end_time, rate=44100, level=0.22):
@@ -672,10 +674,28 @@ class DosHost:
         self.uc.reg_write(UC_X86_REG_EFLAGS, (f | 1) if on else (f & ~1))
 
     def _path(self, seg, off):
+        r"""Map a guest filename into the one directory the guest can see.
+
+        The drive letter is dropped and everything lands under `cwd`, so the
+        program's whole world is the folder it was launched from.  Any attempt
+        to climb out of it with `..` is refused rather than clamped, because a
+        program that asked for C:\..\..\AUTOEXEC.BAT and silently got a file in
+        its own directory would be a stranger bug than an error.
+
+        This matters more since the host learned to create and delete files:
+        without it a thirty-year-old binary could reach anywhere on the disk.
+        """
         raw = bytes(self.uc.mem_read(seg * 16 + off, 128))
-        name = raw[:raw.find(b'\0')].decode('cp852', 'replace')
+        end = raw.find(b'\0')
+        name = raw[:end if end >= 0 else len(raw)].decode('cp852', 'replace')
         name = name.replace('\\', os.sep).split(':')[-1].lstrip(os.sep)
-        return os.path.join(self.cwd, name)
+        root = os.path.abspath(self.cwd)
+        full = os.path.abspath(os.path.join(root, name))
+        if os.path.normcase(full) != os.path.normcase(root) and \
+                not os.path.normcase(full).startswith(
+                    os.path.normcase(root) + os.sep):
+            raise DosError('guest path escapes %s: %r' % (root, name))
+        return full
 
     def _dispatch_guest(self, intno):
         """Invoke a guest-installed handler the way a real INT would."""
