@@ -35,10 +35,21 @@ except ImportError:                                   # pragma: no cover
 #: enough that the emulator is not spending all its time restarting.
 SLICE_S = 0.20
 #: Speak a batch once this many frames are queued, or once the guest falls
-#: quiet -- synthesising every frame on its own would break the filter state
-#: mid-word, and waiting for the whole utterance would answer too late.
-BATCH_FRAMES = 60
-QUIET_SLICES = 2
+#: quiet.  Small, because a batch is also the unit of latency: the sound card
+#: is draining continuously and a batch that takes too long to assemble
+#: arrives after the buffer has already run dry.
+BATCH_FRAMES = 16
+QUIET_SLICES = 1
+
+#: Seconds of audio to keep queued ahead of the speaker.  THIS is what paces
+#: the guest, not the wall clock.  The emulator runs about three times faster
+#: than the machine it imitates, so left alone it produces speech faster than
+#: the card can play it; but pacing it to wall-clock time instead starves the
+#: buffer whenever synthesis takes a moment, and every one of those gaps is
+#: heard as the speech cutting out mid-word.  Running ahead into a buffer and
+#: throttling on its depth gives smooth speech and still-bounded latency.
+LEAD_S = 1.2
+MAX_LEAD_S = 2.5
 
 #: Playback format.  The synthesiser works at 10 kHz like the chip; the card
 #: gets 44.1 stereo because that is what plays cleanly everywhere.
@@ -106,6 +117,15 @@ class Speaker:
         with self.lock:
             return sum(len(c) for c in self.buf)
 
+    @property
+    def seconds_queued(self):
+        return self.pending / float(self.rate)
+
+    @property
+    def starved(self):
+        """True when the card is close to running out of audio to play."""
+        return self.seconds_queued < LEAD_S
+
     def drain(self, timeout=20.0):
         end = time.time() + timeout
         while self.pending and time.time() < end:
@@ -126,18 +146,23 @@ class Speaker:
 class Session:
     """A resident TALKHUN, a guest program, and the plumbing between them."""
 
-    def __init__(self, path, speaker):
+    def __init__(self, path, speaker, trace=False):
         self.path = os.path.abspath(path)
         self.speaker = speaker
+        self.trace = trace
         self.tempo = 1                                   # index into TEMPOS
         self.pitch = 1                                   # index into PITCHES
         self.furcsa = False
         cfg = [brailab_device.ESC_DEFAULTS, brailab_device.ESC_BIOS10_ON]
+        # The driver is not ours to ship, so it is looked up rather than
+        # bundled; point BRAILAB_ARCHIVE at wherever TALKHUN.COM lives.
         self.host, self.dev = brailab_device.boot(
-            os.path.dirname(self.path), config=cfg)
+            os.path.dirname(self.path),
+            archive_dir=os.environ.get('BRAILAB_ARCHIVE'), config=cfg)
         self.dev.reset()
         self.seen = 0
         self.quiet = 0
+        self.last_pitch = None
         # A second engine, only for menu prompts.  Speaking them through the
         # guest would write on the game's screen and disturb what the resident
         # driver is tracking; this one is independent and sounds identical.
@@ -153,15 +178,37 @@ class Session:
             pass
 
     def pump_speech(self, force=False):
-        """Hand any new adapter traffic to the synthesiser."""
+        """Hand any new adapter traffic to the synthesiser.
+
+        A batch is rendered on its own, so it has to be told where the pitch
+        was left: `render` starts from a default anchor when a sequence carries
+        no pitch mark, and since a mark only appears at the start of an
+        intonation unit, every batch after the first would otherwise jump back
+        to that default part-way through a word.
+        """
         new = self.dev.seq[self.seen:]
         nframes = sum(1 for k, _ in new if k == 'frame')
         if not nframes:
+            self.quiet += 1
             return
-        self.quiet = 0 if nframes else self.quiet + 1
-        if not force and nframes < BATCH_FRAMES and self.quiet < QUIET_SLICES:
+        self.quiet = 0
+        if not force and nframes < BATCH_FRAMES:
             return
+        stamps = self.dev.seq_time[self.seen:len(self.dev.seq)]
         self.seen = len(self.dev.seq)
+        for kind, val in new:
+            if kind == 'pitch':
+                self.last_pitch = val
+        if new[0][0] != 'pitch' and self.last_pitch is not None:
+            new = [('pitch', self.last_pitch)] + list(new)
+        if self.trace and stamps:
+            # How long we sat on speech the 1991 driver had already produced.
+            # Anything here is the emulator's latency, not the program's.
+            print('[speech] %d frames, driver emitted %.2f-%.2fs, flushed at '
+                  '%.2fs, held %.2fs, buffer %.2fs'
+                  % (nframes, stamps[0], stamps[-1], self.host.vtime,
+                     self.host.vtime - stamps[-1],
+                     self.speaker.seconds_queued))
         try:
             self.speaker.play(synth.render(new, furcsa=self.furcsa))
         except Exception:
@@ -221,16 +268,13 @@ class Session:
     def run(self):
         self.host.start(self.path)
         self.say_ui('Indul: %s.' % os.path.basename(self.path))
-        # The emulator runs about three times faster than the machine it is
-        # imitating, so pace guest time against the wall clock.  Otherwise the
-        # program races ahead of the speech describing it, which on real
-        # hardware could not happen -- the busy line saw to that.
-        wall0, guest0 = time.time(), self.host.vtime
         try:
             while self.host.exited is None:
-                ahead = (self.host.vtime - guest0) - (time.time() - wall0)
-                if ahead > SLICE_S:
-                    time.sleep(min(ahead, 0.25))
+                # throttle on how much audio is queued, not on the clock
+                while self.speaker.seconds_queued > MAX_LEAD_S:
+                    if msvcrt and msvcrt.kbhit():
+                        break
+                    time.sleep(0.02)
                 if msvcrt:
                     while msvcrt.kbhit():
                         k = read_key()
@@ -243,7 +287,10 @@ class Session:
                 except Exception as e:
                     print('\nguest fault: %s' % e)
                     break
-                self.pump_speech()
+                # when the card is nearly dry, take whatever is ready rather
+                # than holding out for a full batch
+                self.pump_speech(force=self.speaker.starved
+                                 or self.quiet >= QUIET_SLICES)
         finally:
             self.pump_speech(force=True)
             self.speaker.drain()
@@ -278,8 +325,9 @@ K_ENTER = 0x1C0D
 
 
 def main():
-    if len(sys.argv) > 1:
-        path = sys.argv[1]
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    if args:
+        path = args[0]
     else:
         path = input('Program path: ').strip('" ')
     if not os.path.exists(path):
@@ -289,9 +337,14 @@ def main():
     print('F12 = settings, Escape in the menu goes back, Ctrl+C quits.')
     speaker = Speaker()
     try:
-        Session(path, speaker).run()
+        Session(path, speaker, trace='--trace' in sys.argv).run()
     except KeyboardInterrupt:
         pass
+    except (RuntimeError, IOError, OSError) as e:
+        print('\ncould not start the speech driver: %s' % e)
+        print('TALKHUN.COM is not distributed with this emulator.  Put it in')
+        print('a folder and point BRAILAB_ARCHIVE at it, e.g.')
+        print('   set BRAILAB_ARCHIVE=C:\\path\\to\\brailab')
     finally:
         speaker.close()
     print('\ndone.')

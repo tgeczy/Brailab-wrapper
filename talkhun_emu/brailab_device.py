@@ -66,6 +66,7 @@ class BraiLabDevice:
         self.controls = []
         self.pitches = []
         self.seq = []                   # ordered ('pitch'|'ctrl'|'frame', ...)
+        self.seq_time = []              # guest time each entry was emitted
         self.utterances = []            # [(pitch, [frames], ctrl)] per unit
         self._singles = 0
         self._busy_until = 0.0
@@ -133,22 +134,32 @@ class BraiLabDevice:
         self._active = False
 
     def _finish(self):
-        """Classify a completed transaction by its length, as the engine does."""
+        """Classify a completed transaction by its length, as the engine does.
+
+        Each entry is stamped with the guest time the driver emitted it.  That
+        is what separates "the emulator was slow to speak" from "the driver
+        really did wait": the stamps come from the 1991 code, so anything
+        between a stamp and the audio reaching the speakers is ours.
+        """
         body = self._cur[1:]                # drop the 0x20 device address
         if not body:
             return
+        stamp = self.now
         if len(body) == 5:
             self.frames.append(body)
             self.seq.append(('frame', body))
+            self.seq_time.append(stamp)
             self._speak(body)
         elif len(body) == 2:
             self.controls.append(body)
             self.seq.append(('ctrl', body))
+            self.seq_time.append(stamp)
         elif len(body) == 1:
             # a start sequence sends the settings nibble, then the pitch
             if self._singles % 2:
                 self.pitches.append(body[0])
                 self.seq.append(('pitch', body[0]))
+                self.seq_time.append(stamp)
                 self.rearm()
             self._singles += 1
 
@@ -193,7 +204,7 @@ class BraiLabDevice:
         traffic inverts that for the whole session.
         """
         for lst in (self.frames, self.controls, self.pitches, self.seq,
-                    self.utterances, self.bytes_out):
+                    self.seq_time, self.utterances, self.bytes_out):
             del lst[:]
         self._singles = 0
         self._cur = []
