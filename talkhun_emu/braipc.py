@@ -15,6 +15,7 @@ nothing to bolt on -- the emulator only has to carry the audio to the speakers
 and the keystrokes back in.
 """
 import collections
+import json
 import os
 import sys
 import threading
@@ -155,10 +156,18 @@ class Session:
         self.path = os.path.abspath(path)
         self.speaker = speaker
         self.trace = trace
-        self.tempo = 1                                   # index into TEMPOS
-        self.pitch = 1                                   # index into PITCHES
-        self.furcsa = False
-        cfg = [brailab_device.ESC_DEFAULTS, brailab_device.ESC_BIOS10_ON]
+        saved = load_config()
+        self.tempo = min(max(saved.get('tempo', 1), 0), len(TEMPOS) - 1)
+        self.pitch = min(max(saved.get('pitch', 1), 0), len(PITCHES) - 1)
+        self.furcsa = bool(saved.get('furcsa', False))
+        # Apply the remembered voice as part of the boot configuration, so it
+        # is in force for the program's very first word rather than arriving
+        # after the title screen has already been read out.
+        cfg = [brailab_device.ESC_DEFAULTS, brailab_device.ESC_BIOS10_ON,
+               b'S' + TEMPOS[self.tempo][1].encode(),
+               b'P' + PITCHES[self.pitch][1].encode()]
+        if self.furcsa:
+            cfg.append(brailab_device.ESC_FURCSA_ON)
         # The driver is not ours to ship, so it is looked up rather than
         # bundled; point BRAILAB_ARCHIVE at wherever TALKHUN.COM lives.
         self.host, self.dev = brailab_device.boot(
@@ -249,6 +258,7 @@ class Session:
         self.furcsa = not self.furcsa
         self.apply(brailab_device.ESC_FURCSA_ON if self.furcsa
                    else brailab_device.ESC_FURCSA_OFF)
+        save_config(furcsa=self.furcsa)
         self.say_ui('Furcsa hang %s.' % ('be' if self.furcsa else 'ki'))
 
     # -- the settings menu -----------------------------------------------
@@ -337,8 +347,33 @@ K_ESC, K_UP, K_DOWN, K_LEFT, K_RIGHT = 0x011B, 0x4800, 0x5000, 0x4B00, 0x4D00
 K_ENTER = 0x1C0D
 
 
-#: Where the file dialog reopens, so browsing does not start from scratch.
-RECENT = os.path.join(os.path.expanduser('~'), '.braipc_recent')
+#: Remembers the last program and the voice settings between launches.
+#:
+#: A real BraiLab kept its settings for as long as the machine stayed on,
+#: because the driver stayed resident; switching off reset them.  This
+#: emulator loads a fresh TSR for every program, so strictly speaking every
+#: launch IS a reboot and forgetting would be the faithful behaviour.  Keeping
+#: them is a deliberate convenience: nobody wants to re-pick their speech rate
+#: every time they open a game.
+CONFIG = os.path.join(os.path.expanduser('~'), '.braipc.json')
+
+
+def load_config():
+    try:
+        with open(CONFIG, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_config(**kw):
+    cfg = load_config()
+    cfg.update(kw)
+    try:
+        with open(CONFIG, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=1)
+    except OSError:
+        pass
 
 
 def choose_program():
@@ -347,12 +382,7 @@ def choose_program():
     The Windows dialog is used rather than anything drawn here because it is
     the one a screen reader already knows how to read.
     """
-    start = ''
-    try:
-        with open(RECENT, encoding='utf-8') as f:
-            start = os.path.dirname(f.read().strip())
-    except OSError:
-        pass
+    start = os.path.dirname(load_config().get('recent', '') or '')
     try:
         import tkinter
         from tkinter import filedialog
@@ -367,11 +397,7 @@ def choose_program():
     except Exception:
         path = input('Program path: ').strip('" ')
     if path:
-        try:
-            with open(RECENT, 'w', encoding='utf-8') as f:
-                f.write(path)
-        except OSError:
-            pass
+        save_config(recent=path)
     return path
 
 
