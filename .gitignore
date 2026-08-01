@@ -33,4 +33,5 @@ nvda_driver/**/build.cmd
 # Frozen emulator build output (see talkhun_emu/build_exe.py)
 talkhun_emu/build/
 talkhun_emu/dist/
+talkhun_emu/release/
 talkhun_emu/*.spec

@@ -18,6 +18,9 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAME = 'BraiLabPC'
+#: Overridable, because a shell left sitting in the old dist directory keeps a
+#: handle on it and Windows will not let it be replaced.
+DIST = os.environ.get('BRAILAB_DIST') or os.path.join(HERE, 'dist')
 ENTRY = os.path.join(HERE, 'braipc.py')
 
 #: PyInstaller finds unicorn's payload and sounddevice's PortAudio DLL only if
@@ -35,7 +38,7 @@ def main():
     # works).  A folder starts instantly and runs.
     args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir',
             '--console', '--name', NAME,
-            '--distpath', os.path.join(HERE, 'dist'),
+            '--distpath', DIST,
             '--workpath', os.path.join(HERE, 'build'),
             '--specpath', HERE,
             '--paths', HERE]
