@@ -263,6 +263,7 @@ class DosHost:
         self._marker_vec = {}
         self._pending_irq = None
         self._no_irq = False
+        self._slice_end = None
         self._irq0_tick = -1
         self._ticks = 0
         self._build()
@@ -510,6 +511,13 @@ class DosHost:
     def _on_block(self, uc, address, size, user):
         self.cycles += size * CYCLES_PER_BYTE
         self._ticks += 1
+        # End a slice here rather than waiting for the next timer interrupt:
+        # a guest that runs a long stretch between ticks would otherwise
+        # overrun by seconds, and interactive input would arrive far too late.
+        if self._slice_end is not None and self.vtime > self._slice_end:
+            self._pending_irq = None
+            uc.emu_stop()
+            return
         if self._ticks % 64 == 0:
             uc.mem_write(BIOS_TICK, struct.pack('<I', self.bios_ticks))
         # Raise IRQ0 when virtual time crosses a tick.  TALKHUN v4's output
@@ -572,6 +580,49 @@ class DosHost:
         self._make_psp(psp_seg, tail)
         self.uc.mem_write(psp_seg * 16 + 0x100, data)
         return psp_seg, 0x100, psp_seg, 0xFFFE, psp_seg
+
+    def start(self, path, args=''):
+        """Load a program and set up its entry state without running it.
+
+        Split out of run() so a caller can drive the guest in slices, which is
+        what interactive use needs: a game only reacts to a keypress if there
+        is somewhere to deliver one between slices.
+        """
+        cs, ip, ss, sp, psp = self.load(path, args)
+        self.cur_psp = psp
+        uc = self.uc
+        for r in (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
+                  UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP):
+            uc.reg_write(r, 0)
+        uc.reg_write(UC_X86_REG_DS, psp)
+        uc.reg_write(UC_X86_REG_ES, psp)
+        uc.reg_write(UC_X86_REG_SS, ss)
+        uc.reg_write(UC_X86_REG_SP, sp)
+        uc.reg_write(UC_X86_REG_CS, cs)
+        uc.reg_write(UC_X86_REG_IP, ip)
+        self.exited = None
+        self._pending_irq = None
+        self._name = os.path.basename(path)
+        return cs * 16 + ip
+
+    def resume(self, seconds, max_insns=20_000_000):
+        """Run the started program for a further `seconds` of guest time.
+
+        Reaching the end of a slice is not the program ending, so the timeout
+        marker `_pump` leaves behind is cleared again here.
+        """
+        uc = self.uc
+        addr = uc.reg_read(UC_X86_REG_CS) * 16 + uc.reg_read(UC_X86_REG_IP)
+        self._slice_end = self.vtime + seconds
+        try:
+            res = self._pump(addr, max_insns, self._slice_end,
+                             getattr(self, '_name', 'guest'))
+        finally:
+            self._slice_end = None
+        if res == 'timeout':
+            self.exited = None
+            return None
+        return res
 
     def run(self, path, args='', max_insns=200_000_000, resident=False,
             max_vtime=600.0):
