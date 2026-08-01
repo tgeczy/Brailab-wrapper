@@ -108,7 +108,7 @@ _SPEECH_FLOOR = 0.05
 #: that was fixed).  With the offset gone the sweep is nearly flat and gentle
 #: wins: none 10.04 dB LSD, 3000 Hz 10.03, 800 Hz 10.36.  Tomi then picked the
 #: no-tilt render by ear, so it is off entirely.
-SOURCE_TILT_HZ = None
+SOURCE_TILT_HZ = 450.0
 
 #: Exponent applied to the frame amplitude, compressing its dynamic range.
 #: MAME's ampl_table spans ~42 dB across the 4-bit AM field, which makes the
@@ -172,7 +172,7 @@ FURCSA_BW_SCALE = 0.85
 #: fricative/vowel RMS ratio is 0.40 and ours was 0.81 -- exactly twice as hot,
 #: which Tomi heard as the s in "es" coming out stabby.  0.35 lands near 0.46,
 #: about as close as this crude ratio resolves.
-NOISE_GAIN = 0.25
+NOISE_GAIN = 0.10
 
 #: Codec-to-table index offset: the PCF-8200's codes index the MEA-8000 tables
 #: DIRECTLY.  The +1 used earlier came from matching thesis codec values
@@ -193,7 +193,7 @@ CODEC_OFFSET = 0
 #: the formants rather than only at them -- five formants score 4x closer to the
 #: real engine (0.00145 vs 0.00035), and Tomi picked a five-formant render by
 #: ear.  Optimise against the metric that matches the complaint.
-MALE_FORMANTS = 5
+MALE_FORMANTS = 4
 
 #: Parameters are held constant over a block this long and interpolated between
 #: blocks.  The datasheet is specific about this: amplitude, pitch, formant
@@ -227,22 +227,40 @@ def _resonator(f, bw, fs):
     return 1.0 - b1 - b2, b1, b2
 
 
-def _cascade_gain(formants, f0, fs, nharm=24):
-    """RMS gain the formant cascade applies to a sawtooth at `f0`.
+def _cascade_gain(formants, f0, fs, nharm=None, source_tilt=None,
+                  band_hz=SAMPLE_RATE / 2.0):
+    """RMS gain the formant cascade applies to the voiced source at `f0`.
 
     With DC-normalised resonators the cascade's overall gain depends on where
     the formants happen to sit, so loudness drifts as the vowels change rather
     than following the frame's AM field -- heard as the volume fluctuating
     through an utterance.  Dividing this out puts AM back in charge.
+
+    `source_tilt` must be the same one-pole cutoff the excitation is actually
+    filtered with.  Model the source as a bare sawtooth while rendering a
+    tilted one and this correction stops matching: it then over-corrects
+    low-F1/high-F2 vowels by several dB, which is heard as one syllable of a
+    word jumping in volume.
     """
     if f0 <= 0:
         return 1.0
+    # Integrate over the band that survives to the output, not over the
+    # oversampled one, and far enough up to actually include F3 and F4.  A
+    # fixed 24 harmonics reaches only ~2.8 kHz at this pitch, so the correction
+    # never saw the upper formants: vowels with a high F2 came out several dB
+    # louder than their AM field asks for, heard as one syllable of a word
+    # jumping in volume.
+    limit = min(band_hz, fs * 0.5)
+    if nharm is None:
+        nharm = max(8, int(limit / f0))
     tot = 0.0
     for h in range(1, nharm + 1):
         f = h * f0
-        if f >= fs * 0.5:
+        if f >= limit:
             break
         g = 1.0 / h                       # sawtooth harmonic falls as 1/h
+        if source_tilt:
+            g /= math.hypot(1.0, f / source_tilt)
         for ff, bw in formants:
             r = math.exp(-math.pi * bw / fs)
             b1 = 2.0 * r * math.cos(2.0 * math.pi * ff / fs)
@@ -348,7 +366,8 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
             prev = dict(cur, ampl=0.0)
         if level_track:
             cur['gain'] = _cascade_gain(cur['formants'][:nformants],
-                                        anchor, synth_rate)
+                                        anchor, synth_rate,
+                                        source_tilt=source_tilt)
             prev.setdefault('gain', cur['gain'])
         else:
             cur['gain'] = prev['gain'] = 1.0
@@ -457,6 +476,45 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
 #: not every output path accepts").
 OUT_RATE = 44100
 OUT_CHANNELS = 2
+
+
+def compress(pcm, ratio=0.55, attack_ms=8.0, release_ms=60.0,
+             sample_rate=SAMPLE_RATE, floor_db=-45.0):
+    """Even out the loudness swing through an utterance.
+
+    This is deliberately NOT a chip model.  The PCF-8200 applies the frame's
+    AM field and whatever gain the formant cascade happens to have, and the
+    result genuinely swings about 19 dB across a sentence.  TTS.dll measures
+    14.6 dB on the same material, and no chip-level explanation accounted for
+    the difference -- not the amplitude table, not the source tilt, not the
+    cascade gain correction.  The likely reason is prosaic: it is a modern
+    reimplementation for screen-reader use, and a gentle limiter is an obvious
+    thing for one to carry.
+
+    `ratio` is the exponent applied to the envelope, so 1.0 is a no-op and
+    smaller values flatten harder.
+    """
+    import numpy as np
+    x = pcm.astype(np.float64)
+    if not len(x) or ratio >= 1.0:
+        return pcm
+    peak = np.abs(x).max()
+    if peak <= 0:
+        return pcm
+    # one-pole envelope follower with separate attack and release
+    a_at = math.exp(-1.0 / (sample_rate * attack_ms / 1000.0))
+    a_re = math.exp(-1.0 / (sample_rate * release_ms / 1000.0))
+    env = np.empty_like(x)
+    e = 0.0
+    for i, v in enumerate(np.abs(x)):
+        a = a_at if v > e else a_re
+        e = a * e + (1.0 - a) * v
+        env[i] = e
+    floor = peak * (10.0 ** (floor_db / 20.0))
+    env = np.maximum(env, floor)
+    y = x * (env / peak) ** (ratio - 1.0)
+    m = np.abs(y).max()
+    return (y * (peak / m)).astype(np.int16) if m > 0 else pcm
 
 
 def resample(pcm, src_rate=SAMPLE_RATE, dst_rate=OUT_RATE):
