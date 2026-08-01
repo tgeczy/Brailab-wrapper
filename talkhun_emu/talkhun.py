@@ -329,10 +329,30 @@ class Talkhun:
 
 
 def load(com_path=None):
-    """Build an installed engine ready to synthesize."""
+    """Build an installed engine ready to synthesize.
+
+    Looks where BRAILAB_ARCHIVE points before falling back to the checkout
+    layout, and accepts either TALKHUN0.COM or TALKHUN.COM -- a packaged copy
+    will usually carry only the one its owner had.
+    """
     if com_path is None:
-        com_path = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), 'BRAILAB-archive', 'TALKHUN0.COM')
+        roots = []
+        env = os.environ.get('BRAILAB_ARCHIVE')
+        if env:
+            roots.append(env)
+        roots.append(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), 'BRAILAB-archive'))
+        for root in roots:
+            for name in ('TALKHUN0.COM', 'TALKHUN.COM'):
+                p = os.path.join(root, name)
+                if os.path.exists(p):
+                    com_path = p
+                    break
+            if com_path:
+                break
+        if com_path is None:
+            raise TalkhunError(
+                'no TALKHUN0.COM or TALKHUN.COM found; set BRAILAB_ARCHIVE')
     t = Talkhun(com_path)
     t.install()
     t.reset()
