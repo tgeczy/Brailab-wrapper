@@ -168,6 +168,7 @@ class Session:
         self.seen = 0
         self.quiet = 0
         self.last_pitch = None
+        self._last_len = 0
         # A second engine, only for menu prompts.  Speaking them through the
         # guest would write on the game's screen and disturb what the resident
         # driver is tracking; this one is independent and sounds identical.
@@ -193,10 +194,16 @@ class Session:
         """
         new = self.dev.seq[self.seen:]
         nframes = sum(1 for k, _ in new if k == 'frame')
+        # Idleness must be measured by whether anything NEW arrived, not by
+        # whether anything is pending: `new` accumulates, so once a partial
+        # batch is stuck below the threshold its count never returns to zero
+        # and a quiet-triggered flush can never fire again.  That held 14
+        # frames for 9.6 s of guest time before the trace caught it.
+        arrived = len(self.dev.seq) - self._last_len
+        self._last_len = len(self.dev.seq)
+        self.quiet = 0 if arrived else self.quiet + 1
         if not nframes:
-            self.quiet += 1
             return
-        self.quiet = 0
         if not force and nframes < BATCH_FRAMES:
             if not (self.speaker.starved and nframes >= MIN_BATCH):
                 return
