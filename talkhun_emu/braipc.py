@@ -2,7 +2,7 @@
 r"""Play a BraiLab-era DOS program, with the speech coming out of your speakers.
 
     python braipc.py <program.exe>
-    python braipc.py                     (prompts for a path)
+    python braipc.py                     (opens a file dialog to browse for one)
 
 Type into the program as you would have in 1991.  F12 opens a BraiLab settings
 menu -- tempo, pitch, furcsa -- and the menu speaks itself through the same
@@ -337,12 +337,49 @@ K_ESC, K_UP, K_DOWN, K_LEFT, K_RIGHT = 0x011B, 0x4800, 0x5000, 0x4B00, 0x4D00
 K_ENTER = 0x1C0D
 
 
+#: Where the file dialog reopens, so browsing does not start from scratch.
+RECENT = os.path.join(os.path.expanduser('~'), '.braipc_recent')
+
+
+def choose_program():
+    """Ask for a program with the native file dialog, falling back to typing.
+
+    The Windows dialog is used rather than anything drawn here because it is
+    the one a screen reader already knows how to read.
+    """
+    start = ''
+    try:
+        with open(RECENT, encoding='utf-8') as f:
+            start = os.path.dirname(f.read().strip())
+    except OSError:
+        pass
+    try:
+        import tkinter
+        from tkinter import filedialog
+        root = tkinter.Tk()
+        root.withdraw()
+        path = filedialog.askopenfilename(
+            title='Melyik programot indítsuk? -- pick a DOS program',
+            initialdir=start or os.getcwd(),
+            filetypes=[('DOS programs', '*.exe *.com *.EXE *.COM'),
+                       ('All files', '*.*')])
+        root.destroy()
+    except Exception:
+        path = input('Program path: ').strip('" ')
+    if path:
+        try:
+            with open(RECENT, 'w', encoding='utf-8') as f:
+                f.write(path)
+        except OSError:
+            pass
+    return path
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
-    if args:
-        path = args[0]
-    else:
-        path = input('Program path: ').strip('" ')
+    path = args[0] if args else choose_program()
+    if not path:
+        return 0
     if not os.path.exists(path):
         print('not found: %s' % path)
         return 2
