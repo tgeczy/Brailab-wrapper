@@ -270,6 +270,9 @@ class DosHost:
         #: Interactive callers set this; headless runs must not,
         #: or a program waiting for input never terminates.
         self.block_on_input = False
+        #: Disk transfer address for find-first/find-next.
+        self.dta = (0, 0x80)
+        self._finds = []
         self._irq0_tick = -1
         self._ticks = 0
         self._build()
@@ -844,6 +847,32 @@ class DosHost:
         elif ah == 0x02:
             uc.reg_write(UC_X86_REG_AX, 0)
 
+    def _fill_find(self, path):
+        """Write one DOS find record into the guest's transfer address.
+
+        Layout is the documented one: 21 reserved bytes of search state, then
+        attribute, time, date, size and a 13-byte ASCIZ name.  The search state
+        stays on this side -- nothing in the corpus inspects it, and keeping
+        the enumeration in Python avoids pretending to have a FAT directory.
+        """
+        try:
+            st = os.stat(path)
+            size = st.st_size
+        except OSError:
+            size = 0
+        name = os.path.basename(path).upper()
+        stem, _, ext = name.partition('.')
+        dos = (stem[:8] + ('.' + ext[:3] if ext else '')).encode('cp852',
+                                                                 'replace')
+        rec = bytearray(43)
+        rec[21] = 0x10 if os.path.isdir(path) else 0x20
+        rec[22:24] = struct.pack('<H', 0x6000)      # 12:00:00
+        rec[24:26] = struct.pack('<H', 0x2101)      # 1 Jan 1996
+        rec[26:30] = struct.pack('<I', size & 0xFFFFFFFF)
+        rec[30:30 + len(dos[:12])] = dos[:12]
+        seg, off = self.dta
+        self.uc.mem_write(seg * 16 + off, bytes(rec))
+
     def _dos(self, ah, al, ax):
         uc = self.uc
         ds = uc.reg_read(UC_X86_REG_DS)
@@ -929,6 +958,52 @@ class DosHost:
             # calls vanish into the shim.
             self.hooked_vectors.add(al)
             ok()
+        elif ah == 0x1A:                        # set disk transfer address
+            self.dta = (ds, dx)
+            ok()
+        elif ah == 0x2F:                        # get disk transfer address
+            uc.reg_write(UC_X86_REG_ES, self.dta[0])
+            uc.reg_write(UC_X86_REG_BX, self.dta[1])
+            ok()
+        elif ah in (0x4E, 0x4F):                # find first / find next
+            if ah == 0x4E:
+                try:
+                    pat = self._path(ds, dx)
+                except DosError:
+                    pat = None
+                self._finds = []
+                if pat:
+                    import fnmatch
+                    d = os.path.dirname(pat) or self.cwd
+                    m = os.path.basename(pat).upper() or '*.*'
+                    if m == '*.*':
+                        m = '*'
+                    try:
+                        for e in sorted(os.listdir(d)):
+                            if fnmatch.fnmatch(e.upper(), m):
+                                self._finds.append(os.path.join(d, e))
+                    except OSError:
+                        pass
+            if not self._finds:
+                uc.reg_write(UC_X86_REG_AX, 18)     # no more files
+                self._cf(True)
+                return
+            self._fill_find(self._finds.pop(0))
+            uc.reg_write(UC_X86_REG_AX, 0)
+            ok()
+        elif ah == 0x47:                        # get current directory
+            # One directory is all the guest can see, so it is always the root.
+            uc.mem_write(ds * 16 + uc.reg_read(UC_X86_REG_SI), b'\0')
+            uc.reg_write(UC_X86_REG_AX, 0x0100)
+            ok()
+        elif ah == 0x3B:                        # change directory
+            try:
+                if not os.path.isdir(self._path(ds, dx)):
+                    raise OSError
+                ok()
+            except OSError:
+                uc.reg_write(UC_X86_REG_AX, 3)
+                self._cf(True)
         elif ah == 0x39:                        # create directory
             try:
                 os.makedirs(self._path(ds, dx), exist_ok=True)
