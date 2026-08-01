@@ -28,7 +28,12 @@ HIDDEN = ['scipy.signal', 'scipy.special', 'numpy',
 
 
 def main():
-    args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onefile',
+    # --onedir, not --onefile.  A onefile build re-extracts 240 MB to a temp
+    # directory on every launch, and Unicorn's ctypes callbacks crash outright
+    # under that bootloader (STATUS_STACK_BUFFER_OVERRUN as soon as emulation
+    # starts, while everything up to it -- imports, audio, error handling --
+    # works).  A folder starts instantly and runs.
+    args = [sys.executable, '-m', 'PyInstaller', '--noconfirm', '--onedir',
             '--console', '--name', NAME,
             '--distpath', os.path.join(HERE, 'dist'),
             '--workpath', os.path.join(HERE, 'build'),
