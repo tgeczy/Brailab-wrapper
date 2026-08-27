@@ -22,8 +22,10 @@ the scale here is 2.5 Hz per unit -- which puts the default 42+4=46 at ~115 Hz
 settling toward the 107.3 Hz measured from real BraiLab audio.
 
 Reconstructed tables are marked RECONSTRUCTED: the Hz values for the PCF-8200's
-wider bandwidth field and for F4/F5 were in Philips App Note EDP8807, which is
-lost.  They are geometric fits anchored on the four bandwidths MAME confirms.
+wider bandwidth field and for F4/F5 are not in the public MAME tables, so they
+are geometric fits anchored on the four bandwidths MAME confirms.  When a local
+set of measured tables is available the emulator uses those instead (see
+pcf8200.load_real_tables).
 """
 
 import math
@@ -31,6 +33,7 @@ import math
 import numpy as np
 from scipy.signal import decimate, lfilter
 
+import pcf8200
 from pcf8200 import (F1_TAB, F2_TAB, F3_TAB, BW_TAB, FS_TAB, FD_MULT,
                      decode_frame, decode_control)
 
@@ -73,8 +76,8 @@ F4_TAB = [3000, 3150, 3300, 3400, 3500, 3650, 3800, 4000]
 F5_TAB = [4200, 4700]
 
 #: RECONSTRUCTED, and the single most uncertain number here -- calibrate by ear.
-#: M/F=1 selects the chip's female quantization table, whose Hz values are lost
-#: with App Note EDP8807.  What is not lost is the physics: a female vocal tract
+#: M/F=1 selects the chip's female quantization table, whose Hz values are not
+#: in the public MAME tables.  The physics, though: a female vocal tract
 #: is roughly 15-20% shorter, so the same codes must map to proportionally
 #: higher formants.  Applying that scale to F1-F4 while keeping the male F0 --
 #: pitch is a separate register the M/F bit does not touch -- gives female
@@ -285,34 +288,66 @@ def _cascade_gain(formants, f0, fs, nharm=None, source_tilt=None,
     return math.sqrt(tot) + 1e-12
 
 
-def frame_params(d, furcsa=False, female_scale=FEMALE_SCALE,
+#: Fallback ladders, one list per formant, matching the pre-ground-truth code:
+#: B1/B2 shared the reconstructed 3-bit table, B3-B5 the 2-bit MAME table.
+_FB_MALE_F = [F1_TAB, F2_TAB, F3_TAB, F4_TAB, F5_TAB]
+_FB_MALE_B = [BW8_TAB, BW8_TAB, BW_TAB, BW_TAB, BW_TAB]
+_FB_AMPL = [a / 1000.0 for a in AMPL_TAB]
+
+
+def active_tables(real):
+    """The (male_F, male_B, female_F, female_B, ampl, pi, hz_per_unit) bundle.
+
+    In real mode the values come from the chip's own quantization ROM (loaded
+    by pcf8200 from the external measured tables); female_F/female_B then carry
+    the real four-formant female table.  In fallback mode female_F
+    is None and furcsa is done by the FEMALE_SCALE shift, exactly as before.
+    """
+    if real and pcf8200.REAL is not None:
+        R = pcf8200.REAL
+        return (R['male_F'], R['male_B'], R['female_F'], R['female_B'],
+                R['ampl'], R['pi'], R['pitch_hz_per_unit'])
+    return (_FB_MALE_F, _FB_MALE_B, None, None,
+            _FB_AMPL, PI_TAB, PITCH_HZ_PER_UNIT)
+
+
+def frame_params(d, tables, furcsa=False, female_scale=FEMALE_SCALE,
                  codec_offset=CODEC_OFFSET, bw_scale=None,
                  ampl_compress=None):
-    """Target parameters for one decoded frame."""
+    """Target parameters for one decoded frame, using the given table bundle."""
+    male_F, male_B, female_F, female_B, ampl, pi = tables
     off = codec_offset
     bs = BW_SCALE if bw_scale is None else bw_scale
     ampl_compress = (AMPL_COMPRESS if ampl_compress is None else ampl_compress)
-    formants = [
-        (F1_TAB[min(d['F1'] + off, 31)], BW8_TAB[d['B1']] * bs),
-        (F2_TAB[min(d['F2'] + off, 31)], BW8_TAB[d['B2']] * bs),
-        (F3_TAB[min(d['F3'] + off, 7)], BW_TAB[d['B3']] * bs),
-        (F4_TAB[d['F4']], BW_TAB[d['B4']] * bs),
-        (F5_TAB[d['F5']], BW_TAB[d['B5']] * bs),
-    ]
-    if furcsa:
-        # M/F=1 does two things, and doing only the first is what made this
-        # sound merely muffled -- "like a telephone" -- instead of odd:
-        #   1. the filter drops to four formants
-        #      ("Five formants are needed for male speech and four for female")
-        #   2. F1-F4 are re-quantized through the female table, i.e. shifted up
+    if furcsa and female_F is not None:
+        # Real furcsa: M/F=1 selects the chip's four-formant FEMALE quantization
+        # table, the codes re-read through a shorter vocal tract.
         # The diads were authored for the five-formant male model, so reading
-        # them through a shorter female tract is the whole trick.
-        formants = [(f * female_scale, bw * FURCSA_BW_SCALE)
-                    for f, bw in formants[:4]]
+        # them female is the whole trick -- and with the real table there is no
+        # scalar shift or bandwidth hack, the chip's own values stand.
+        formants = [
+            (female_F[0][min(d['F1'], 31)], female_B[0][d['B1']] * bs),
+            (female_F[1][min(d['F2'], 31)], female_B[1][d['B2']] * bs),
+            (female_F[2][min(d['F3'], 7)],  female_B[2][d['B3']] * bs),
+            (female_F[3][min(d['F4'], 7)],  female_B[3][d['B4']] * bs),
+        ]
+    else:
+        formants = [
+            (male_F[0][min(d['F1'] + off, 31)], male_B[0][d['B1']] * bs),
+            (male_F[1][min(d['F2'] + off, 31)], male_B[1][d['B2']] * bs),
+            (male_F[2][min(d['F3'] + off, 7)],  male_B[2][d['B3']] * bs),
+            (male_F[3][min(d['F4'], 7)],        male_B[3][d['B4']] * bs),
+            (male_F[4][d['F5']],                male_B[4][d['B5']] * bs),
+        ]
+        if furcsa:
+            # Fallback furcsa (no real female table): shift the male formants up
+            # and narrow them -- the reconstruction we calibrated by ear.
+            formants = [(f * female_scale, bw * FURCSA_BW_SCALE)
+                        for f, bw in formants[:4]]
     return {
         'formants': formants,
-        'ampl': (AMPL_TAB[d['AM']] / 1000.0) ** ampl_compress,
-        'pi': PI_TAB[d['PI']],
+        'ampl': (ampl[d['AM']]) ** ampl_compress,
+        'pi': pi[d['PI']],
         'noise': d['PI'] == PI_NOISE,
     }
 
@@ -323,7 +358,8 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
            nformants_override=None, source_tilt=SOURCE_TILT_HZ,
            codec_offset=CODEC_OFFSET, flat_pitch=False,
            noise_gain=None, bw_scale=None, aspiration=None,
-           pitch_mode=None, level_track=True, ampl_compress=None):
+           pitch_mode=None, level_track=True, ampl_compress=None,
+           real=None):
     """Render a captured adapter stream to int16 PCM at `sample_rate`.
 
     `seq` is what Talkhun.capture() returns: ('pitch', b), ('ctrl', bytes) and
@@ -347,6 +383,13 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
                   and not decode_control(v)['stop']]
         fs_code = starts[0]['fs'] if starts else 0
 
+    # Real tables when present (the chip's own ROM); fallback otherwise.  In
+    # real mode the codes index the chip ROM directly, so the offset is 0.
+    real = pcf8200.REAL_TABLES if real is None else real
+    tables = active_tables(real)
+    ptables, hz_per_unit = tables[:6], tables[6]
+    eff_offset = 0 if real else codec_offset
+
     base_ms = FS_TAB[fs_code][1]
     nformants = nformants_override or (4 if furcsa else MALE_FORMANTS)
     rng = np.random.default_rng(seed)
@@ -358,22 +401,22 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
               if source_tilt else None)
     tilt_zi = np.zeros(1)
     phase = 0.0
-    anchor = pitch_byte * PITCH_HZ_PER_UNIT
+    anchor = pitch_byte * hz_per_unit
     pitch = anchor
     prev = None
     out = []
 
     for kind, val in seq:
         if kind == 'pitch':
-            anchor = val * PITCH_HZ_PER_UNIT
+            anchor = val * hz_per_unit
             pitch = anchor
             continue
         if kind != 'frame':
             continue
         f = val
         d = decode_frame(f)
-        cur = frame_params(d, furcsa, female_scale, codec_offset, bw_scale,
-                           ampl_compress)
+        cur = frame_params(d, ptables, furcsa, female_scale, eff_offset,
+                           bw_scale, ampl_compress)
         if prev is None:
             prev = dict(cur, ampl=0.0)
         if level_track:

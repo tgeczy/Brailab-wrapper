@@ -4,8 +4,27 @@ The real 1991 BraiLab talker (`TALKHUN0.COM`, 45,301 bytes, dated 1991-11-28)
 running under the Unicorn CPU emulator, with its printer-port link to the
 PCF-8200 speech chip captured instead of played.
 
-Modelled on the Dr. Sbaitso / SmoothTalker addon in `C:\git\sbaitso`, which runs
+Modelled on the Dr. Sbaitso / SmoothTalker addon (a sibling checkout), which runs
 the 1990 First Byte engine the same way.
+
+## A software PCF-8200 — the speech chip MAME never emulated
+
+The PCF-8200 is a Philips formant speech synthesizer, and it was the final-stage
+silicon under a whole early-1990s generation of speech systems for blind computer
+users: in Hungary the BraiLab PC adapter and the PC-ROBOT / MULTIVOX card, in
+Barcelona the **Ciber232** system (Llisterri, Fernández, Gudayol, Poyatos & Martí,
+ESCA Workshop on Speech Technology for Disabled Persons, Stockholm 1993). Each
+shipped its own diphone data; the chip turned the codes into a voice.
+
+MAME emulates the PCF-8200's older four-formant sibling, the MEA-8000 — it rides
+inside the Thomson home computers and the Hungarian Homelab — but never the
+PCF-8200 itself, because the PCF-8200 only ever lived in PC add-on cards for the
+blind, which MAME does not collect. This project fills that gap: `synth.py`
+extends the MEA-8000 model to the PCF-8200's five-formant design with the chip's
+real code-expansion tables (`pcf8200_tables.py`), so one emulator can drive
+anything that ever spoke through the chip. TALKHUN0 is the first such driver
+brought back to life; the same decoder reads the PCF-8200's byte protocol
+whatever the source.
 
 ## Why there is no engine image to build
 
@@ -83,12 +102,14 @@ carrying furcsa and tempo — is skipped and you never see it.
 ## Frames and control writes
 
 Frame layout (datasheet p5 / Fig. 4) and the control format (Fig. 5) are
-implemented in `pcf8200.py`. Frequencies come from the MEA-8000 tables,
-**indexed directly** — an earlier +1 offset turned out to be a cross-dataset
-artifact (thesis codes describe TALKHUN0's diad data but were calibrated
-against TTS.dll audio, which speaks BINADATA, a different authoring). Settled
-by ear against the original hardware; one table step is ~6% and the +1 renders
-were consistently heard as "slightly furcsa".
+implemented in `pcf8200.py`. By default the formant frequencies and bandwidths
+are the chip's own quantization tables (`pcf8200_tables.py`); `render(real=False)`
+selects MAME's MEA-8000 tables plus our earlier reconstructions instead, for
+comparison. Either way the codes are **indexed directly** — an earlier +1 offset
+turned out to be a cross-dataset artifact (thesis codes describe TALKHUN0's diad
+data but were calibrated against TTS.dll audio, which speaks BINADATA, a
+different authoring). Settled by ear against the original hardware; one table
+step is ~6% and the +1 renders were consistently heard as "slightly furcsa".
 
 Speed: the engine's own default is S2 (100%), but the archive's `BRAISET.DAT`
 and `DEFAULT` both set `ESC S6`, which pins the chip to its fastest hardware
@@ -182,17 +203,22 @@ missed it. It tracks `ESC P` with a constant +4 offset:
 | 70 | 74 |
 | 100 | 104 |
 
-MAME uses 2 Hz per unit at 8 kHz; BraiLab's chip runs at 10 kHz, giving 2.5 Hz
-per unit. So the default 46 units ≈ 115 Hz at onset, declining through the
+The chip's start-pitch byte is `Hz × 0.4096`, i.e. **2.44 Hz per unit**, so the
+default 46 units ≈ 112 Hz at onset (the `real=False` fallback keeps MAME's
+2 Hz/unit at 8 kHz scaled to 2.5 at 10 kHz, ≈ 115 Hz). Pitch declines through the
 utterance via the `PI` decrements — which is exactly what `HALLGASD.MEG` means
 by calling `P` the *initial* pitch ("kezdeti alaphang magasság") with intonation
 deviating from it.
 
-Some tables are marked RECONSTRUCTED in the source: the PCF-8200's bandwidth
-field is 3-bit where MAME's is 2-bit, and F4/F5 have no published values. Those
-were in App Note EDP8807, which is lost. The reconstructions are geometric fits
-anchored on the four bandwidths MAME confirms, and on the F4 ≈ 3300–3390 Hz seen
-across every Hungarian vowel in the LPC work.
+The default tables in `pcf8200_tables.py` are the chip's own code-expansion
+values — the full five-formant male and four-formant female ladders, distinct
+bandwidth ladders per formant (code 0 = 3000 Hz = "formant off"), the amplitude
+and pitch-increment tables. The fallback set (`real=False`) still carries the
+values marked RECONSTRUCTED in the source, from before those tables were
+available: the PCF-8200's bandwidth field is 3-bit where MAME's is 2-bit, and
+MAME has no F4/F5, so those were geometric fits anchored on the four bandwidths
+MAME confirms and on the F4 ≈ 3300–3390 Hz seen across the Hungarian vowels in
+the LPC work. The real tables replace all of that with the chip's actual values.
 
 ### Does it sound like BraiLab?
 
@@ -205,8 +231,8 @@ captures:
 ```
 
 The whole trace has the right shape for "mama": /m/ at F1≈333 F2≈1500, /a/ at
-625/990, /m/ again, /a/ again. F0 enters at 115–116 Hz — which is the 46 pitch
-units × 2.5 Hz/unit derived above — and declines across the utterance, as
+625/990, /m/ again, /a/ again. F0 enters around 112–116 Hz — the 46 pitch units
+× the ~2.4–2.5 Hz/unit derived above — and declines across the utterance, as
 `ESC P` being only the *initial* pitch implies.
 
 Voicing is right too: `mama.` produces 0 unvoiced frames, `szia.` 12 and
@@ -214,9 +240,11 @@ Voicing is right too: `mama.` produces 0 unvoiced frames, `szia.` 12 and
 
 ## Two synthesizers
 
-`synth.py` is the from-scratch reconstruction. `mame_synth.py` follows MAME's
-`mea8000.cpp` signal path instead, and is the better of the two by ear --
-cleaner, with markedly less volume drift. It exists because MAME's MEA-8000 is
+`synth.py` is the main synthesizer, and with the chip's real tables
+(`pcf8200_tables.py`) it renders the default voice. `mame_synth.py` follows
+MAME's `mea8000.cpp` signal path instead; back when `synth.py` still ran on the
+reconstructed tables `mame_synth` was the cleaner of the two by ear, and it
+stays as a MEA-8000-faithful comparison. It exists because MAME's MEA-8000 is
 a *validated* emulation of the chip BraiLab 4 actually contained (the homelab
 driver instantiates `MEA8000(config, "mea8000", 3'840'000)`, credited to the
 same Lukacs brothers who built the BraiLab PC's adapter), so its structure is
@@ -263,22 +291,23 @@ Needs `TALKHUN0.COM` in `../BRAILAB-archive/`.
   generation-numbered cancellation, streamed feed to nvwave. No 32-bit bridge is
   needed — unlike the TTS.dll path, this is pure Python and runs native in
   64-bit NVDA.
-- **The female table — calibration, not discovery.** The Hz values are lost, and
-  they are not recoverable from the archive: `BINADATA.BIN`, `BINAHANK.BIN` and
-  every talker binary were searched, and **the known *male* table is not in them
-  either**. That is the proof, not an absence of evidence — the host only ever
-  ships 5-bit codes down the wire, and the silicon does the lookup. So furcsa is
-  reconstructed from physics: a female vocal tract is ~15–20% shorter, so the
-  same codes map proportionally higher. `FEMALE_SCALE` = **1.18**, chosen by ear
-  against the original; `speak.py --female-scale=N` renders alternatives.
+- **The female table — resolved.** For a long time the female (furcsa) Hz values
+  weren't available, and they can't be recovered from the archive: `BINADATA.BIN`,
+  `BINAHANK.BIN` and every talker binary were searched, and **the known *male*
+  table isn't in them either** — the host only ever ships 5-bit codes down the
+  wire and the silicon does the lookup. In the meantime furcsa was reconstructed
+  from physics (a female vocal tract is ~15–20% shorter, so `FEMALE_SCALE` = 1.18
+  shifted the male formants up; still available under `real=False` via
+  `--female-scale=N`). The chip's real four-formant female table is now the
+  default, and it's a clear step up by ear — furcsa finally sounds like furcsa.
 
 ## Calibrating against the real engine
 
 `TTS.dll` — the 2021 reimplementation this repo's wrapper drives — is the only
-reference recording available, and it can be captured on demand: the 32-bit
-`brailab_wrapper.dll` rig in `C:\git\TGSpeechBox\brailab` speaks a phrase and
-returns raw 10 kHz PCM. That makes A/B measurement possible rather than
-guesswork, and it caught a defect no amount of frame-level checking would have.
+reference recording available, and it can be captured on demand: a 32-bit
+`brailab_wrapper.dll` rig speaks a phrase and returns raw 10 kHz PCM. That makes
+A/B measurement possible rather than guesswork, and it caught a defect no amount
+of frame-level checking would have.
 
 The emulator originally carried **23× the real engine's energy above 2 kHz**,
 heard as a "squished headsize" — a head too small for the voice. Two causes,
