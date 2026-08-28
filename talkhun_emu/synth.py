@@ -308,6 +308,21 @@ def _cascade_gain(formants, f0, fs, nharm=None, source_tilt=None,
     return math.sqrt(tot) + 1e-12
 
 
+def _median_smooth(vals, w):
+    """Odd-window median filter, edge-preserving.  Lifts the PCF-8200's 4-bit AM
+    field out of its single-frame quantization jitter (the low-vowel "wow")
+    without smearing the real amplitude steps at consonant onsets -- a median
+    passes a step edge untouched but rejects a lone frame that dips or spikes."""
+    w = max(1, int(w))
+    h = w // 2
+    n = len(vals)
+    out = []
+    for i in range(n):
+        seg = sorted(vals[max(0, i - h):min(n, i + h + 1)])
+        out.append(seg[len(seg) // 2])
+    return out
+
+
 #: Fallback ladders, one list per formant, matching the pre-ground-truth code:
 #: B1/B2 shared the reconstructed 3-bit table, B3-B5 the 2-bit MAME table.
 _FB_MALE_F = [F1_TAB, F2_TAB, F3_TAB, F4_TAB, F5_TAB]
@@ -379,7 +394,8 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
            codec_offset=CODEC_OFFSET, flat_pitch=False,
            noise_gain=None, bw_scale=None, aspiration=None,
            pitch_mode=None, level_track=LEVEL_TRACK, ampl_compress=None,
-           real=None, bandlimited=None, soft_start=True):
+           real=None, bandlimited=None, soft_start=True, ampl_smooth=None,
+           time_scale=1.0):
     """Render a captured adapter stream to int16 PCM at `sample_rate`.
 
     `seq` is what Talkhun.capture() returns: ('pitch', b), ('ctrl', bytes) and
@@ -427,6 +443,40 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
     prev = None
     out = []
 
+    # Reference for the level-track correction: the median cascade gain over the
+    # voiced frames.  The correction removes the *variation* around this (and is
+    # clamped), so the utterance's overall level is preserved and a frame whose
+    # formants leave the cascade near-gainless cannot divide the amplitude up
+    # into a spike -- which was heard as a lip-smack at onsets.
+    level_ref = 1.0
+    if level_track:
+        gl = []
+        tp = anchor
+        for k, v in seq:
+            if k == 'pitch':
+                tp = v * hz_per_unit
+            elif k == 'frame':
+                pp = frame_params(decode_frame(v), ptables, furcsa,
+                                  female_scale, eff_offset, bw_scale,
+                                  ampl_compress)
+                if not pp['noise']:
+                    gl.append(_cascade_gain(pp['formants'][:nformants], tp,
+                                            synth_rate, source_tilt=source_tilt))
+        if gl:
+            level_ref = float(np.median(gl))
+
+    # Optional: lift the coarse 4-bit AM field out of its single-frame
+    # quantization jitter (source of the authentic-but-wavery "wow").  A median
+    # over a few frames rejects the lone-frame dither while passing real steps,
+    # so consonant onsets stay crisp.  Off by default -- the jitter is authentic
+    # to the chip, so this is a clarity choice, not a correction.
+    smooth_ampls = None
+    if ampl_smooth and ampl_smooth >= 2:
+        av = [frame_params(decode_frame(v), ptables, furcsa, female_scale,
+                           eff_offset, bw_scale, ampl_compress)['ampl']
+              for k, v in seq if k == 'frame']
+        smooth_ampls = iter(_median_smooth(av, ampl_smooth))
+
     for kind, val in seq:
         if kind == 'pitch':
             anchor = val * hz_per_unit
@@ -438,6 +488,8 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
         d = decode_frame(f)
         cur = frame_params(d, ptables, furcsa, female_scale, eff_offset,
                            bw_scale, ampl_compress)
+        if smooth_ampls is not None:
+            cur['ampl'] = next(smooth_ampls)
         if prev is None:
             # First frame: optionally ramp amplitude up from zero.  The chip's
             # own reset does soften the onset, but a full 12.8 ms ramp on top of
@@ -445,15 +497,9 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
             # of every utterance.  soft_start=False plays the first frame at its
             # real level, leaving only the short filter warm-up.
             prev = dict(cur, ampl=0.0) if soft_start else dict(cur)
-        if level_track:
-            cur['gain'] = _cascade_gain(cur['formants'][:nformants],
-                                        anchor, synth_rate,
-                                        source_tilt=source_tilt)
-            prev.setdefault('gain', cur['gain'])
-        else:
-            cur['gain'] = prev['gain'] = 1.0
 
-        n = max(1, int(round(base_ms * FD_MULT[d['FD']] * synth_rate / 1000.0)))
+        n = max(1, int(round(base_ms * FD_MULT[d['FD']] * synth_rate
+                             / 1000.0 * time_scale)))
         # The frame's PI is a pitch increment applied across the frame.
         # flat_pitch pins F0 at the utterance's absolute pitch instead --
         # TTS.dll behaves that way (its pitch is an inert stub), so this
@@ -471,10 +517,29 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
         while pos < n:
             m = min(BLOCK, n - pos)
             t0 = (pos + m * 0.5) / n              # block midpoint
-            amp = prev['ampl'] + (cur['ampl'] - prev['ampl']) * t0
-            # divide out the cascade's own gain so level follows AM
-            amp /= prev['gain'] + (cur['gain'] - prev['gain']) * t0
             p = pitch + (pitch_target - pitch) * t0
+
+            # Interpolate the formants once for this block; the same values
+            # drive both the resonators below and the gain correction, so the
+            # two can never disagree.
+            fmnts = []
+            for i in range(nformants):
+                pf, pbw = prev['formants'][i] if i < len(prev['formants']) \
+                    else cur['formants'][i]
+                cf, cbw = cur['formants'][i]
+                fmnts.append((pf + (cf - pf) * t0, pbw + (cbw - pbw) * t0))
+
+            amp = prev['ampl'] + (cur['ampl'] - prev['ampl']) * t0
+            if level_track and not cur['noise']:
+                # Flatten the cascade's own gain *variation* so loudness follows
+                # AM instead of pumping as the harmonics slide through a low F1
+                # (the low-vowel wobble).  Per block at the interpolated pitch --
+                # the old anchor-pitch version could not track a glide.  The
+                # correction is toward the utterance's median gain and clamped to
+                # +/-6 dB, so overall level is preserved and a near-gainless
+                # frame cannot spike the amplitude into an onset lip-smack.
+                g = _cascade_gain(fmnts, p, synth_rate, source_tilt=source_tilt)
+                amp *= min(max(level_ref / g, 0.5), 2.0)
 
             if cur['noise']:
                 ng = NOISE_GAIN if noise_gain is None else noise_gain
@@ -517,11 +582,7 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
             x = x * amp
 
             for i in range(nformants):
-                pf, pbw = prev['formants'][i] if i < len(prev['formants']) \
-                    else cur['formants'][i]
-                cf, cbw = cur['formants'][i]
-                fq = pf + (cf - pf) * t0
-                bw = pbw + (cbw - pbw) * t0
+                fq, bw = fmnts[i]
                 a0, b1, b2 = _resonator(fq, bw, synth_rate)
                 x, zi[i] = lfilter([a0], [1.0, -b1, -b2], x, zi=zi[i])
 
