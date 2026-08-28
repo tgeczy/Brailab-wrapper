@@ -25,7 +25,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import brailab_device
 import synth
+import chip_synth
 import talkhun
+
+#: float chip render (peak ~1) -> int16 at 10 kHz, the level/rate Speaker.play
+#: expects (it resamples to the device).  Renders through the rebuilt 10 kHz
+#: PCF8200 core so the emulator's voice matches the v3.0 NVDA synth.
+_CHIP_SCALE = 16000.0
+
+
+def _chiprender(seq, furcsa):
+    import numpy as np
+    x = chip_synth.render_chip_fast(seq, furcsa_override=furcsa)
+    if not len(x):
+        return np.zeros(0, dtype=np.int16)
+    return np.clip(x * _CHIP_SCALE, -32767, 32767).astype(np.int16)
 
 try:
     import msvcrt
@@ -222,8 +236,7 @@ class Session:
     def say_ui(self, text):
         """Speak an interface prompt, out of band from the guest."""
         try:
-            self.speaker.play(synth.render(self.ui.capture(text),
-                                           furcsa=self.furcsa))
+            self.speaker.play(_chiprender(self.ui.capture(text), self.furcsa))
         except Exception:
             pass
 
@@ -267,7 +280,7 @@ class Session:
                      self.host.vtime - stamps[-1],
                      self.speaker.seconds_queued))
         try:
-            self.speaker.play(synth.render(new, furcsa=self.furcsa))
+            self.speaker.play(_chiprender(new, self.furcsa))
         except Exception:
             pass
 
@@ -299,7 +312,7 @@ class Session:
             if self.last_pitch is not None:
                 head = [('pitch', self.last_pitch)] + head
             try:
-                self.speaker.play(_blip(synth.render(head, furcsa=self.furcsa)))
+                self.speaker.play(_blip(_chiprender(head, self.furcsa)))
             except Exception:
                 pass
         return True

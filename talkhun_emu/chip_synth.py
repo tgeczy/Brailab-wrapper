@@ -180,7 +180,7 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                      ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                      pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
                      source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
-                     flat_pitch=False, **_ignored):
+                     flat_pitch=False, furcsa_override=None, **_ignored):
     """Same synthesis as render_chip (per-sample continuous interpolation, no a0)
     but built for speed: parameter trajectories and the band-limited excitation
     are vectorised, and the five-formant cascade runs as ONE manual per-sample
@@ -191,8 +191,11 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     r = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(r)
     ptables, hz_per_unit = tables[:6], tables[6]
-    furcsa = any(decode_control(v)['furcsa'] for k, v in seq
-                 if k == 'ctrl' and not decode_control(v)['stop'])
+    if furcsa_override is not None:
+        furcsa = bool(furcsa_override)
+    else:
+        furcsa = any(decode_control(v)['furcsa'] for k, v in seq
+                     if k == 'ctrl' and not decode_control(v)['stop'])
     nf = 4 if furcsa else 5
     rng = np.random.default_rng(seed)
 
