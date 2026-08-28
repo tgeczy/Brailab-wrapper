@@ -71,6 +71,7 @@ class SynthDriver(SynthDriver):
         self._furcsa = False
         self._useIntonation = True
         self.speaking = False
+        self._gen = 0                     # bumped on cancel; stale utterances/callbacks self-check
 
         self._engine = talkhun.load()     # boots TALKHUN under Unicorn (~1-2 s, once)
 
@@ -91,6 +92,11 @@ class SynthDriver(SynthDriver):
         return 0.9 - 0.55 * (max(0, min(100, self._rate)) / 100.0)
 
     def _render(self, text):
+        # A lone capital reads as a Roman numeral in TALKHUN ("I" -> "első");
+        # a trailing space makes the engine read it as the letter instead. Only
+        # single-character utterances (character echo / spelling) need this.
+        if len(text) == 1:
+            text = text + " "
         self._engine.feed(ESC + ("F1" if self._furcsa else "F0"))
         seq = self._engine.capture(text)
         x = chip_synth.render_chip_fast(seq, time_scale=self._timeScale(),
@@ -133,49 +139,50 @@ class SynthDriver(SynthDriver):
 
     def speak(self, speechSequence):
         blocks, anyText, allIndexes = self._buildBlocks(speechSequence)
+        gen = self._gen                   # valid until a cancel bumps _gen
         if not anyText:
-            def done(idxs=allIndexes):
+            def done(idxs=allIndexes, gen=gen):
+                if gen != self._gen:
+                    return
                 for i in idxs:
                     synthIndexReached.notify(synth=self, index=i)
                 synthDoneSpeaking.notify(synth=self)
-                self.speaking = False
             self._bgQueue.put(done)
             return
-        self._bgQueue.put(lambda: self._speakBg(blocks))
+        self._bgQueue.put(lambda: self._speakBg(blocks, gen))
 
-    def _speakBg(self, blocks):
-        self.speaking = True
+    def _speakBg(self, blocks, gen):
         for (text, indexesAfter) in blocks:
-            if not self.speaking:
-                break
+            if gen != self._gen:
+                return
             if text:
                 for i in range(0, len(text), MAX_STRING_LENGTH):
-                    if not self.speaking:
-                        break
+                    if gen != self._gen:
+                        return
                     try:
                         pcm = self._render(text[i:i + MAX_STRING_LENGTH])
                     except Exception:
                         log.error("brailabEmulated: render failed", exc_info=True)
-                        self.speaking = False
-                        break
-                    if pcm and self.speaking:
+                        return
+                    if pcm and gen == self._gen:
                         self._player.feed(pcm)
-            if self.speaking and indexesAfter:
+            if gen == self._gen and indexesAfter:
                 idxs = list(indexesAfter)
 
-                def cb(idxs=idxs):
-                    if self.speaking:
+                def cb(idxs=idxs, gen=gen):
+                    if gen == self._gen:
                         for i in idxs:
                             synthIndexReached.notify(synth=self, index=i)
                 self._player.feed(b"", 0, onDone=cb)
 
-        def doneCb():
-            self.speaking = False
-            synthDoneSpeaking.notify(synth=self)
+        def doneCb(gen=gen):
+            if gen == self._gen:
+                synthDoneSpeaking.notify(synth=self)
         self._player.feed(b"", 0, onDone=doneCb)
         self._player.idle()
 
     def cancel(self):
+        self._gen += 1                    # invalidate the in-flight utterance + its callbacks
         self.speaking = False
         try:
             self._player.stop()
