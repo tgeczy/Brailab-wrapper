@@ -31,7 +31,6 @@ pcf8200.load_real_tables).
 import math
 
 import numpy as np
-from scipy.signal import decimate, lfilter
 
 import pcf8200
 from pcf8200 import (F1_TAB, F2_TAB, F3_TAB, BW_TAB, FS_TAB, FD_MULT,
@@ -407,6 +406,7 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
     through an anti-alias filter, so the sawtooth's harmonics above the chip's
     5 kHz band do not fold back in.
     """
+    from scipy.signal import decimate, lfilter  # lazy: this reference core is off the bundle path
     synth_rate = sample_rate * oversample
     # Settle the filter shape up front: furcsa changes the formant count, and
     # rebuilding the cascade mid-utterance would drop its state.
@@ -675,13 +675,24 @@ def compress(pcm, ratio=0.55, attack_ms=8.0, release_ms=60.0,
 
 
 def resample(pcm, src_rate=SAMPLE_RATE, dst_rate=OUT_RATE):
-    """Rate-convert int16 mono, preserving level."""
+    """Rate-convert int16 mono, preserving level.  Pure-numpy band-limited FFT
+    resample (same method as scipy.signal.resample) so the portable games bundle
+    needs no scipy: upsampling zero-pads the spectrum, so no imaging 'fizz'."""
     if src_rate == dst_rate or len(pcm) == 0:
         return pcm
-    from math import gcd
-    from scipy.signal import resample_poly
-    g = gcd(int(src_rate), int(dst_rate))
-    y = resample_poly(pcm.astype(np.float64), dst_rate // g, src_rate // g)
+    x = pcm.astype(np.float64)
+    n = len(x)
+    m = int(round(n * float(dst_rate) / float(src_rate)))
+    if m <= 0:
+        return pcm[:0]
+    X = np.fft.rfft(x)
+    nb = m // 2 + 1
+    Y = np.zeros(nb, dtype=complex)
+    kc = min(nb, len(X))
+    Y[:kc] = X[:kc]
+    if m % 2 == 0 and kc == nb and nb > 1:
+        Y[-1] = Y[-1].real            # new Nyquist bin is real (mirror scipy.resample)
+    y = np.fft.irfft(Y, m) * (float(m) / n)
     return np.clip(y, -CLIP, CLIP).astype(np.int16)
 
 

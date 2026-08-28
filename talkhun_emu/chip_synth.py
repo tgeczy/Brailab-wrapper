@@ -21,7 +21,6 @@ Everything the theory disputes is switchable for A/B: `source` (pulse|saw),
 """
 import math
 import numpy as np
-from scipy.signal import lfilter, resample_poly, butter, sosfilt
 
 import pcf8200
 from pcf8200 import decode_frame, decode_control, FD_MULT
@@ -36,6 +35,16 @@ STEP = STD // 8                        # 16 samples = one of the 8 interp steps
 # memory/pcf8200-wobble-diagnosis.md for the full derivation.
 CHIP_TILT_HZ = 600.0                   # glottal source rolloff (tames the bright "rattle")
 CHIP_LOWPASS_HZ = 2600.0               # output low-pass (finishes the rattle removal)
+
+# butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
+# a0=1), hardcoded so the default output low-pass needs no scipy at all.  A
+# non-default `lowpass` value falls back to a lazy scipy import.  Regenerate with
+# scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if CHIP_LOWPASS_HZ moves.
+_LP2600_SOS = (
+    (0.10631234573760745, 0.2126246914752149, 0.10631234573760745,
+     0.06533681044002995, 0.04055215548149342),
+    (1.0, 2.0, 1.0, 0.09087377369825426, 0.4472530945667702),
+)
 
 
 def _interp_formants(prev, cur, frac, nf):
@@ -52,6 +61,7 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                 pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
                 staircase=False, source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                 flat_pitch=False, smooth_block=8):
+    from scipy.signal import lfilter, resample_poly, butter, sosfilt  # A/B tool, off the bundle path
     FS = CHIP_RATE
     real = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(real)
@@ -261,11 +271,24 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         idx = np.where(np.floor(pc[1:]) > np.floor(pc[:-1]))[0] + 1
         voiced[idx] = 1.0
     if source_tilt:
+        # One-pole glottal tilt on the VOICED branch only (the noise branch must
+        # stay untinted).  Manual so no scipy: y[n]=(1-ta)*v[n]+ta*y[n-1], which
+        # is exactly lfilter([1-ta],[1,-ta], voiced) with zero initial state.
         ta = math.exp(-2.0 * math.pi * source_tilt / FS)
-        voiced = lfilter([1.0 - ta], [1.0, -ta], voiced)
+        c0 = 1.0 - ta
+        vl = voiced.tolist()
+        yprev = 0.0
+        for n in range(N):
+            yprev = c0 * vl[n] + ta * yprev
+            vl[n] = yprev
+        voiced = np.asarray(vl)
     exc = np.where(noise, rng.uniform(-noise_gain, noise_gain, N), voiced) * amp
 
-    # ---- five-formant cascade: one manual per-sample loop, no scipy ----
+    # ---- five-formant cascade + output low-pass: one manual per-sample loop ----
+    # The cascade is the chip's all-pole resonators.  The 2-section Butterworth
+    # low-pass (default 2600 Hz) is fused into the SAME loop as two transposed-
+    # direct-form-II biquads (matching scipy.signal.sosfilt, zero ICs), so the
+    # whole render needs no scipy.  A non-default `lowpass` falls back to lazy scipy.
     B1 = []
     B2 = []
     for i in range(nf):
@@ -277,19 +300,41 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     y1 = [0.0] * nf
     y2 = [0.0] * nf
     rng_nf = range(nf)
-    for k in range(N):
-        v = xl[k]
-        for i in rng_nf:
-            yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
-            y2[i] = y1[i]
-            y1[i] = yn
-            v = yn
-        xl[k] = v
-    sig = np.array(xl) * scale
+    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
+    if lp_default:
+        (lb0, lb1, lb2, la1, la2) = _LP2600_SOS[0]
+        (mb0, mb1, mb2, ma1, ma2) = _LP2600_SOS[1]
+        lz0 = lz1 = mz0 = mz1 = 0.0
+        for k in range(N):
+            v = xl[k]
+            for i in rng_nf:
+                yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
+                y2[i] = y1[i]
+                y1[i] = yn
+                v = yn
+            o = lb0 * v + lz0                       # low-pass section 1
+            lz0 = lb1 * v - la1 * o + lz1
+            lz1 = lb2 * v - la2 * o
+            w = mb0 * o + mz0                        # low-pass section 2
+            mz0 = mb1 * o - ma1 * w + mz1
+            mz1 = mb2 * o - ma2 * w
+            xl[k] = w
+    else:
+        for k in range(N):
+            v = xl[k]
+            for i in rng_nf:
+                yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
+                y2[i] = y1[i]
+                y1[i] = yn
+                v = yn
+            xl[k] = v
+    sig = np.array(xl) * scale                       # low-pass is linear -> commutes with scale
 
-    if lowpass:
+    if lowpass and not lp_default:
+        from scipy.signal import butter, sosfilt
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
     if out_rate != FS:
+        from scipy.signal import resample_poly
         g = math.gcd(int(out_rate), FS)
         sig = resample_poly(sig, int(out_rate) // g, FS // g)
     return sig
