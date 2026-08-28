@@ -35,3 +35,7 @@ talkhun_emu/build/
 talkhun_emu/dist/
 talkhun_emu/release/
 talkhun_emu/*.spec
+
+# emulated-addon build output (bundled deps + Arato's TALKHUN0.COM -- release only)
+/release/
+nvda_driver/brailabEmulated/_stage/
