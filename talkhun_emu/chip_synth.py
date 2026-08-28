@@ -50,7 +50,8 @@ def _interp_formants(prev, cur, frac, nf):
 def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                 ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                 pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
-                staircase=False, source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ):
+                staircase=False, source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                flat_pitch=False, smooth_block=8):
     FS = CHIP_RATE
     real = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(real)
@@ -87,12 +88,14 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
             prev = dict(cur)
 
         n = max(STEP, int(round(STD * FD_MULT[d['FD']] * time_scale)))
-        if pitch_mode == 'cumulative':
+        if flat_pitch:
+            pt = anchor                                    # intonation off: pin F0
+        elif pitch_mode == 'cumulative':
             pt = min(max(pitch + cur['pi'] * FD_MULT[d['FD']], 40.0), 400.0)
         else:
             pt = min(max(anchor + cur['pi'], 40.0), 400.0)
 
-        block = STEP if staircase else 2                   # 2 samples = 0.2 ms fine interp
+        block = STEP if staircase else max(1, smooth_block)  # continuous-interp granularity
         pos = 0
         sub = 0
         while pos < n:
@@ -166,6 +169,122 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         # Output low-pass: with the source tilt this is what finally matched
         # TTS.dll by ear -- it removes the bright top-end "rattle" our 5 kHz-wide
         # cascade carries where TTS.dll is already dark.
+        sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
+    if out_rate != FS:
+        g = math.gcd(int(out_rate), FS)
+        sig = resample_poly(sig, int(out_rate) // g, FS // g)
+    return sig
+
+
+def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
+                     ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
+                     pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                     source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                     flat_pitch=False, **_ignored):
+    """Same synthesis as render_chip (per-sample continuous interpolation, no a0)
+    but built for speed: parameter trajectories and the band-limited excitation
+    are vectorised, and the five-formant cascade runs as ONE manual per-sample
+    Python loop instead of ~6 scipy.lfilter() calls per 2-sample block.  Kills
+    the lfilter per-call overhead that made the block version ~20x too slow for
+    real-time NVDA use, while keeping interpolation per-sample (so no swirl)."""
+    FS = CHIP_RATE
+    r = pcf8200.REAL_TABLES if real is None else real
+    tables = active_tables(r)
+    ptables, hz_per_unit = tables[:6], tables[6]
+    furcsa = any(decode_control(v)['furcsa'] for k, v in seq
+                 if k == 'ctrl' and not decode_control(v)['stop'])
+    nf = 4 if furcsa else 5
+    rng = np.random.default_rng(seed)
+
+    # ---- pass 1: per-sample parameter trajectories (Python loop over ~frames) ----
+    a_amp, a_p, a_noise = [], [], []
+    a_fc = [[] for _ in range(nf)]
+    a_bw = [[] for _ in range(nf)]
+    anchor = pitch_byte * hz_per_unit
+    pitch = anchor
+    prev = None
+    for kind, val in seq:
+        if kind == 'pitch':
+            anchor = val * hz_per_unit
+            pitch = anchor
+            continue
+        if kind != 'frame':
+            continue
+        d = decode_frame(val)
+        cur = frame_params(d, ptables, furcsa, ampl_compress=ampl_compress)
+        if prev is None:
+            prev = dict(cur)
+        n = max(STEP, int(round(STD * FD_MULT[d['FD']] * time_scale)))
+        if flat_pitch:
+            pt = anchor
+        elif pitch_mode == 'cumulative':
+            pt = min(max(pitch + cur['pi'] * FD_MULT[d['FD']], 40.0), 400.0)
+        else:
+            pt = min(max(anchor + cur['pi'], 40.0), 400.0)
+        frac = (np.arange(n) + 0.5) / n
+        a_amp.append(prev['ampl'] + (cur['ampl'] - prev['ampl']) * frac)
+        a_p.append(pitch + (pt - pitch) * frac)
+        a_noise.append(np.full(n, bool(cur['noise'])))
+        for i in range(nf):
+            pf, pbw = prev['formants'][i] if i < len(prev['formants']) else cur['formants'][i]
+            cf, cbw = cur['formants'][i]
+            a_fc[i].append(pf + (cf - pf) * frac)
+            a_bw[i].append(pbw + (cbw - pbw) * frac)
+        pitch = pt
+        prev = cur
+    if not a_amp:
+        return np.zeros(0)
+    amp = np.concatenate(a_amp)
+    p = np.concatenate(a_p)
+    noise = np.concatenate(a_noise)
+    fc = [np.concatenate(a_fc[i]) for i in range(nf)]
+    bw = [np.concatenate(a_bw[i]) for i in range(nf)]
+    N = len(amp)
+
+    # ---- excitation (vectorised) ----
+    phase = np.cumsum(p / FS)
+    phase = phase - np.floor(phase)
+    edge = FS * 0.5
+    if source in ('blsaw', 'saw'):
+        KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
+        kk = np.arange(1, KMAX + 1)
+        W = np.clip((edge - np.outer(p, kk)) / (edge * 0.16), 0.0, 1.0)
+        W = W * W * (3.0 - 2.0 * W)
+        Smat = np.sin(2.0 * np.pi * np.outer(phase, kk))
+        voiced = -(2.0 / np.pi) * (Smat * (W / kk)).sum(1)
+    else:  # pulse
+        voiced = np.zeros(N)
+        pc = np.cumsum(p / FS)
+        idx = np.where(np.floor(pc[1:]) > np.floor(pc[:-1]))[0] + 1
+        voiced[idx] = 1.0
+    if source_tilt:
+        ta = math.exp(-2.0 * math.pi * source_tilt / FS)
+        voiced = lfilter([1.0 - ta], [1.0, -ta], voiced)
+    exc = np.where(noise, rng.uniform(-noise_gain, noise_gain, N), voiced) * amp
+
+    # ---- five-formant cascade: one manual per-sample loop, no scipy ----
+    B1 = []
+    B2 = []
+    for i in range(nf):
+        Bc = np.exp(-np.pi * bw[i] / FS)
+        Fc = 2.0 * np.cos(2.0 * np.pi * fc[i] / FS)
+        B1.append((Bc * Fc).tolist())
+        B2.append((-(Bc * Bc)).tolist())
+    xl = exc.tolist()
+    y1 = [0.0] * nf
+    y2 = [0.0] * nf
+    rng_nf = range(nf)
+    for k in range(N):
+        v = xl[k]
+        for i in rng_nf:
+            yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
+            y2[i] = y1[i]
+            y1[i] = yn
+            v = yn
+        xl[k] = v
+    sig = np.array(xl) * scale
+
+    if lowpass:
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
     if out_rate != FS:
         g = math.gcd(int(out_rate), FS)
