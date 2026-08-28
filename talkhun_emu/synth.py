@@ -210,12 +210,25 @@ CODEC_OFFSET = 0
 #: ear.  Optimise against the metric that matches the complaint.
 MALE_FORMANTS = 5
 
-#: Parameters are held constant over a block this long and interpolated between
-#: blocks.  The datasheet is specific about this: amplitude, pitch, formant
-#: frequency and bandwidth are all "updated eight times per speech frame by
-#: linear interpolation", so a block is an eighth of a standard frame.
-#: A standard frame is 12.8 ms, so an eighth of one is 1.6 ms at SYNTH_RATE.
-BLOCK = int(round(0.0016 * SYNTH_RATE))
+#: Formant coefficients are recomputed and the parameters re-interpolated every
+#: BLOCK samples.  The datasheet interpolates parameters 8x per 12.8 ms frame,
+#: i.e. every 1.6 ms -- but holding the resonator COEFFICIENTS constant for
+#: 1.6 ms at the 80 kHz synthesis rate (128 samples) and then stepping them
+#: makes each IIR section transient at every boundary, heard as a "swirl" over
+#: fast formant transitions (/r/, consonant clusters).  Updating 8x finer, every
+#: 0.2 ms, smooths the coefficient trajectory and removes it (confirmed by ear);
+#: the parameter TARGETS still move on the datasheet's 8-steps-per-frame grid.
+#: Costs ~5x realtime vs ~18x, still well above real time for a screen reader.
+BLOCK = int(round(0.0002 * SYNTH_RATE))
+
+#: Band-limit the voiced excitation to the 5 kHz speech band.  A naive sawtooth
+#: sampled even at 80 kHz still carries harmonics above the 40 kHz synthesis
+#: Nyquist that fold back into 0-5 kHz as inharmonic partials -- heard as a
+#: "swirl" over the voice, worst at steady pitch (the folded partials are fixed
+#: frequencies that beat against the steady harmonics).  Summing only the
+#: harmonics up to the band edge removes it at the source: measured inharmonic
+#: energy in 2-5 kHz drops from ~12% to ~0.2%, cheaper than raising oversampling.
+BANDLIMIT = True
 
 
 def _resonator(f, bw, fs):
@@ -359,7 +372,7 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
            codec_offset=CODEC_OFFSET, flat_pitch=False,
            noise_gain=None, bw_scale=None, aspiration=None,
            pitch_mode=None, level_track=True, ampl_compress=None,
-           real=None):
+           real=None, bandlimited=None, soft_start=True):
     """Render a captured adapter stream to int16 PCM at `sample_rate`.
 
     `seq` is what Talkhun.capture() returns: ('pitch', b), ('ctrl', bytes) and
@@ -389,6 +402,7 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
     tables = active_tables(real)
     ptables, hz_per_unit = tables[:6], tables[6]
     eff_offset = 0 if real else codec_offset
+    bl = BANDLIMIT if bandlimited is None else bandlimited
 
     base_ms = FS_TAB[fs_code][1]
     nformants = nformants_override or (4 if furcsa else MALE_FORMANTS)
@@ -418,7 +432,12 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
         cur = frame_params(d, ptables, furcsa, female_scale, eff_offset,
                            bw_scale, ampl_compress)
         if prev is None:
-            prev = dict(cur, ampl=0.0)
+            # First frame: optionally ramp amplitude up from zero.  The chip's
+            # own reset does soften the onset, but a full 12.8 ms ramp on top of
+            # the (unavoidable) filter warm-up is an audible fade-in at the head
+            # of every utterance.  soft_start=False plays the first frame at its
+            # real level, leaving only the short filter warm-up.
+            prev = dict(cur, ampl=0.0) if soft_start else dict(cur)
         if level_track:
             cur['gain'] = _cascade_gain(cur['formants'][:nformants],
                                         anchor, synth_rate,
@@ -458,8 +477,23 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
                 # is no discontinuity at a block or frame boundary.
                 step = p / synth_rate
                 ph = phase + step * np.arange(m)
-                x = 2.0 * (ph % 1.0) - 1.0
                 phase = (phase + step * m) % 1.0
+                if bl:
+                    # Band-limited sawtooth: sum harmonics only to the 5 kHz band
+                    # edge, so none fold back as inharmonic swirl.  Same 1/k
+                    # rolloff as the ramp, so the cascade-gain correction holds.
+                    # The top harmonics are raised-cosine faded toward the edge,
+                    # so one entering/leaving as the pitch drifts does so smoothly
+                    # instead of snapping on at a block boundary (an audible tick).
+                    edge = sample_rate * 0.5
+                    kmax = max(1, int(edge / max(p, 1e-6)) + 1)
+                    kk = np.arange(1, kmax + 1)
+                    w = np.clip((edge - kk * p) / (edge * 0.16), 0.0, 1.0)
+                    w = w * w * (3.0 - 2.0 * w)
+                    x = -(2.0 / np.pi) * (
+                        np.sin(2.0 * np.pi * np.outer(ph, kk)) * (w / kk)).sum(1)
+                else:
+                    x = 2.0 * (ph % 1.0) - 1.0
                 asp = ASPIRATION if aspiration is None else aspiration
                 if asp:
                     # A perfectly periodic source leaves near-silence between
