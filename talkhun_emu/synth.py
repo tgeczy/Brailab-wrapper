@@ -123,8 +123,15 @@ SOURCE_TILT_HZ = None
 AMPL_COMPRESS = 1.0
 
 #: Divide out the formant cascade's own gain so loudness follows the frame's
-#: AM field instead of drifting with formant position.
-LEVEL_TRACK = True
+#: AM field instead of drifting with formant position.  Default OFF: the gain
+#: estimate is recomputed per frame and interpolated, so as a vowel's formants
+#: micro-drift the correction wobbles the amplitude -- audible as a wavery
+#: "tape-recorder" quality on sustained LOW vowels (/o/, /u/), whose high
+#: cascade gain makes the drift largest.  A codex:rescue review confirmed the
+#: synthesis is otherwise steady on a constant frame (pitch-synchronous RMS
+#: flat to 0.003 dB), so this drift is the one real lever; leaving it off costs
+#: only a little cross-vowel loudness normalisation.
+LEVEL_TRACK = False
 
 #: Aspiration noise mixed into the VOICED source, relative to the sawtooth.
 ASPIRATION = 0.0
@@ -371,7 +378,7 @@ def render(seq, sample_rate=SAMPLE_RATE, furcsa=None, fs_code=None,
            nformants_override=None, source_tilt=SOURCE_TILT_HZ,
            codec_offset=CODEC_OFFSET, flat_pitch=False,
            noise_gain=None, bw_scale=None, aspiration=None,
-           pitch_mode=None, level_track=True, ampl_compress=None,
+           pitch_mode=None, level_track=LEVEL_TRACK, ampl_compress=None,
            real=None, bandlimited=None, soft_start=True):
     """Render a captured adapter stream to int16 PCM at `sample_rate`.
 
