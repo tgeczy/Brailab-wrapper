@@ -28,7 +28,12 @@ class PCF8200:
         self.source_tilt = source_tilt
         self.lowpass = lowpass
         self._pitch_byte = 46            # default start pitch
+        self._fs = 0                     # FS1/FS0: standard frame = 12.8 ms
         self._seq = []                   # ('pitch',b) / ('frame',bytes5) / ('ctrl',bytes2)
+
+    def _std_samples(self, fs):
+        """Samples in one standard frame at speed code `fs` (FS_TAB, ms)."""
+        return max(1, int(round(P.FS_TAB[fs & 3][1] * 0.001 * self.rate)))
 
     # ---- the chip's commands ----
     def pitch(self, byte):
@@ -54,6 +59,8 @@ class PCF8200:
         """Control write: STOP flag, M/F (female table), FS speed 0..3."""
         if female is not None:
             self.female = bool(female)
+        if not stop:
+            self._fs = fs & 3
         self._seq.append(('ctrl', bytes([0x00, P.control_byte(stop, self.female, fs)])))
         return self
 
@@ -73,12 +80,17 @@ class PCF8200:
         anchor = self._pitch_byte * T.PITCH_HZ_PER_UNIT
         pitch = anchor
         prev = None
+        # FS1/FS0 in the control write set the standard frame duration, and a
+        # stream may change it part-way through, so track it as we walk.
+        std = self._std_samples(self._fs)
         for kind, val in self._seq:
             if kind == 'pitch':
                 anchor = val * T.PITCH_HZ_PER_UNIT; pitch = anchor; continue
             if kind == 'ctrl':
-                if P.decode_control(val)['stop']:
+                d = P.decode_control(val)
+                if d['stop']:
                     break
+                std = self._std_samples(d['fs'])
                 continue
             if kind != 'frame':
                 continue
@@ -86,7 +98,7 @@ class PCF8200:
             cur = P.frame_params(d, female=self.female)
             if prev is None:
                 prev = dict(cur)
-            n = max(1, int(round(STD * P.FD_MULT[d['FD']])))
+            n = max(1, int(round(std * P.FD_MULT[d['FD']])))
             pt = min(max(pitch + cur['pi'] * P.FD_MULT[d['FD']], 40.0), 400.0)
             frac = (np.arange(n) + 0.5) / n
             a_amp.append(prev['ampl'] + (cur['ampl'] - prev['ampl']) * frac)
