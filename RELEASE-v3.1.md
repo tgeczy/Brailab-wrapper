@@ -50,6 +50,16 @@ One real limit remains, and it is small: the hardware voice carries one pitch pe
 utterance, so a pitch change in the middle of a sentence is not possible there.
 Capitals are unaffected — NVDA speaks a capital as its own utterance.
 
+### "Use intonation" is back on 64-bit NVDA
+
+The real-hardware add-on's intonation checkbox has been missing on 64-bit NVDA
+since the move to NVDA's 32-bit bridge, and it need not have been. The bridge
+ships accessors for only six settings, so anything else made NVDA's settings
+dialog fail and had to be filtered out of the list. But the 32-bit side has
+always been able to read and write *any* setting the driver declares — the
+missing piece was a two-line accessor on our side of the bridge, not anything in
+NVDA. It works on NVDA 2026.1 exactly as on 2026.2.
+
 ### The portable games emulator
 
 `BraiLabPC-portable.zip` — the self-contained bundle for playing the 1991 DOS
@@ -132,6 +142,16 @@ hangmagassághoz.
 Egy valódi korlát marad, és az kicsi: a hardveres hang megnyilatkozásonként egy
 hangmagasságot tud, így mondat közben nem lehet hangmagasságot váltani. A
 nagybetűket ez nem érinti — az NVDA a nagybetűt önálló megnyilatkozásként mondja.
+
+### Visszatért a „hangsúlyozás használata" 64 bites NVDA-n
+
+A valódi hardveres kiegészítő hangsúlyozás-jelölőnégyzete az NVDA 32 bites
+hídjára való átállás óta hiányzott 64 bites NVDA-n, pedig nem kellett volna. A
+híd csak hat beállításhoz hoz elérőt, így minden más hibára futtatta az NVDA
+beállításablakát, és ki kellett szűrni a listából. A 32 bites oldal viszont
+mindig is tudott *bármelyik* deklarált beállítást olvasni és írni — a hiányzó
+darab egy kétsoros elérő volt a mi oldalunkon, nem az NVDA-ban. Ugyanúgy működik
+NVDA 2026.1-en, mint 2026.2-n.
 
 ### A hordozható játékemulátor
 

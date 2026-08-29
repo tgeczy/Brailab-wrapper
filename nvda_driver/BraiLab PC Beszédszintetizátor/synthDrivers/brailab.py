@@ -545,12 +545,27 @@ if _ctypes.sizeof(_ctypes.c_void_p) == 8:
 		# one declaration in the real driver above is authoritative.  A class
 		# attribute here would shadow that negotiation.
 
-		# The bridge proxy only has _get_/_set_ for these 6 settings.
-		# Filter out everything else so the voice dialog doesn't crash.
-		_BRIDGE_SAFE = frozenset({"voice", "variant", "rate", "pitch", "volume", "rateBoost"})
+		# The bridge proxy ships _get_/_set_ for only six settings -- voice,
+		# variant, rate, pitch, volume and rateBoost -- so NVDA's `getattr(synth,
+		# "useIntonation")` used to raise and the checkbox had to be filtered out
+		# of the dialog entirely.  It has been missing on 64-bit NVDA ever since.
+		#
+		# It does not have to be.  The 32-bit host's getParam/setParam are
+		# generic -- `getattr(self._synth, param)` for anything in
+		# supportedSettings -- so a setting only needs an accessor pair on THIS
+		# side.  Write them in the class body, because NVDA's AutoPropertyType
+		# metaclass builds the property from `_get_x` when the class is created
+		# and never looks again; a later setattr silently does nothing, and
+		# defining the property yourself as well raises TypeError.
+		#
+		# This works on NVDA 2026.1 exactly as it does on 2026.2 -- the bridge
+		# did not change, we simply had not used the hook.
 
-		def _get_supportedSettings(self):
-			return [s for s in super()._get_supportedSettings() if s.id in self._BRIDGE_SAFE]
+		def _get_useIntonation(self):
+			return self._remoteService.getParam("useIntonation")
+
+		def _set_useIntonation(self, value):
+			self._remoteService.setParam("useIntonation", value)
 
 		@classmethod
 		def check(cls):
