@@ -106,26 +106,49 @@ class SynthDriver(SynthDriver):
                     x[-nf:] *= w[::-1]
         return np.clip(x * (OUT_SCALE * gain), -32767, 32767).astype("<i2").tobytes()
 
+    # The engine's own intonation-unit delimiters.  capture() emits one start
+    # sequence (its own pitch) per delimited unit, so capturing text clause-by-
+    # clause at these marks is frame-for-frame identical to capturing the whole
+    # string -- but the FIRST clause's frames are ready after ~one clause-capture
+    # (~0.2 s) instead of the whole-string capture (~0.6 s for a long paragraph),
+    # which is the real long-text latency (TALKHUN under Unicorn, upstream of the
+    # chip render).  Never split anywhere else -- splitting mid-unit is what made
+    # 3.0.1 chop (each fragment got its own falling contour).
+    _DELIMS = ".,;:?!"
+
+    def _clauses(self, text):
+        out, start = [], 0
+        for i, ch in enumerate(text):
+            if ch in self._DELIMS:
+                out.append(text[start:i + 1])
+                start = i + 1
+        if start < len(text):
+            out.append(text[start:])
+        out = [c for c in out if c.strip()]
+        return out or ([text] if text.strip() else [])
+
     def _renderStream(self, text):
-        # A lone capital reads as a Roman numeral in TALKHUN ("I" -> "első"); a
-        # trailing space makes the engine read it as the letter instead. Only
-        # single-character utterances (character echo / spelling) need this.
-        if len(text) == 1:
-            text = text + " "
-        self._engine.feed(ESC + ("F1" if self._furcsa else "F0"))
-        seq = self._engine.capture(text)
+        # Capture + render CLAUSE by clause, and within each clause stream the
+        # render's output blocks (render_chip_stream).  Clauses butt together at
+        # the pauses the delimiters already carry; fade only the very first block
+        # in / the very last out, never between blocks or clauses -> no seams.
         gain = 0.25 + 1.0 * (self._volume / 100.0)
-        # Stream the OUTPUT of ONE continuous render: chip_synth guarantees the
-        # concatenated blocks are bit-identical to a whole render_chip_fast, so the
-        # SOUND is unchanged (one intonation contour, no per-piece pitch reset), but
-        # the first block reaches the player after ~0.4 s of speech is ready instead
-        # of after the whole utterance renders.  Hold the previous block so the last
-        # one can be faded out; fade in only the first.
+
+        def _blocks():
+            for clause in self._clauses(text):
+                # A lone capital reads as a Roman numeral in TALKHUN ("I" -> "első");
+                # a trailing space makes the engine read it as the letter instead.
+                c = clause + " " if len(clause) == 1 else clause
+                self._engine.feed(ESC + ("F1" if self._furcsa else "F0"))
+                seq = self._engine.capture(c)
+                for blk in chip_synth.render_chip_stream(
+                        seq, time_scale=self._timeScale(),
+                        flat_pitch=not self._useIntonation):
+                    yield blk
+
         prev = None
         first = True
-        for blk in chip_synth.render_chip_stream(
-                seq, time_scale=self._timeScale(),
-                flat_pitch=not self._useIntonation):
+        for blk in _blocks():
             if prev is not None:
                 yield self._toPCM(prev, gain, first, False)
                 first = False
@@ -177,18 +200,15 @@ class SynthDriver(SynthDriver):
             if gen != self._gen:
                 return
             if text:
-                for i in range(0, len(text), MAX_STRING_LENGTH):
-                    if gen != self._gen:
-                        return
-                    try:
-                        for pcm in self._renderStream(text[i:i + MAX_STRING_LENGTH]):
-                            if gen != self._gen:
-                                return
-                            if pcm:
-                                self._player.feed(pcm)
-                    except Exception:
-                        log.error("brailabEmulated: render failed", exc_info=True)
-                        return
+                try:
+                    for pcm in self._renderStream(text):
+                        if gen != self._gen:
+                            return
+                        if pcm:
+                            self._player.feed(pcm)
+                except Exception:
+                    log.error("brailabEmulated: render failed", exc_info=True)
+                    return
             if gen == self._gen and indexesAfter:
                 idxs = list(indexesAfter)
 
