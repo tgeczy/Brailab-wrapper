@@ -199,6 +199,9 @@ class SynthDriver(SynthDriver):
 		# What is actually set on the engine right now.  It follows _cachedPitch
 		# except while a PitchCommand (a capital) is in force.
 		self._appliedPitch = self._cachedPitch
+		self._diagPitch("driver ready; supportedCommands=%s cachedPitch=%s"
+						% (sorted(c.__name__ for c in self.supportedCommands),
+						   self._cachedPitch))
 		self._cachedVolume = result.get("volume", 0)
 
 		# Background queue thread (for ordering speech requests)
@@ -324,6 +327,11 @@ class SynthDriver(SynthDriver):
 				synthDoneSpeaking.notify(synth=self)
 			return
 
+		if any(isinstance(i, PitchCommand) for i in speechSequence):
+			self._diagPitch("speak() got %s"
+							% [type(i).__name__ + ("(%s)" % i.offset
+													if isinstance(i, PitchCommand) else "")
+							   for i in speechSequence])
 		hasIndex = any(isinstance(i, IndexCommand) for i in speechSequence)
 		blocks, anyText, allIndexes = self._buildBlocks(speechSequence, coalesceSayAll=hasIndex)
 
@@ -449,6 +457,17 @@ class SynthDriver(SynthDriver):
 
 	# ----- Pitch, including NVDA's capital pitch change -----
 
+	def _diagPitch(self, msg):
+		"""Temporary, loud diagnosis of the capital-pitch path (3.1.2).
+
+		At INFO so it lands in a normal NVDA log without debug logging on.
+		Remove once the path is confirmed working.
+		"""
+		try:
+			log.info("Brailab pitch: %s" % msg)
+		except Exception:
+			pass
+
 	def _applyBlockPitch(self, adj):
 		"""Set the engine's pitch for one block, user setting plus NVDA's offset.
 
@@ -462,12 +481,21 @@ class SynthDriver(SynthDriver):
 		if adj:
 			pct = max(0, min(100, self._get_pitch() + adj))
 			want = self._percentToParam(pct, minPitch, maxPitch)
+		if adj:
+			self._diagPitch("adj=%s userPct=%s -> raw %s (applied %s, cached %s)"
+							% (adj, self._get_pitch(), want, self._appliedPitch,
+							   self._cachedPitch))
 		if want != self._appliedPitch:
 			try:
 				_brailab.set_pitch(want)
 				self._appliedPitch = want
+				if adj:
+					self._diagPitch("set_pitch(%s) sent to the host" % want)
 			except Exception:
 				log.error("Brailab: set_pitch failed", exc_info=True)
+		elif adj:
+			self._diagPitch("NO CHANGE: want %s already applied -- the capital "
+							"cannot be heard at this user pitch" % want)
 
 	def _restorePitch(self):
 		if self._appliedPitch != self._cachedPitch:
