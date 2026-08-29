@@ -36,6 +36,20 @@ STEP = STD // 8                        # 16 samples = one of the 8 interp steps
 CHIP_TILT_HZ = 600.0                   # glottal source rolloff (tames the bright "rattle")
 CHIP_LOWPASS_HZ = 2600.0               # output low-pass (finishes the rattle removal)
 
+#: Output high-pass, and the reason for it.  A real PCF8200 device drives an
+#: AC-coupled amplifier into a small speaker, so nothing near the bottom of the
+#: band reaches the listener.  Rendering without it leaves about a third of the
+#: energy below 250 Hz, where a recording of real hardware has 1.5%, and that
+#: excess eats the headroom -- which is what made the voice sound boxy and
+#: distant while measuring 5-17 dB down across the whole 500-3000 Hz range.
+#: Three one-pole stages: 18 dB/octave, and no scipy needed.
+CHIP_HIGHPASS_HZ = 600.0
+CHIP_HIGHPASS_POLES = 3
+#: Removing the sub-bass costs about 18 dB; this is what fits back under the
+#: peaks without clipping.  The remainder is left to the driver's volume
+#: control -- a limiter would buy the rest at the price of distortion.
+CHIP_HIGHPASS_MAKEUP = 4.5
+
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so the default output low-pass needs no scipy at all.  A
 # non-default `lowpass` value falls back to a lazy scipy import.  Regenerate with
@@ -272,7 +286,8 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
 
 
 def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
-                   source_tilt, seed, scale, lp_default, block):
+                   source_tilt, seed, scale, lp_default, block,
+                   highpass=CHIP_HIGHPASS_HZ):
     """Band-limited excitation + one-pole source tilt + the five-formant cascade
     (+ fused default low-pass), computed and YIELDED in ~`block`-sample float
     arrays as it goes (block <= 0 => a single array).  EVERY state -- the tilt
@@ -321,6 +336,14 @@ def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
         (lb0, lb1, lb2, la1, la2) = _LP2600_SOS[0]
         (mb0, mb1, mb2, ma1, ma2) = _LP2600_SOS[1]
         lz0 = lz1 = mz0 = mz1 = 0.0
+    # Output high-pass: three one-poles, state carried like everything else.
+    # A real PCF8200 device drives an AC-coupled amplifier into a small
+    # speaker, so the bottom of the band never reaches a listener; rendering
+    # without it leaves a third of the energy below 250 Hz, eating the
+    # headroom and making the voice boxy.  See CHIP_HIGHPASS_HZ.
+    hpa = math.exp(-2.0 * math.pi * float(highpass) / FS) if highpass else None
+    hx0 = hy0 = hx1 = hy1 = hx2 = hy2 = 0.0
+    gain = scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0)
 
     step = block if (block and block > 0) else N
     if step <= 0:
@@ -362,15 +385,21 @@ def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
                 v = mb0 * o + mz0                    # low-pass section 2
                 mz0 = mb1 * o - ma1 * v + mz1
                 mz1 = mb2 * o - ma2 * v
+            if hpa is not None:
+                hy0 = hpa * (hy0 + v - hx0); hx0 = v; v = hy0
+                hy1 = hpa * (hy1 + v - hx1); hx1 = v; v = hy1
+                hy2 = hpa * (hy2 + v - hx2); hx2 = v; v = hy2
             outb[k] = v
-        yield np.array(outb) * scale                # low-pass linear -> commutes with scale
+        yield np.array(outb) * gain                 # linear -> commutes with the gain
         a = b
+
 
 
 def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                      ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                      pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
                      source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                     highpass=CHIP_HIGHPASS_HZ,
                      flat_pitch=False, furcsa_override=None, **_ignored):
     """Fast whole-utterance render: per-sample continuous interpolation, no a0,
     band-limited excitation, and the five-formant cascade as ONE manual per-sample
@@ -386,7 +415,7 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
     sig = np.concatenate(list(_render_blocks(amp, p, phase, noise, fc, bw, nf, N,
                                              source, noise_gain, source_tilt, seed,
-                                             scale, lp_default, 0)))
+                                             scale, lp_default, 0, highpass)))
     if lowpass and not lp_default:
         from scipy.signal import butter, sosfilt
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
@@ -401,6 +430,7 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                        ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                        pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
                        source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                       highpass=CHIP_HIGHPASS_HZ,
                        flat_pitch=False, furcsa_override=None, block=4000, **_ignored):
     """Generator form of render_chip_fast: yields the SAME samples in order, in
     ~`block`-sample float chunks, AS they are produced -- so the NVDA driver can
@@ -417,7 +447,8 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
             seq, out_rate=out_rate, source=source, a0=a0, ampl_compress=ampl_compress,
             time_scale=time_scale, real=real, pitch_byte=pitch_byte, pitch_mode=pitch_mode,
             seed=seed, noise_gain=noise_gain, scale=scale, source_tilt=source_tilt,
-            lowpass=lowpass, flat_pitch=flat_pitch, furcsa_override=furcsa_override)
+            lowpass=lowpass, highpass=highpass, flat_pitch=flat_pitch,
+            furcsa_override=furcsa_override)
         if len(x):
             yield x
         return
@@ -428,4 +459,5 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     if N == 0:
         return
     yield from _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source,
-                              noise_gain, source_tilt, seed, scale, lp_default, block)
+                              noise_gain, source_tilt, seed, scale, lp_default, block,
+                              highpass)

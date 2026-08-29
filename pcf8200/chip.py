@@ -19,6 +19,27 @@ RATE = 10000                 # the chip's internal speech rate (fixed by silicon
 TILT_HZ = 600.0              # glottal source rolloff (tames the bright buzz)
 LOWPASS_HZ = 2600.0         # output low-pass
 
+#: Output high-pass, in hertz, and how many one-pole stages of it.
+#:
+#: A PCF8200 never reaches a listener directly: it drives an AC-coupled
+#: amplifier and a small speaker, and neither passes the bottom of the band.
+#: Rendering without that leaves about a third of the energy below 250 Hz --
+#: where a recording of real Ciber232P hardware has 1.5% -- and the excess eats
+#: the headroom, which measures as 5-17 dB missing across 500-3000 Hz and
+#: sounds boxy and distant.  Adding it takes the spectral error against that
+#: recording from 0.955 to 0.108, without moving the low-pass or the source
+#: tilt at all.
+#:
+#: This models the *device*, not the bare chip.  Pass highpass=0 to hear the
+#: chip's own output.
+HIGHPASS_HZ = 600.0
+HIGHPASS_POLES = 3
+
+#: Removing the sub-bass costs about 18 dB of loudness; this is what fits back
+#: under the peaks without clipping.  Anything more needs a limiter, which
+#: would trade one artefact for another.
+HIGHPASS_MAKEUP = 4.5
+
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so no scipy is needed.  Regenerate with
 # scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if LOWPASS_HZ moves.
@@ -47,8 +68,30 @@ def _resample(x, src, dst):
     return np.fft.irfft(Y, m) * (float(m) / n)
 
 
+
+def _apply_highpass(sig, fc, rate):
+    """Three one-pole high-passes and the makeup gain that goes with them.
+
+    See HIGHPASS_HZ for why a device needs this and the bare chip does not.
+    """
+    if not fc:
+        return sig
+    import math
+    a = math.exp(-2.0 * math.pi * float(fc) / rate)
+    for _ in range(HIGHPASS_POLES):
+        out = np.empty_like(sig)
+        px = py = 0.0
+        for n in range(sig.shape[0]):
+            x = sig[n]
+            py = a * (py + x - px)
+            px = x
+            out[n] = py
+        sig = out
+    return sig * HIGHPASS_MAKEUP
+
 def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
-           lowpass=LOWPASS_HZ, noise_gain=0.5, seed=12345):
+           lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=0.5,
+           seed=12345):
     """Render formant tracks to a float waveform (roughly -1..1).
 
     Parameters
@@ -124,6 +167,7 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), np.asarray(exc.tolist()))
     if rate != FS:
         sig = _resample(sig, FS, rate)
+    sig = _apply_highpass(sig, highpass, rate)
     return sig
 
 
