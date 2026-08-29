@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
                               errors='replace')
 
-import synth
+import brai_synth as synth   # renamed from 'synth' (too generic -> NVDA addon clash)
 from talkhun import load
 
 ESC = '\x1b'

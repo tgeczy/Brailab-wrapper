@@ -27,7 +27,7 @@ open(pth, "w").write("python313.zip\n.\n../app\n../lib\n")
 
 # 2) app: engine sources
 app = os.path.join(OUT, "app"); os.makedirs(app)
-APP_PY = ["braipc.py", "brailab_device.py", "dos_host.py", "synth.py",
+APP_PY = ["braipc.py", "brailab_device.py", "dos_host.py", "brai_synth.py",
           "chip_synth.py", "pcf8200.py", "pcf8200_tables.py", "talkhun.py"]
 for m in APP_PY:
     shutil.copy2(os.path.join(EMU, m), os.path.join(app, m))

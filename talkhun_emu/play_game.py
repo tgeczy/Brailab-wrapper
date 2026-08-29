@@ -17,7 +17,7 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8',
                               errors='replace')
 
 import brailab_device
-import synth
+import brai_synth as synth   # renamed from 'synth' (too generic -> NVDA addon clash)
 
 #: Enough Enters to walk past the title screens, where the speech actually is.
 DEFAULT_KEYS = [0x1C0D] * 40

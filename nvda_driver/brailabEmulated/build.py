@@ -25,12 +25,12 @@ EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
 ARCHIVE_SRC = os.path.join(ROOT, "BRAILAB-archive")           # TALKHUN0.COM (not in git)
 SITE = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages")
 STDLIB = os.path.join(os.path.dirname(sys.executable), "Lib")
-VERSION = "3.0.4"
+VERSION = "3.0.5"
 
 # mame_synth dropped: nothing on the driver path imports it (it only pulled in
 # scipy).  scipy dropped: chip_synth + synth are now pure-numpy (see chip_synth
 # _LP2600_SOS), which removes ~100 MB of vendored scipy from the add-on.
-ENGINE_PY = ["talkhun.py", "chip_synth.py", "synth.py",
+ENGINE_PY = ["talkhun.py", "chip_synth.py", "brai_synth.py",
              "pcf8200.py", "pcf8200_tables.py"]
 DEPS = ["numpy", "numpy.libs", "unicorn"]
 STDLIB_FILLERS = ["fileinput.py", "secrets.py", "timeit.py"]  # NVDA trims these; numpy needs them

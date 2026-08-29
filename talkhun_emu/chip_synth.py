@@ -24,7 +24,7 @@ import numpy as np
 
 import pcf8200
 from pcf8200 import decode_frame, decode_control, FD_MULT
-from synth import frame_params, active_tables
+from brai_synth import frame_params, active_tables  # renamed from 'synth' (too generic -> NVDA addon module clash)
 
 CHIP_RATE = 10000                      # internal speech rate (fixed by silicon)
 STD = int(round(0.0128 * CHIP_RATE))   # standard frame = 128 samples

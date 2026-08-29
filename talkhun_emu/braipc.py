@@ -24,7 +24,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import brailab_device
-import synth
+import brai_synth as synth   # module renamed from 'synth' (too generic -> NVDA addon clash)
 import chip_synth
 import talkhun
 

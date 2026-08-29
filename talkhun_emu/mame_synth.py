@@ -32,7 +32,7 @@ from scipy.signal import decimate, lfilter
 
 from pcf8200 import (F1_TAB, F2_TAB, F3_TAB, BW_TAB, FS_TAB, FD_MULT,
                      decode_frame, decode_control)
-from synth import (AMPL_TAB, PI_TAB, PI_NOISE, PITCH_HZ_PER_UNIT, CLIP,
+from brai_synth import (AMPL_TAB, PI_TAB, PI_NOISE, PITCH_HZ_PER_UNIT, CLIP,
                    TARGET_RMS, _SPEECH_FLOOR, SAMPLE_RATE, NOISE_GAIN)
 
 #: MEA-8000's fourth formant is a single fixed value.
