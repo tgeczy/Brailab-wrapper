@@ -140,6 +140,16 @@ class SynthDriver(SynthDriver):
 	# percentage" arrives as an offset on its own 0-100 scale.  A driver that
 	# does not list it never receives one, so the setting does nothing at every
 	# value -- which is what was happening here.
+	#
+	# HONESTY NOTE, and it matters: on this engine the pitch itself may not
+	# move.  TTS.dll's `TTS_SetPitch(int)` measured as an inert stub -- swept
+	# absolute 0-255 and signed -32..+32 with no audible effect -- because the
+	# whole ESC control layer was dropped from this build, which is also why
+	# there is no furcsa here.  The wiring below is correct and complete, so the
+	# day a build with a live pitch path turns up this works with no further
+	# change; but do not assume a capital is audibly higher on THIS DLL without
+	# listening first.  The emulated driver drives the chip directly and its
+	# pitch demonstrably moves (101.0 -> 128.2 Hz at NVDA's default +30).
 	supportedCommands = {IndexCommand, PitchCommand}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
