@@ -1,0 +1,65 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pcf8200:
+    name: pcf8200 (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the NVDA-compatible floor; 3.13 covers newer local dev
+        python-version: ["3.11", "3.13"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # The library is deliberately pure-numpy: no scipy, so it can be vendored
+      # into an NVDA add-on without dragging in a compiled stack.
+      - name: Install dependencies
+        run: pip install pytest numpy
+
+      - name: Run the pcf8200 suite
+        run: python -m pytest pcf8200/tests -v
+
+      - name: The examples must still run
+        run: |
+          cd pcf8200/examples
+          for f in *.py; do echo "-- $f"; python "$f" >/dev/null; done
+
+      # numpy only. If scipy ever creeps back in, the add-on grows by ~30 MB.
+      - name: Check the library imports without scipy
+        run: |
+          python - <<'PY'
+          import sys
+          class Blocked:
+              def find_module(self, name, path=None):
+                  if name == "scipy" or name.startswith("scipy."):
+                      raise ImportError("scipy must not be required by pcf8200")
+          sys.meta_path.insert(0, Blocked())
+          from pcf8200 import PCF8200, Voice, protocol, tables
+          chip = PCF8200(voice="male")
+          chip.pitch_hz(110)
+          chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+          chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+          assert len(chip.render()) > 0
+          print("pcf8200 imports and renders with scipy blocked")
+          PY
