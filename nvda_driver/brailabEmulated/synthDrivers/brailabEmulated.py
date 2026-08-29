@@ -29,6 +29,17 @@ _LIB = os.path.join(_ENGINE, "lib")
 for _p in (_ENGINE, _LIB):
     if os.path.isdir(_p) and _p not in sys.path:
         sys.path.insert(0, _p)
+# Carry the MSVC runtime (vcruntime140/msvcp140) + the app-local Universal CRT
+# (ucrtbase + api-ms-win-crt-*) so numpy/unicorn's native DLLs load even on a
+# machine without the VC++ redist / UCRT update (older Windows).  On current
+# Windows the OS copies are already loaded, so these are only a fallback.  Must
+# run BEFORE `import numpy`.
+_VCRT = os.path.join(_LIB, "_vcrt")
+if os.path.isdir(_VCRT):
+    try:
+        os.add_dll_directory(_VCRT)
+    except (OSError, AttributeError):
+        pass
 # Release: TALKHUN0.COM sits in <addon>/archive.  Dev: fall back to the checkout.
 _ARCHIVE = os.path.join(os.path.dirname(_HERE), "archive")
 if os.path.isdir(_ARCHIVE):

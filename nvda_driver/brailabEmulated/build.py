@@ -25,7 +25,7 @@ EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
 ARCHIVE_SRC = os.path.join(ROOT, "BRAILAB-archive")           # TALKHUN0.COM (not in git)
 SITE = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages")
 STDLIB = os.path.join(os.path.dirname(sys.executable), "Lib")
-VERSION = "3.0.3"
+VERSION = "3.0.4"
 
 # mame_synth dropped: nothing on the driver path imports it (it only pulled in
 # scipy).  scipy dropped: chip_synth + synth are now pure-numpy (see chip_synth
@@ -36,6 +36,35 @@ DEPS = ["numpy", "numpy.libs", "unicorn"]
 STDLIB_FILLERS = ["fileinput.py", "secrets.py", "timeit.py"]  # NVDA trims these; numpy needs them
 IGN = shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "tests", "test",
                              "*.lib", "*.a", "*.exp", "*.pdb", "*.h", "include", "*.pyi")
+
+
+def bundle_vcrt(dst):
+    """App-local MSVC runtime + Universal CRT, so numpy/unicorn's native DLLs load
+    even without the VC++ redist / UCRT update (older Windows).  The driver
+    os.add_dll_directory(_vcrt) before importing numpy; on modern Windows the OS
+    copies are already loaded, so these only matter as a fallback."""
+    import glob
+    os.makedirs(dst, exist_ok=True)
+    got = 0
+    win = os.environ.get("SystemRoot", r"C:\Windows")
+    vc_srcs = [os.path.join(win, "System32"), r"C:\Program Files\NVDA",
+               os.path.dirname(sys.executable)]
+    for dll in ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"):
+        for s in vc_srcs:
+            p = os.path.join(s, dll)
+            if os.path.isfile(p):
+                shutil.copy2(p, os.path.join(dst, dll)); got += 1; break
+        else:
+            print("  WARN vcrt missing:", dll)
+    kits = sorted(glob.glob(
+        r"C:\Program Files (x86)\Windows Kits\10\Redist\*\ucrt\DLLs\x64"))
+    if kits:
+        for p in (glob.glob(os.path.join(kits[-1], "ucrtbase.dll")) +
+                  glob.glob(os.path.join(kits[-1], "api-ms-win-crt-*.dll"))):
+            shutil.copy2(p, os.path.join(dst, os.path.basename(p))); got += 1
+    else:
+        print("  WARN: no Windows SDK UCRT redist -- older Windows may need the UCRT update")
+    print("  bundled %d CRT DLLs into _vcrt" % got)
 
 
 def main():
@@ -61,6 +90,7 @@ def main():
         shutil.copytree(s, os.path.join(lib, pkg), ignore=IGN)
     for f in STDLIB_FILLERS:
         shutil.copy2(os.path.join(STDLIB, f), os.path.join(lib, f))
+    bundle_vcrt(os.path.join(lib, "_vcrt"))
     talkhun = os.path.join(ARCHIVE_SRC, "TALKHUN0.COM")
     if not os.path.isfile(talkhun):
         raise SystemExit("TALKHUN0.COM not found in %s (Arato's file, release only)" % ARCHIVE_SRC)
