@@ -36,14 +36,17 @@ A caveat for the **real-hardware** add-on. Its pitch slider works, but in three
 steps only — low, normal, high — because the vendor's `TTS.dll` takes just those
 three values.
 
-**We're sorry: capital pitch change still does not work on the `TTS.dll` voice.**
-The reason is outside this add-on:
-on 64-bit NVDA the real-hardware voice runs through NVDA's 32-bit bridge, and the
-bridge rebuilds the speech sequence without pitch commands. It carries text,
-index, character-mode, language, break and phoneme commands, and drops the rest.
-The wiring here is complete and will work unchanged the day the bridge carries
-them. **For capitals you can hear today, use the emulated voice** — it runs
-in-process with no bridge in the way.
+**Correction (3.1.1):** an earlier version of these notes said capital pitch
+change could not work on the `TTS.dll` voice because NVDA's 32-bit bridge dropped
+pitch commands. **That was wrong, and unfair to NVDA — the bridge carries them
+correctly.** The fault was a bug in this add-on: the speech host applies pitch at
+the moment an utterance *runs*, and we restored the user's own setting a moment
+too early, wiping the capital's pitch before any sound was produced. Fixed in
+`brailab-3.1.1.nvda-addon`.
+
+One real limit remains, and it is small: the hardware voice carries one pitch per
+utterance, so a pitch change in the middle of a sentence is not possible there.
+Capitals are unaffected — NVDA speaks a capital as its own utterance.
 
 ### The portable games emulator
 
@@ -112,14 +115,18 @@ Egy megjegyzés a **valódi hardveres** kiegészítőhöz: a hangmagasság-csús
 működik, de csak három fokozatban — mély, normál, magas —, mert a gyártói
 `TTS.dll` csak ezt a három értéket ismeri.
 
-**Elnézést: a nagybetűk hangmagasság-változása a `TTS.dll` hangnál továbbra sem
-működik.** Ennek oka a kiegészítőn kívül van: 64 bites NVDA-n a hardveres hang az NVDA 32 bites hídján
-keresztül fut, a híd pedig hangmagasság-parancsok nélkül építi újra a
-beszédsorozatot. Szöveget, indexet, karaktermódot, nyelvváltást, szünetet és
-fonéma-parancsot visz át, a többit eldobja. A bekötés itt teljes, és változtatás
-nélkül működni fog, amint a híd átviszi ezeket a parancsokat is. **A ma is
-hallható nagybetűkhöz használd az emulált hangot** — az a folyamaton belül fut,
-híd nélkül.
+**Helyesbítés (3.1.1):** e jegyzetek korábbi változata azt állította, hogy a
+nagybetűk hangmagasság-változása a `TTS.dll` hangnál azért nem működhet, mert az
+NVDA 32 bites hídja eldobja a hangmagasság-parancsokat. **Ez tévedés volt, és
+igazságtalan az NVDA-val szemben — a híd rendben átviszi őket.** A hiba ebben a
+kiegészítőben volt: a beszédkiszolgáló akkor alkalmazza a hangmagasságot, amikor
+egy megnyilatkozás *lefut*, mi pedig egy pillanattal korábban állítottuk vissza a
+felhasználó saját beállítását, így a nagybetű hangmagassága még azelőtt eltűnt,
+hogy bármilyen hang keletkezett volna. Javítva: `brailab-3.1.1.nvda-addon`.
+
+Egy valódi korlát marad, és az kicsi: a hardveres hang megnyilatkozásonként egy
+hangmagasságot tud, így mondat közben nem lehet hangmagasságot váltani. A
+nagybetűket ez nem érinti — az NVDA a nagybetűt önálló megnyilatkozásként mondja.
 
 ### A hordozható játékemulátor
 

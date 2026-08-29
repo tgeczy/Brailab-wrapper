@@ -141,19 +141,19 @@ class SynthDriver(SynthDriver):
 	# does not list it never receives one, so the setting does nothing at every
 	# value -- which is what was happening here.
 	#
-	# Pitch itself DOES work on this engine, in three steps: the driver
-	# quantizes to 0 / 50 / 100 because TTS.dll's pitch parameter is -1, 0, +1.
-	# (An earlier note here called TTS_SetPitch inert; testing on real hardware
-	# disproved that -- it moves, it is just very coarse.)
+	# Pitch works on this engine, in three steps: the driver quantizes to
+	# 0 / 50 / 100 because TTS.dll's pitch parameter is -1, 0, +1.
 	#
-	# Capital pitch change, however, does NOT survive the 64-bit bridge. NVDA's
-	# 32-bit host rebuilds the speech sequence from JSON and only reconstructs
-	# str, IndexCommand, CharacterModeCommand, LangChangeCommand, BreakCommand
-	# and PhonemeCommand -- a PitchCommand is serialized, fails to match, and is
-	# logged as "Unsupported speech sequence item type". So the wiring below is
-	# correct and runs unchanged the moment the bridge learns the command; on
-	# the direct 32-bit path it already works. The emulated driver does not go
-	# through the bridge, which is why capitals are audibly higher there.
+	# NVDA's bridge carries PitchCommand perfectly well -- an earlier note here
+	# claimed otherwise and was wrong, from misreading compiled bytecode instead
+	# of the source.  What actually broke capitals was ours: the host applies
+	# pitch when an utterance RUNS, and we restored the user's setting before
+	# commit_utterance(), wiping it first.  See _speakBgComposite.
+	#
+	# Note the composite path can only carry ONE pitch per utterance, since the
+	# host latches settings at utterance start.  That is enough for capitals,
+	# which NVDA speaks as their own utterance; a pitch change mid-utterance
+	# would need the host protocol to carry it.
 	supportedCommands = {IndexCommand, PitchCommand}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
@@ -394,10 +394,6 @@ class SynthDriver(SynthDriver):
 			synthDoneSpeaking.notify(synth=self)
 			return
 
-		# Put the voice back the way the user set it: a capital must not leave
-		# the whole synthesizer retuned.
-		self._restorePitch()
-
 		try:
 			# commit_utterance blocks until the host finishes reading all audio.
 			# Audio events flow to AudioWorker → WavePlayer automatically.
@@ -406,6 +402,13 @@ class SynthDriver(SynthDriver):
 			log.error("Brailab: commit_utterance failed", exc_info=True)
 			self.speaking = False
 			synthDoneSpeaking.notify(synth=self)
+		finally:
+			# ONLY once the audio has actually been produced.  The host applies
+			# the pitch when the utterance runs (CMD_UTTERANCE reads
+			# desiredPitch), not when we set it, so restoring any earlier wipes
+			# the capital's pitch before a single sample exists -- which is
+			# exactly the bug that made this look like a bridge limitation.
+			self._restorePitch()
 
 	def _speakBg(self, blocks):
 		"""Speak using legacy single-chunk API via IPC."""
@@ -522,12 +525,11 @@ if _ctypes.sizeof(_ctypes.c_void_p) == 8:
 		synthDriver32Path = os.path.dirname(__file__)
 		synthDriver32Name = "brailab"
 
-		# On 64-bit NVDA this proxy is the class NVDA actually talks to, so it
-		# is this supportedCommands that decides what NVDA will send.  Listing
-		# PitchCommand here is what makes "capital pitch change percentage"
-		# reach the 32-bit driver at all; the bridge forwards the sequence and
-		# the real driver applies it per block.
-		supportedCommands = {IndexCommand, PitchCommand}
+		# supportedCommands is deliberately NOT set here.  The proxy asks the
+		# 32-bit host what it supports (_get_supportedCommands ->
+		# getSupportedCommands) and rebuilds the classes on this side, so the
+		# one declaration in the real driver above is authoritative.  A class
+		# attribute here would shadow that negotiation.
 
 		# The bridge proxy only has _get_/_set_ for these 6 settings.
 		# Filter out everything else so the voice dialog doesn't crash.
