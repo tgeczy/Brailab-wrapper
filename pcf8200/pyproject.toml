@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pcf8200"
-version = "1.1.0"
+version = "1.1.1"
 description = "A pure-numpy software model of the Philips PCF8200 formant speech chip (BraiLab / Ciber232), drivable at the chip's command level or phonetically from formants."
 readme = "README.md"
 requires-python = ">=3.8"

@@ -36,19 +36,27 @@ STEP = STD // 8                        # 16 samples = one of the 8 interp steps
 CHIP_TILT_HZ = 600.0                   # glottal source rolloff (tames the bright "rattle")
 CHIP_LOWPASS_HZ = 2600.0               # output low-pass (finishes the rattle removal)
 
-#: Output high-pass, and the reason for it.  A real PCF8200 device drives an
-#: AC-coupled amplifier into a small speaker, so nothing near the bottom of the
-#: band reaches the listener.  Rendering without it leaves about a third of the
-#: energy below 250 Hz, where a recording of real hardware has 1.5%, and that
-#: excess eats the headroom -- which is what made the voice sound boxy and
-#: distant while measuring 5-17 dB down across the whole 500-3000 Hz range.
-#: Three one-pole stages: 18 dB/octave, and no scipy needed.
-CHIP_HIGHPASS_HZ = 600.0
+#: Output high-pass.  A PCF8200 device drives an AC-coupled amplifier, which
+#: rolls off the very bottom of the band -- but only the very bottom.  An
+#: earlier version of this cut at 600 Hz, tuned against a recording of real
+#: hardware; that recording is a small speaker in a room and passes almost
+#: nothing below 250 Hz, so matching it removed the low end altogether and the
+#: voice lost the weight TTS.dll still has around 75 Hz.
+#:
+#: TTS.dll is the better reference here, since it reaches a sound card rather
+#: than a two-inch cone: across four recordings it puts 23.6% of its energy
+#: below 250 Hz.  Our unfiltered render puts 36.5% there.  So the fault was
+#: never that the low end existed, only that there was half again too much of
+#: it, taking headroom the rest of the voice needed.  90 Hz trims the excess
+#: and keeps the bass -- 24.2% below 250 Hz, and the spectral distance from
+#: TTS.dll falls from 0.763 to 0.312.
+CHIP_HIGHPASS_HZ = 90.0
 CHIP_HIGHPASS_POLES = 3
-#: Removing the sub-bass costs about 18 dB; this is what fits back under the
-#: peaks without clipping.  The remainder is left to the driver's volume
-#: control -- a limiter would buy the rest at the price of distortion.
-CHIP_HIGHPASS_MAKEUP = 4.5
+#: Cutting at 600 Hz freed a lot of headroom and could take x4.5 of makeup gain
+#: back.  Trimming only the deepest rumble frees almost none, so this is what
+#: fits under the peaks: slightly quieter, which is the cost of keeping the
+#: bass.  The rest is NVDA's volume slider.
+CHIP_HIGHPASS_MAKEUP = 0.81
 
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so the default output low-pass needs no scipy at all.  A

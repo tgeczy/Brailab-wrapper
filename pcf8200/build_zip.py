@@ -31,8 +31,10 @@ EXAMPLES = ["vowels.py", "frames.py", "polish.py"]
 REQUIRED = [
     ("device.py", "_std_samples", "v3.1: honour the FS speed bits"),
     ("device.py", "time_scale", "v3.2: continuous rate control"),
-    ("chip.py", "HIGHPASS_HZ", "v3.2: output high-pass"),
-    ("chip.py", "HIGHPASS_MAKEUP", "v3.2: makeup gain"),
+    # The *value*, not just the name: v3.2 shipped this constant set to 600,
+    # which was tuned against a speaker recording and gutted the low end.
+    ("chip.py", "HIGHPASS_HZ = 90.0", "v3.2.1: high-pass, corrected cutoff"),
+    ("chip.py", "HIGHPASS_MAKEUP = 0.81", "v3.2.1: matching makeup gain"),
 ]
 
 

@@ -21,24 +21,23 @@ LOWPASS_HZ = 2600.0         # output low-pass
 
 #: Output high-pass, in hertz, and how many one-pole stages of it.
 #:
-#: A PCF8200 never reaches a listener directly: it drives an AC-coupled
-#: amplifier and a small speaker, and neither passes the bottom of the band.
-#: Rendering without that leaves about a third of the energy below 250 Hz --
-#: where a recording of real Ciber232P hardware has 1.5% -- and the excess eats
-#: the headroom, which measures as 5-17 dB missing across 500-3000 Hz and
-#: sounds boxy and distant.  Adding it takes the spectral error against that
-#: recording from 0.955 to 0.108, without moving the low-pass or the source
-#: tilt at all.
+#: A PCF8200 device drives an AC-coupled amplifier, which rolls off the bottom
+#: of the band -- but only the bottom.  An earlier version cut at 600 Hz, tuned
+#: against a recording of real hardware; that recording is a small speaker in a
+#: room, passing almost nothing below 250 Hz, so matching it removed the low end
+#: altogether.  Measured instead against the vendor's own TTS.dll, which reaches
+#: a sound card rather than a small cone, the target is 23.6% of the energy
+#: below 250 Hz; an unfiltered render puts 36.5% there.  The fault was never
+#: that the low end existed, only that there was half again too much of it,
+#: taking headroom the rest of the voice needed.
 #:
-#: This models the *device*, not the bare chip.  Pass highpass=0 to hear the
-#: chip's own output.
-HIGHPASS_HZ = 600.0
+#: This models a *device*.  Pass highpass=0 for the chip's own output.
+HIGHPASS_HZ = 90.0
 HIGHPASS_POLES = 3
 
-#: Removing the sub-bass costs about 18 dB of loudness; this is what fits back
-#: under the peaks without clipping.  Anything more needs a limiter, which
-#: would trade one artefact for another.
-HIGHPASS_MAKEUP = 4.5
+#: What fits back under the peaks once the deepest rumble is gone.  Cutting
+#: higher would free more headroom, at the price of the bass.
+HIGHPASS_MAKEUP = 0.81
 
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so no scipy is needed.  Regenerate with

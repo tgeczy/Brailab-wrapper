@@ -9,7 +9,7 @@ Layout produced:
         archive/         TALKHUN0.COM  (Arato's file, release only)
         BraiLab-jatek.cmd   launcher
 """
-import os, shutil, sys, zipfile
+import filecmp, os, shutil, sys, zipfile
 
 BUILD = os.path.dirname(os.path.abspath(__file__))
 EMU = os.path.dirname(BUILD)                       # talkhun_emu
@@ -31,6 +31,16 @@ APP_PY = ["braipc.py", "brailab_device.py", "dos_host.py", "brai_synth.py",
           "chip_synth.py", "pcf8200.py", "pcf8200_tables.py", "talkhun.py"]
 for m in APP_PY:
     shutil.copy2(os.path.join(EMU, m), os.path.join(app, m))
+
+# Every app module is copied fresh above, so staleness can only come from not
+# running this script -- which is exactly what happened for v3.2: the bundle
+# published on that release still had the pre-v3.2 chip core, with none of the
+# output filtering, because assemble.py was never re-run.  Verify rather than
+# trust, and produce the zip here too so the shipped file cannot be older than
+# the tree it claims to be.
+for m in APP_PY:
+    if not filecmp.cmp(os.path.join(EMU, m), os.path.join(app, m), shallow=False):
+        raise SystemExit("staged %s differs from talkhun_emu/%s" % (m, m))
 
 # 3) lib: vendored deps
 lib = os.path.join(OUT, "lib"); os.makedirs(lib)
@@ -81,4 +91,15 @@ open(os.path.join(OUT, "BraiLab-jatek.cmd"), "w", newline="").write(cmd)
 
 sz = sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(OUT) for f in fs)
 print("assembled BraiLabPC-portable: %.0f MB" % (sz / 1e6))
-print("->", OUT)
+
+# 6) the release artefact itself
+rel = os.path.join(ROOT, "release")
+if not os.path.isdir(rel):
+    os.makedirs(rel)
+zpath = os.path.join(rel, "BraiLabPC-portable.zip")
+with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+    for dp, _, fs in os.walk(OUT):
+        for f in fs:
+            full = os.path.join(dp, f)
+            z.write(full, os.path.relpath(full, BUILD).replace("\\", "/"))
+print("-> %s (%.0f MB)" % (zpath, os.path.getsize(zpath) / 1e6))
