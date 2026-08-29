@@ -20,8 +20,8 @@ Too much of the sound we produced was below 250 Hz — about **36%** of it.
 
 Almost none of that was audible as bass. What it did instead was fill up the
 available loudness, so everything from 500 Hz upward came out quieter than it
-should. That is what made the voice sound muffled: not a missing top end, but a
-bottom end that was crowding it out.
+should. That is what made the voice sound muffled: not a missing top end, but an
+over-compensation across the bottom range of the spectrum.
 
 No real BraiLab had that problem. The chip drives an amplifier through a coupling
 capacitor, which rolls off the bottom of the band before a listener ever hears
@@ -123,8 +123,8 @@ Az általunk előállított hang túl nagy része, mintegy **36%-a**, 250 Hz ala
 
 Basszusként szinte semmi sem hallatszott belőle. Ehelyett elfogyasztotta a
 rendelkezésre álló hangerőt, így 500 Hz fölött minden halkabban szólt a
-kelleténél. Ettől tűnt tompának a hang: nem a magasak hiányoztak, hanem a mélyek
-szorították ki őket.
+kelleténél. Ettől tűnt tompának a hang: nem a magasak hiányoztak, hanem
+túlkompenzáltuk a spektrum alsó tartományát.
 
 Valódi BraiLabnál ez nem volt gond. A chip csatolókondenzátoron át hajt meg egy
 erősítőt, és az levágja a sáv alját, mielőtt bárki hallaná. Ezt a részét a gépnek
