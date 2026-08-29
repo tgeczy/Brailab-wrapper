@@ -25,7 +25,7 @@ EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
 ARCHIVE_SRC = os.path.join(ROOT, "BRAILAB-archive")           # TALKHUN0.COM (not in git)
 SITE = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages")
 STDLIB = os.path.join(os.path.dirname(sys.executable), "Lib")
-VERSION = "3.0.5"
+VERSION = "3.1.0"
 
 # mame_synth dropped: nothing on the driver path imports it (it only pulled in
 # scipy).  scipy dropped: chip_synth + synth are now pure-numpy (see chip_synth
