@@ -112,29 +112,6 @@ class SynthDriver(SynthDriver):
         gain = 0.25 + 1.0 * (self._volume / 100.0)
         return np.clip(x * (OUT_SCALE * gain), -32767, 32767).astype("<i2").tobytes()
 
-    # Streaming: a long block rendered whole delays the first sample by its whole
-    # render time (~0.5 s for a Run-dialog paragraph, even at ~26x real-time).
-    # Split into a SMALL first piece then larger ones -- broken at a sentence/
-    # clause mark, else a space, never mid-word -- so audio starts almost at once
-    # and the rest renders while it plays.  Sentence marks are where pitch resets
-    # anyway, so prosody is no worse than the old fixed 400-char cut.
-    _BREAKS = ".!?;:,\n"
-
-    def _segments(self, text, first=32, rest=200):
-        segs = []
-        i, n, cap = 0, len(text), first
-        while i < n:
-            j = min(i + cap, n)
-            if j < n:
-                k = max((text.rfind(c, i, j) for c in self._BREAKS), default=-1)
-                if k <= i:
-                    k = text.rfind(" ", i, j)
-                if k > i:
-                    j = k + 1
-            segs.append(text[i:j])
-            i, cap = j, rest
-        return [s for s in segs if s.strip()]
-
     # ----- Say-All-friendly block building -----
 
     def _buildBlocks(self, speechSequence):
@@ -179,11 +156,11 @@ class SynthDriver(SynthDriver):
             if gen != self._gen:
                 return
             if text:
-                for seg in self._segments(text):
+                for i in range(0, len(text), MAX_STRING_LENGTH):
                     if gen != self._gen:
                         return
                     try:
-                        pcm = self._render(seg)
+                        pcm = self._render(text[i:i + MAX_STRING_LENGTH])
                     except Exception:
                         log.error("brailabEmulated: render failed", exc_info=True)
                         return
