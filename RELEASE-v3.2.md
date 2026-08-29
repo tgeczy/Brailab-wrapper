@@ -52,9 +52,16 @@ real-hardware add-on is untouched — it has a real speaker already.
 
 ### Also in this release
 
-- `pcf8200`, the standalone library, gains the same `highpass` control. It
-  models a PCF-8200 **device** — chip, amplifier and speaker — because that is
-  what anyone wants to hear; pass `highpass=0` for the bare chip's own output.
+- `pcf8200`, the standalone library, is **1.1.0** and gains the same `highpass`
+  control. It models a PCF-8200 **device** — chip, amplifier and speaker —
+  because that is what anyone wants to hear; pass `highpass=0` for the bare
+  chip's own output.
+
+  It also, at last, actually contains the two fixes from v3.1. The published zip
+  had been built once by hand and then re-attached to two later releases, so the
+  library people could download was missing the FS frame-timing fix and the rate
+  control that the repository has had all along. It is built by a script now,
+  which refuses to package a tree that is behind.
 
 ### Credit
 
@@ -113,9 +120,15 @@ hardveres kiegészítő változatlan — annak már van igazi hangszórója.
 
 ### Még ebben a kiadásban
 
-- A `pcf8200` önálló könyvtár is megkapja ugyanezt a `highpass` vezérlőt. Egy
-  PCF-8200 **készüléket** modellez — chip, erősítő és hangszóró —, mert ezt
-  akarja bárki hallani; a `highpass=0` a chip saját kimenetét adja.
+- A `pcf8200` önálló könyvtár **1.1.0** lett, és megkapja ugyanezt a `highpass`
+  vezérlőt. Egy PCF-8200 **készüléket** modellez — chip, erősítő és hangszóró —,
+  mert ezt akarja bárki hallani; a `highpass=0` a chip saját kimenetét adja.
+
+  Végre valóban tartalmazza a v3.1 két javítását is. A közzétett zip egyszer,
+  kézzel készült, majd két későbbi kiadáshoz is változatlanul csatoltuk, így a
+  letölthető könyvtárból hiányzott az FS-időzítés javítása és a sebességvezérlő,
+  amelyek a tárolóban régóta megvoltak. Mostantól szkript építi, amely nem
+  hajlandó elmaradt állapotot csomagolni.
 
 ### Köszönet
 
