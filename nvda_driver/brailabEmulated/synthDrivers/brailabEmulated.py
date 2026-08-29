@@ -91,26 +91,47 @@ class SynthDriver(SynthDriver):
     def _timeScale(self):
         return 0.9 - 0.55 * (max(0, min(100, self._rate)) / 100.0)
 
-    def _render(self, text):
-        # A lone capital reads as a Roman numeral in TALKHUN ("I" -> "első");
-        # a trailing space makes the engine read it as the letter instead. Only
+    def _toPCM(self, x, gain, fade_in, fade_out):
+        # 4 ms raised-cosine fade only at the very start / very end of the whole
+        # utterance (onset pop / end click) -- never between streamed blocks, so
+        # there are no seams.
+        if fade_in or fade_out:
+            x = x.copy()
+            nf = min(40, len(x) // 2)
+            if nf > 1:
+                w = np.sin(np.linspace(0.0, np.pi / 2.0, nf)) ** 2
+                if fade_in:
+                    x[:nf] *= w
+                if fade_out:
+                    x[-nf:] *= w[::-1]
+        return np.clip(x * (OUT_SCALE * gain), -32767, 32767).astype("<i2").tobytes()
+
+    def _renderStream(self, text):
+        # A lone capital reads as a Roman numeral in TALKHUN ("I" -> "első"); a
+        # trailing space makes the engine read it as the letter instead. Only
         # single-character utterances (character echo / spelling) need this.
         if len(text) == 1:
             text = text + " "
         self._engine.feed(ESC + ("F1" if self._furcsa else "F0"))
         seq = self._engine.capture(text)
-        x = chip_synth.render_chip_fast(seq, time_scale=self._timeScale(),
-                                        flat_pitch=not self._useIntonation)
-        if not len(x):
-            return b""
-        nf = min(len(x) // 2, 40)                     # 4 ms fade in/out (onset pop)
-        if nf > 1:
-            w = np.sin(np.linspace(0.0, np.pi / 2.0, nf)) ** 2
-            x = x.copy()
-            x[:nf] *= w
-            x[-nf:] *= w[::-1]
         gain = 0.25 + 1.0 * (self._volume / 100.0)
-        return np.clip(x * (OUT_SCALE * gain), -32767, 32767).astype("<i2").tobytes()
+        # Stream the OUTPUT of ONE continuous render: chip_synth guarantees the
+        # concatenated blocks are bit-identical to a whole render_chip_fast, so the
+        # SOUND is unchanged (one intonation contour, no per-piece pitch reset), but
+        # the first block reaches the player after ~0.4 s of speech is ready instead
+        # of after the whole utterance renders.  Hold the previous block so the last
+        # one can be faded out; fade in only the first.
+        prev = None
+        first = True
+        for blk in chip_synth.render_chip_stream(
+                seq, time_scale=self._timeScale(),
+                flat_pitch=not self._useIntonation):
+            if prev is not None:
+                yield self._toPCM(prev, gain, first, False)
+                first = False
+            prev = blk
+        if prev is not None:
+            yield self._toPCM(prev, gain, first, True)
 
     # ----- Say-All-friendly block building -----
 
@@ -160,12 +181,14 @@ class SynthDriver(SynthDriver):
                     if gen != self._gen:
                         return
                     try:
-                        pcm = self._render(text[i:i + MAX_STRING_LENGTH])
+                        for pcm in self._renderStream(text[i:i + MAX_STRING_LENGTH]):
+                            if gen != self._gen:
+                                return
+                            if pcm:
+                                self._player.feed(pcm)
                     except Exception:
                         log.error("brailabEmulated: render failed", exc_info=True)
                         return
-                    if pcm and gen == self._gen:
-                        self._player.feed(pcm)
             if gen == self._gen and indexesAfter:
                 idxs = list(indexesAfter)
 

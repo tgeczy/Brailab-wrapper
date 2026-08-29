@@ -186,17 +186,12 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     return sig
 
 
-def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
-                     ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
-                     pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
-                     source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
-                     flat_pitch=False, furcsa_override=None, **_ignored):
-    """Same synthesis as render_chip (per-sample continuous interpolation, no a0)
-    but built for speed: parameter trajectories and the band-limited excitation
-    are vectorised, and the five-formant cascade runs as ONE manual per-sample
-    Python loop instead of ~6 scipy.lfilter() calls per 2-sample block.  Kills
-    the lfilter per-call overhead that made the block version ~20x too slow for
-    real-time NVDA use, while keeping interpolation per-sample (so no swirl)."""
+def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
+                 pitch_mode='cumulative', flat_pitch=False, furcsa_override=None):
+    """Shared cheap front half: per-sample parameter trajectories (pass 1) plus the
+    wrapped phase.  The expensive per-harmonic excitation is NOT built here -- it is
+    streamed per block in _render_blocks, so first-audio stays ~one block even for a
+    long paragraph.  Returns (amp, p, phase, noise, fc, bw, nf, N); N == 0 => empty."""
     FS = CHIP_RATE
     r = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(r)
@@ -207,9 +202,7 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         furcsa = any(decode_control(v)['furcsa'] for k, v in seq
                      if k == 'ctrl' and not decode_control(v)['stop'])
     nf = 4 if furcsa else 5
-    rng = np.random.default_rng(seed)
 
-    # ---- pass 1: per-sample parameter trajectories (Python loop over ~frames) ----
     a_amp, a_p, a_noise = [], [], []
     a_fc = [[] for _ in range(nf)]
     a_bw = [[] for _ in range(nf)]
@@ -246,49 +239,54 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         pitch = pt
         prev = cur
     if not a_amp:
-        return np.zeros(0)
+        return None, None, None, None, None, None, nf, 0
     amp = np.concatenate(a_amp)
     p = np.concatenate(a_p)
     noise = np.concatenate(a_noise)
     fc = [np.concatenate(a_fc[i]) for i in range(nf)]
     bw = [np.concatenate(a_bw[i]) for i in range(nf)]
     N = len(amp)
-
-    # ---- excitation (vectorised) ----
     phase = np.cumsum(p / FS)
     phase = phase - np.floor(phase)
+    return amp, p, phase, noise, fc, bw, nf, N
+
+
+def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
+                   source_tilt, seed, scale, lp_default, block):
+    """Band-limited excitation + one-pole source tilt + the five-formant cascade
+    (+ fused default low-pass), computed and YIELDED in ~`block`-sample float
+    arrays as it goes (block <= 0 => a single array).  EVERY state -- the tilt
+    one-pole, the cascade biquads, the low-pass biquads, and the noise RNG --
+    carries across blocks, so concatenating the yields is bit-identical to a single
+    pass.  Streaming the *excitation* (the per-harmonic sum, the render's biggest
+    cost) as well as the cascade is what keeps first-audio ~one block long even for
+    an 18 s paragraph.  Non-default lowpass is added by the caller afterwards, so
+    here lp_default False means cascade only.  Pulse source (A/B only) is cheap and
+    built whole up front."""
+    FS = CHIP_RATE
+    rng = np.random.default_rng(seed)
     edge = FS * 0.5
-    if source in ('blsaw', 'saw'):
-        KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
-        kk = np.arange(1, KMAX + 1)
-        W = np.clip((edge - np.outer(p, kk)) / (edge * 0.16), 0.0, 1.0)
-        W = W * W * (3.0 - 2.0 * W)
-        Smat = np.sin(2.0 * np.pi * np.outer(phase, kk))
-        voiced = -(2.0 / np.pi) * (Smat * (W / kk)).sum(1)
-    else:  # pulse
-        voiced = np.zeros(N)
-        pc = np.cumsum(p / FS)
-        idx = np.where(np.floor(pc[1:]) > np.floor(pc[:-1]))[0] + 1
-        voiced[idx] = 1.0
+    blsaw = source in ('blsaw', 'saw')
     if source_tilt:
-        # One-pole glottal tilt on the VOICED branch only (the noise branch must
-        # stay untinted).  Manual so no scipy: y[n]=(1-ta)*v[n]+ta*y[n-1], which
-        # is exactly lfilter([1-ta],[1,-ta], voiced) with zero initial state.
         ta = math.exp(-2.0 * math.pi * source_tilt / FS)
         c0 = 1.0 - ta
-        vl = voiced.tolist()
-        yprev = 0.0
-        for n in range(N):
-            yprev = c0 * vl[n] + ta * yprev
-            vl[n] = yprev
-        voiced = np.asarray(vl)
-    exc = np.where(noise, rng.uniform(-noise_gain, noise_gain, N), voiced) * amp
+    if blsaw:
+        KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
+        kk = np.arange(1, KMAX + 1)
+    else:  # pulse: build + tilt the whole (cheap) source once
+        voiced_all = np.zeros(N)
+        pc = np.cumsum(p / FS)
+        idx = np.where(np.floor(pc[1:]) > np.floor(pc[:-1]))[0] + 1
+        voiced_all[idx] = 1.0
+        if source_tilt:
+            vl = voiced_all.tolist(); yp = 0.0
+            for k in range(N):
+                yp = c0 * vl[k] + ta * yp
+                vl[k] = yp
+            voiced_all = np.asarray(vl)
+    typrev = 0.0
 
-    # ---- five-formant cascade + output low-pass: one manual per-sample loop ----
-    # The cascade is the chip's all-pole resonators.  The 2-section Butterworth
-    # low-pass (default 2600 Hz) is fused into the SAME loop as two transposed-
-    # direct-form-II biquads (matching scipy.signal.sosfilt, zero ICs), so the
-    # whole render needs no scipy.  A non-default `lowpass` falls back to lazy scipy.
+    # cascade + low-pass coefficients (whole; cheap)
     B1 = []
     B2 = []
     for i in range(nf):
@@ -296,40 +294,79 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         Fc = 2.0 * np.cos(2.0 * np.pi * fc[i] / FS)
         B1.append((Bc * Fc).tolist())
         B2.append((-(Bc * Bc)).tolist())
-    xl = exc.tolist()
     y1 = [0.0] * nf
     y2 = [0.0] * nf
     rng_nf = range(nf)
-    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
     if lp_default:
         (lb0, lb1, lb2, la1, la2) = _LP2600_SOS[0]
         (mb0, mb1, mb2, ma1, ma2) = _LP2600_SOS[1]
         lz0 = lz1 = mz0 = mz1 = 0.0
-        for k in range(N):
-            v = xl[k]
-            for i in rng_nf:
-                yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
-                y2[i] = y1[i]
-                y1[i] = yn
-                v = yn
-            o = lb0 * v + lz0                       # low-pass section 1
-            lz0 = lb1 * v - la1 * o + lz1
-            lz1 = lb2 * v - la2 * o
-            w = mb0 * o + mz0                        # low-pass section 2
-            mz0 = mb1 * o - ma1 * w + mz1
-            mz1 = mb2 * o - ma2 * w
-            xl[k] = w
-    else:
-        for k in range(N):
-            v = xl[k]
-            for i in rng_nf:
-                yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
-                y2[i] = y1[i]
-                y1[i] = yn
-                v = yn
-            xl[k] = v
-    sig = np.array(xl) * scale                       # low-pass is linear -> commutes with scale
 
+    step = block if (block and block > 0) else N
+    if step <= 0:
+        step = max(1, N)
+    a = 0
+    while a < N:
+        b = min(a + step, N)
+        # ---- excitation for [a:b] ----
+        if blsaw:
+            W = np.clip((edge - np.outer(p[a:b], kk)) / (edge * 0.16), 0.0, 1.0)
+            W = W * W * (3.0 - 2.0 * W)
+            Smat = np.sin(2.0 * np.pi * np.outer(phase[a:b], kk))
+            voiced = -(2.0 / np.pi) * (Smat * (W / kk)).sum(1)
+            if source_tilt:
+                vl = voiced.tolist(); yp = typrev
+                for k in range(len(vl)):
+                    yp = c0 * vl[k] + ta * yp
+                    vl[k] = yp
+                typrev = yp
+                voiced = np.asarray(vl)
+        else:
+            voiced = voiced_all[a:b]
+        exc = np.where(noise[a:b], rng.uniform(-noise_gain, noise_gain, b - a), voiced) * amp[a:b]
+        # ---- five-formant cascade (+ fused default low-pass) for [a:b] ----
+        xl = exc.tolist()
+        outb = [0.0] * (b - a)
+        for k in range(b - a):
+            j = a + k
+            v = xl[k]
+            for i in rng_nf:
+                yn = v + B1[i][j] * y1[i] + B2[i][j] * y2[i]
+                y2[i] = y1[i]
+                y1[i] = yn
+                v = yn
+            if lp_default:
+                o = lb0 * v + lz0                   # low-pass section 1
+                lz0 = lb1 * v - la1 * o + lz1
+                lz1 = lb2 * v - la2 * o
+                v = mb0 * o + mz0                    # low-pass section 2
+                mz0 = mb1 * o - ma1 * v + mz1
+                mz1 = mb2 * o - ma2 * v
+            outb[k] = v
+        yield np.array(outb) * scale                # low-pass linear -> commutes with scale
+        a = b
+
+
+def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
+                     ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
+                     pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                     source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                     flat_pitch=False, furcsa_override=None, **_ignored):
+    """Fast whole-utterance render: per-sample continuous interpolation, no a0,
+    band-limited excitation, and the five-formant cascade as ONE manual per-sample
+    loop (no scipy.lfilter per-call overhead).  Thin wrapper over _render_prep +
+    _render_blocks so it shares exactly one code path with render_chip_stream."""
+    FS = CHIP_RATE
+    amp, p, phase, noise, fc, bw, nf, N = _render_prep(
+        seq, ampl_compress=ampl_compress, time_scale=time_scale, real=real,
+        pitch_byte=pitch_byte, pitch_mode=pitch_mode, flat_pitch=flat_pitch,
+        furcsa_override=furcsa_override)
+    if N == 0:
+        return np.zeros(0)
+    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
+    sig = np.concatenate(list(_render_blocks(amp, p, phase, noise, fc, bw, nf, N,
+                                             source, noise_gain, source_tilt, seed,
+                                             scale, lp_default, 0)))
     if lowpass and not lp_default:
         from scipy.signal import butter, sosfilt
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
@@ -338,3 +375,37 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         g = math.gcd(int(out_rate), FS)
         sig = resample_poly(sig, int(out_rate) // g, FS // g)
     return sig
+
+
+def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
+                       ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
+                       pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                       source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
+                       flat_pitch=False, furcsa_override=None, block=4000, **_ignored):
+    """Generator form of render_chip_fast: yields the SAME samples in order, in
+    ~`block`-sample float chunks, AS they are produced -- so the NVDA driver can
+    start playing ~block/CHIP_RATE seconds in while the rest still renders, with
+    ZERO change to the audio (one continuous render, one intonation contour, no
+    per-piece fades).  Invariant:
+        np.concatenate(list(render_chip_stream(seq))) == render_chip_fast(seq)
+    Only the default path streams (out_rate == CHIP_RATE and default/off lowpass);
+    any other config yields the whole render in a single chunk."""
+    FS = CHIP_RATE
+    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
+    if out_rate != FS or (lowpass and not lp_default):
+        x = render_chip_fast(
+            seq, out_rate=out_rate, source=source, a0=a0, ampl_compress=ampl_compress,
+            time_scale=time_scale, real=real, pitch_byte=pitch_byte, pitch_mode=pitch_mode,
+            seed=seed, noise_gain=noise_gain, scale=scale, source_tilt=source_tilt,
+            lowpass=lowpass, flat_pitch=flat_pitch, furcsa_override=furcsa_override)
+        if len(x):
+            yield x
+        return
+    amp, p, phase, noise, fc, bw, nf, N = _render_prep(
+        seq, ampl_compress=ampl_compress, time_scale=time_scale, real=real,
+        pitch_byte=pitch_byte, pitch_mode=pitch_mode, flat_pitch=flat_pitch,
+        furcsa_override=furcsa_override)
+    if N == 0:
+        return
+    yield from _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source,
+                              noise_gain, source_tilt, seed, scale, lp_default, block)
