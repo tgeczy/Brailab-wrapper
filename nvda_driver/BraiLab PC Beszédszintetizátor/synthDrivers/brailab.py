@@ -141,15 +141,19 @@ class SynthDriver(SynthDriver):
 	# does not list it never receives one, so the setting does nothing at every
 	# value -- which is what was happening here.
 	#
-	# HONESTY NOTE, and it matters: on this engine the pitch itself may not
-	# move.  TTS.dll's `TTS_SetPitch(int)` measured as an inert stub -- swept
-	# absolute 0-255 and signed -32..+32 with no audible effect -- because the
-	# whole ESC control layer was dropped from this build, which is also why
-	# there is no furcsa here.  The wiring below is correct and complete, so the
-	# day a build with a live pitch path turns up this works with no further
-	# change; but do not assume a capital is audibly higher on THIS DLL without
-	# listening first.  The emulated driver drives the chip directly and its
-	# pitch demonstrably moves (101.0 -> 128.2 Hz at NVDA's default +30).
+	# Pitch itself DOES work on this engine, in three steps: the driver
+	# quantizes to 0 / 50 / 100 because TTS.dll's pitch parameter is -1, 0, +1.
+	# (An earlier note here called TTS_SetPitch inert; testing on real hardware
+	# disproved that -- it moves, it is just very coarse.)
+	#
+	# Capital pitch change, however, does NOT survive the 64-bit bridge. NVDA's
+	# 32-bit host rebuilds the speech sequence from JSON and only reconstructs
+	# str, IndexCommand, CharacterModeCommand, LangChangeCommand, BreakCommand
+	# and PhonemeCommand -- a PitchCommand is serialized, fails to match, and is
+	# logged as "Unsupported speech sequence item type". So the wiring below is
+	# correct and runs unchanged the moment the bridge learns the command; on
+	# the direct 32-bit path it already works. The emulated driver does not go
+	# through the bridge, which is why capitals are audibly higher there.
 	supportedCommands = {IndexCommand, PitchCommand}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 

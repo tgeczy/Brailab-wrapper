@@ -32,14 +32,32 @@ settings ring alongside rate and volume, spanning an octave: half above the
 voice's own pitch and half below. Rate is untouched by it — changing pitch does
 not change how fast it reads.
 
-There is an honest caveat for the **real-hardware** add-on. The wiring there is
-complete and correct, but this build of the vendor's `TTS.dll` appears to ignore
-pitch entirely — `TTS_SetPitch` measured as an inert stub across its whole range,
-the same gap that removed *furcsa* from that build. So on the hardware voice the
-command now arrives and the engine may simply not act on it. Nothing is broken
-that was working; if a `TTS.dll` with a live pitch path ever turns up, it will
-work with no further change. **For capitals you can actually hear today, use the
-emulated voice.**
+A caveat for the **real-hardware** add-on. Its pitch slider works, but in three
+steps only — low, normal, high — because the vendor's `TTS.dll` takes just those
+three values.
+
+Capital pitch change does not reach it, and the reason is outside this add-on:
+on 64-bit NVDA the real-hardware voice runs through NVDA's 32-bit bridge, and the
+bridge rebuilds the speech sequence without pitch commands. It carries text,
+index, character-mode, language, break and phoneme commands, and drops the rest.
+The wiring here is complete and will work unchanged the day the bridge carries
+them. **For capitals you can hear today, use the emulated voice** — it runs
+in-process with no bridge in the way.
+
+### The portable games emulator
+
+`BraiLabPC-portable.zip` is attached to this release for the first time — the
+self-contained bundle for playing the 1991 DOS programs with real BraiLab speech,
+carrying its own Python so it runs on machines too old for a modern install.
+
+It gains a **fine pitch trim** in the F12 menu. BraiLab's own `ESC P` command has
+exactly three pitches — low, normal, high — which is coarse if you are going to
+listen for an hour, so the trim fills in between them in seven steps without
+touching what the program itself asked for.
+
+It also now **remembers your tempo and pitch**. It always intended to — it read
+them back at start-up — but never actually saved them, so every session began at
+the defaults again.
 
 ### Also in this release
 
@@ -89,14 +107,33 @@ a beállításgyűrűben a sebesség és a hangerő mellett, egy oktáv széles 
 fele a hang saját magassága fölött, fele alatta. A sebességet nem érinti — a
 hangmagasság módosítása nem változtatja meg az olvasás tempóját.
 
-Egy őszinte megjegyzés a **valódi hardveres** kiegészítőhöz: ott a bekötés teljes
-és helyes, de a gyártói `TTS.dll` ezen változata láthatóan teljesen figyelmen kívül
-hagyja a hangmagasságot — a `TTS_SetPitch` a teljes tartományában hatástalannak
-mérhető, ugyanaz a hiányosság, ami a *furcsa* hangot is kivette abból a buildből.
-Tehát a hardveres hangnál a parancs immár megérkezik, de a motor lehet, hogy nem
-reagál rá. Semmi nem romlott el, ami eddig működött; ha egyszer előkerül egy élő
-hangmagasság-útvonallal rendelkező `TTS.dll`, minden további változtatás nélkül
-működni fog. **A ma is hallható nagybetűkhöz használd az emulált hangot.**
+Egy megjegyzés a **valódi hardveres** kiegészítőhöz: a hangmagasság-csúszkája
+működik, de csak három fokozatban — mély, normál, magas —, mert a gyártói
+`TTS.dll` csak ezt a három értéket ismeri.
+
+A nagybetűk hangmagasság-változása viszont nem jut el hozzá, és ennek oka a
+kiegészítőn kívül van: 64 bites NVDA-n a hardveres hang az NVDA 32 bites hídján
+keresztül fut, a híd pedig hangmagasság-parancsok nélkül építi újra a
+beszédsorozatot. Szöveget, indexet, karaktermódot, nyelvváltást, szünetet és
+fonéma-parancsot visz át, a többit eldobja. A bekötés itt teljes, és változtatás
+nélkül működni fog, amint a híd átviszi ezeket a parancsokat is. **A ma is
+hallható nagybetűkhöz használd az emulált hangot** — az a folyamaton belül fut,
+híd nélkül.
+
+### A hordozható játékemulátor
+
+A `BraiLabPC-portable.zip` most először van csatolva a kiadáshoz — ez az önálló
+csomag az 1991-es DOS programok valódi BraiLab-hanggal való játszásához, saját
+Pythonnal, így olyan gépeken is elfut, amelyek egy mai telepítéshez már túl régiek.
+
+Kapott egy **finomhangolást** az F12 menübe. A BraiLab saját `ESC P` parancsa
+pontosan három hangmagasságot ismer — mély, normál, magas —, ami elég durva, ha
+órákig hallgatod, így a finomhangolás hét lépésben tölti ki a köztes értékeket
+anélkül, hogy hozzányúlna ahhoz, amit maga a program kért.
+
+Mostantól **megjegyzi a tempót és a hangmagasságot** is. Mindig is ez volt a
+szándék — indításkor visszaolvasta őket —, de valójában sosem mentette el, így
+minden munkamenet újra az alapértékekkel indult.
 
 ### Még ebben a kiadásban
 

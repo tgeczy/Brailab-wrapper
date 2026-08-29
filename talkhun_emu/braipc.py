@@ -34,8 +34,10 @@ import talkhun
 _CHIP_SCALE = 16000.0
 
 
-def _chiprender(seq, furcsa):
+def _chiprender(seq, furcsa, pitch_factor=1.0):
     import numpy as np
+    if pitch_factor != 1.0:
+        seq = chip_synth.transpose_seq(seq, pitch_factor)
     x = chip_synth.render_chip_fast(seq, furcsa_override=furcsa)
     if not len(x):
         return np.zeros(0, dtype=np.int16)
@@ -122,6 +124,14 @@ TEMPOS = [('lassú', '1'), ('normál', '2'), ('gyors', '3'), ('leggyorsabb', '4'
 #: ESC P takes a character; these are the three the archive shipped.
 PITCHES = [('mély', '!'), ('normál', '*'), ('magas', '=')]
 
+#: A fine trim on top of the engine's own three pitches.  ESC P is BraiLab's
+#: real pitch command and it has exactly those three steps, which is coarse if
+#: you are going to listen for an hour; scaling the rendered sequence's pitch
+#: bytes fills in between them without touching what the guest program asked
+#: for.  The byte is linear in hertz, so these are plain ratios.
+TRIMS = [('-3', 0.80), ('-2', 0.87), ('-1', 0.93), ('0', 1.00),
+         ('+1', 1.08), ('+2', 1.16), ('+3', 1.25)]
+
 
 class Speaker:
     """Queues rendered audio and feeds the sound card from a background thread."""
@@ -205,6 +215,7 @@ class Session:
         saved = load_config()
         self.tempo = min(max(saved.get('tempo', 1), 0), len(TEMPOS) - 1)
         self.pitch = min(max(saved.get('pitch', 1), 0), len(PITCHES) - 1)
+        self.trim = min(max(saved.get('trim', 3), 0), len(TRIMS) - 1)
         self.furcsa = bool(saved.get('furcsa', False))
         # Apply the remembered voice as part of the boot configuration, so it
         # is in force for the program's very first word rather than arriving
@@ -236,7 +247,8 @@ class Session:
     def say_ui(self, text):
         """Speak an interface prompt, out of band from the guest."""
         try:
-            self.speaker.play(_chiprender(self.ui.capture(text), self.furcsa))
+            self.speaker.play(_chiprender(self.ui.capture(text), self.furcsa,
+                                          TRIMS[self.trim][1]))
         except Exception:
             pass
 
@@ -280,7 +292,7 @@ class Session:
                      self.host.vtime - stamps[-1],
                      self.speaker.seconds_queued))
         try:
-            self.speaker.play(_chiprender(new, self.furcsa))
+            self.speaker.play(_chiprender(new, self.furcsa, TRIMS[self.trim][1]))
         except Exception:
             pass
 
@@ -327,11 +339,18 @@ class Session:
     def set_tempo(self, i):
         self.tempo = i % len(TEMPOS)
         self.apply(b'\x1bS' + TEMPOS[self.tempo][1].encode())
+        save_config(tempo=self.tempo)
         self.say_ui('Tempó: %s.' % TEMPOS[self.tempo][0])
+
+    def set_trim(self, i):
+        self.trim = min(max(i, 0), len(TRIMS) - 1)
+        save_config(trim=self.trim)
+        self.say_ui('Finomhangolás: %s.' % TRIMS[self.trim][0])
 
     def set_pitch(self, i):
         self.pitch = i % len(PITCHES)
         self.apply(b'\x1bP' + PITCHES[self.pitch][1].encode())
+        save_config(pitch=self.pitch)
         self.say_ui('Hangmagasság: %s.' % PITCHES[self.pitch][0])
 
     def toggle_furcsa(self):
@@ -348,6 +367,7 @@ class Session:
         items = [
             ('Tempó', lambda d: self.set_tempo(self.tempo + d)),
             ('Hangmagasság', lambda d: self.set_pitch(self.pitch + d)),
+            ('Finomhangolás', lambda d: self.set_trim(self.trim + d)),
             ('Furcsa hang', lambda d: self.toggle_furcsa()),
         ]
         i = 0
