@@ -186,6 +186,26 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     return sig
 
 
+def transpose_seq(seq, factor):
+    """Shift a captured sequence's pitch, keeping the engine's own intonation.
+
+    Note that `pitch_byte` below will NOT do this: it only seeds the anchor, and
+    TALKHUN emits a `('pitch', byte)` at the start of every intonation unit,
+    which overwrites it immediately.  Rendering the same capture at pitch_byte
+    33, 46 and 65 gives the same 101 Hz -- a knob that silently does nothing.
+
+    Scaling the sequence's own pitch bytes does work, because the byte is linear
+    in hertz: factors 0.75 / 1.0 / 1.25 / 1.5 measure as 71.9 / 101.0 / 129.9 /
+    156.2 Hz, with the sample count unchanged, so pitch moves without touching
+    rate.  The per-frame PI excursions are left alone, so the contour keeps its
+    shape and only the base moves -- which is what a pitch control should do.
+    """
+    if factor == 1.0:
+        return seq
+    return [(kind, max(1, min(255, int(round(val * factor)))) if kind == 'pitch' else val)
+            for kind, val in seq]
+
+
 def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                  pitch_mode='cumulative', flat_pitch=False, furcsa_override=None):
     """Shared cheap front half: per-sample parameter trajectories (pass 1) plus the

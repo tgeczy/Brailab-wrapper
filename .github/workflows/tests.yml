@@ -40,6 +40,12 @@ jobs:
       - name: Run the pcf8200 suite
         run: python -m pytest pcf8200/tests -v
 
+      # chip_synth's pitch control, which NVDA's capital pitch change rides on.
+      # Needs numpy only -- the sequences are built in the tests rather than
+      # captured, so no Unicorn and no TALKHUN.
+      - name: Run the chip_synth suite
+        run: python -m pytest talkhun_emu/tests -v
+
       - name: The examples must still run
         run: |
           cd pcf8200/examples

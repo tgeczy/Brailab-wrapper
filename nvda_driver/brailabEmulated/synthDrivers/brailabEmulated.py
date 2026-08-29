@@ -20,7 +20,7 @@ import nvwave
 
 from logHandler import log
 from synthDriverHandler import SynthDriver, synthDoneSpeaking, synthIndexReached
-from speech.commands import IndexCommand
+from speech.commands import IndexCommand, PitchCommand
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -61,13 +61,18 @@ class SynthDriver(SynthDriver):
 
     supportedSettings = (
         SynthDriver.RateSetting(),
+        SynthDriver.PitchSetting(),
         SynthDriver.VolumeSetting(),
         BooleanDriverSetting("furcsa", "&Furcsa (weird voice)", defaultVal=False,
                              availableInSettingsRing=True),
         BooleanDriverSetting("useIntonation", "&Use intonation", defaultVal=True,
                              availableInSettingsRing=True),
     )
-    supportedCommands = {IndexCommand}
+    # PitchCommand is how NVDA marks a capital letter -- "capital pitch change
+    # percentage" arrives as an offset on its own 0-100 scale.  A driver that
+    # does not list it never sees one, so the setting silently does nothing at
+    # every value, which is exactly what was happening here.
+    supportedCommands = {IndexCommand, PitchCommand}
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
     @classmethod
@@ -78,6 +83,7 @@ class SynthDriver(SynthDriver):
     def __init__(self):
         super().__init__()
         self._rate = 50
+        self._pitch = 50
         self._volume = 90
         self._furcsa = False
         self._useIntonation = True
@@ -101,6 +107,19 @@ class SynthDriver(SynthDriver):
 
     def _timeScale(self):
         return 0.9 - 0.55 * (max(0, min(100, self._rate)) / 100.0)
+
+    def _pitchFactor(self, adj=0):
+        """NVDA's 0-100 pitch as a factor to transpose the engine's own contour.
+
+        `adj` is what NVDA has asked for on top of the user's setting -- a
+        PitchCommand carrying the capital pitch change percentage.  The two are
+        clamped together, so a user already at 90 who asks for another 30 gets
+        the top rather than an out-of-range request.  50 is the voice as the
+        engine renders it, and the slider spans an octave: half above, half
+        below.
+        """
+        pitch = min(100, max(0, self._pitch + adj))
+        return 2.0 ** ((pitch - 50) / 100.0)
 
     def _toPCM(self, x, gain, fade_in, fade_out):
         # 4 ms raised-cosine fade only at the very start / very end of the whole
@@ -138,12 +157,13 @@ class SynthDriver(SynthDriver):
         out = [c for c in out if c.strip()]
         return out or ([text] if text.strip() else [])
 
-    def _renderStream(self, text):
+    def _renderStream(self, text, pitchAdj=0):
         # Capture + render CLAUSE by clause, and within each clause stream the
         # render's output blocks (render_chip_stream).  Clauses butt together at
         # the pauses the delimiters already carry; fade only the very first block
         # in / the very last out, never between blocks or clauses -> no seams.
         gain = 0.25 + 1.0 * (self._volume / 100.0)
+        factor = self._pitchFactor(pitchAdj)
 
         def _blocks():
             for clause in self._clauses(text):
@@ -151,7 +171,7 @@ class SynthDriver(SynthDriver):
                 # a trailing space makes the engine read it as the letter instead.
                 c = clause + " " if len(clause) == 1 else clause
                 self._engine.feed(ESC + ("F1" if self._furcsa else "F0"))
-                seq = self._engine.capture(c)
+                seq = chip_synth.transpose_seq(self._engine.capture(c), factor)
                 for blk in chip_synth.render_chip_stream(
                         seq, time_scale=self._timeScale(),
                         flat_pitch=not self._useIntonation):
@@ -170,24 +190,38 @@ class SynthDriver(SynthDriver):
     # ----- Say-All-friendly block building -----
 
     def _buildBlocks(self, speechSequence):
+        """Split the sequence into (text, indexesAfter, pitchAdj) blocks.
+
+        A PitchCommand applies to everything after it, so a block is closed
+        whenever the offset changes: that is what lets a capital be spoken
+        higher than the words on either side of it.
+        """
         blocks = []
         buf = []
+        pitchAdj = 0
 
-        def flush(indexesAfter):
-            blocks.append((" ".join(buf).strip(), indexesAfter))
+        def flush(indexesAfter, adj):
+            blocks.append((" ".join(buf).strip(), indexesAfter, adj))
             buf.clear()
 
         for item in speechSequence:
             if isinstance(item, str):
                 buf.append(item)
             elif isinstance(item, IndexCommand):
-                flush([item.index])
+                flush([item.index], pitchAdj)
+            elif isinstance(item, PitchCommand):
+                # An offset on NVDA's own 0-100 scale; 0 means the user's
+                # setting again.  Close the current block so the change lands
+                # exactly here rather than colouring text already buffered.
+                if buf:
+                    flush([], pitchAdj)
+                pitchAdj = item.offset
         if buf:
-            flush([])
+            flush([], pitchAdj)
         while blocks and (not blocks[-1][0]) and (not blocks[-1][1]):
             blocks.pop()
-        anyText = any(t for (t, _) in blocks)
-        allIndexes = [i for (_, idxs) in blocks for i in idxs]
+        anyText = any(t for (t, _, _) in blocks)
+        allIndexes = [i for (_, idxs, _) in blocks for i in idxs]
         return blocks, anyText, allIndexes
 
     # ----- SynthDriver API -----
@@ -207,12 +241,12 @@ class SynthDriver(SynthDriver):
         self._bgQueue.put(lambda: self._speakBg(blocks, gen))
 
     def _speakBg(self, blocks, gen):
-        for (text, indexesAfter) in blocks:
+        for (text, indexesAfter, pitchAdj) in blocks:
             if gen != self._gen:
                 return
             if text:
                 try:
-                    for pcm in self._renderStream(text):
+                    for pcm in self._renderStream(text, pitchAdj):
                         if gen != self._gen:
                             return
                         if pcm:
@@ -291,6 +325,12 @@ class SynthDriver(SynthDriver):
 
     def _set_rate(self, value):
         self._rate = max(0, min(100, int(value)))
+
+    def _get_pitch(self):
+        return self._pitch
+
+    def _set_pitch(self, value):
+        self._pitch = max(0, min(100, int(value)))
 
     def _get_volume(self):
         return self._volume

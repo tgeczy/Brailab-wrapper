@@ -11,7 +11,7 @@ import queue
 
 from logHandler import log
 from synthDriverHandler import SynthDriver, synthDoneSpeaking, synthIndexReached
-from speech.commands import IndexCommand
+from speech.commands import IndexCommand, PitchCommand
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 
 from . import _brailab
@@ -136,7 +136,11 @@ class SynthDriver(SynthDriver):
 		),
 	)
 
-	supportedCommands = {IndexCommand}
+	# PitchCommand is how NVDA marks a capital letter: "capital pitch change
+	# percentage" arrives as an offset on its own 0-100 scale.  A driver that
+	# does not list it never receives one, so the setting does nothing at every
+	# value -- which is what was happening here.
+	supportedCommands = {IndexCommand, PitchCommand}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
 	from collections import OrderedDict
@@ -178,6 +182,9 @@ class SynthDriver(SynthDriver):
 		# Cache initial parameter values from the host
 		self._cachedTempo = result.get("tempo", 4)
 		self._cachedPitch = result.get("pitch", 0)
+		# What is actually set on the engine right now.  It follows _cachedPitch
+		# except while a PitchCommand (a capital) is in force.
+		self._appliedPitch = self._cachedPitch
 		self._cachedVolume = result.get("volume", 0)
 
 		# Background queue thread (for ordering speech requests)
@@ -234,13 +241,14 @@ class SynthDriver(SynthDriver):
 		textBuf = []
 		pendingIndexes = []
 		seenNonEmptyText = False
+		pitchAdj = 0
 
 		def flush():
 			nonlocal seenNonEmptyText
 			raw = " ".join(textBuf)
 			textBuf.clear()
 			safe = _brailabSafeText(raw)
-			blocks.append((safe, pendingIndexes.copy()))
+			blocks.append((safe, pendingIndexes.copy(), pitchAdj))
 			pendingIndexes.clear()
 			seenNonEmptyText = False
 
@@ -250,9 +258,16 @@ class SynthDriver(SynthDriver):
 					textBuf.append(item)
 					if item.strip():
 						seenNonEmptyText = True
+			elif isinstance(item, PitchCommand):
+				# Applies to everything after it, so close the current block:
+				# that is what lets a capital sound higher than its neighbours.
+				if textBuf:
+					flush()
+				pitchAdj = item.offset
+				continue
 			elif isinstance(item, IndexCommand):
 				if not seenNonEmptyText and not textBuf:
-					blocks.append(("", [item.index]))
+					blocks.append(("", [item.index], pitchAdj))
 					continue
 				pendingIndexes.append(item.index)
 				if not coalesceSayAll:
@@ -272,9 +287,9 @@ class SynthDriver(SynthDriver):
 		while blocks and (not blocks[-1][0]) and (not blocks[-1][1]):
 			blocks.pop()
 
-		anyText = any(bool(t) for (t, _) in blocks)
+		anyText = any(bool(t) for (t, _, _) in blocks)
 		allIndexes = []
-		for (_, idxs) in blocks:
+		for (_, idxs, _) in blocks:
 			allIndexes.extend(idxs)
 
 		return blocks, anyText, allIndexes
@@ -326,9 +341,11 @@ class SynthDriver(SynthDriver):
 			synthDoneSpeaking.notify(synth=self)
 			return
 
-		for (text, indexesAfter) in blocks:
+		for (text, indexesAfter, pitchAdj) in blocks:
 			if not self.speaking:
 				break
+
+			self._applyBlockPitch(pitchAdj)
 
 			if text:
 				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
@@ -363,6 +380,10 @@ class SynthDriver(SynthDriver):
 			synthDoneSpeaking.notify(synth=self)
 			return
 
+		# Put the voice back the way the user set it: a capital must not leave
+		# the whole synthesizer retuned.
+		self._restorePitch()
+
 		try:
 			# commit_utterance blocks until the host finishes reading all audio.
 			# Audio events flow to AudioWorker → WavePlayer automatically.
@@ -377,9 +398,11 @@ class SynthDriver(SynthDriver):
 		self.speaking = True
 		noIntonation = 0 if self._useIntonation else 1
 
-		for (text, indexesAfter) in blocks:
+		for (text, indexesAfter, pitchAdj) in blocks:
 			if not self.speaking:
 				break
+
+			self._applyBlockPitch(pitchAdj)
 
 			if text:
 				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
@@ -397,6 +420,8 @@ class SynthDriver(SynthDriver):
 						self.speaking = False
 						break
 
+		self._restorePitch()
+
 		if not self.speaking:
 			synthDoneSpeaking.notify(synth=self)
 			return
@@ -404,6 +429,36 @@ class SynthDriver(SynthDriver):
 		# The AudioWorker handles done notification via the index callback (None).
 		# But if we get here without the host sending a final marker, notify manually.
 		# In practice the host always sends final=True which triggers callback(None).
+
+	# ----- Pitch, including NVDA's capital pitch change -----
+
+	def _applyBlockPitch(self, adj):
+		"""Set the engine's pitch for one block, user setting plus NVDA's offset.
+
+		`adj` is a PitchCommand offset on NVDA's 0-100 scale, which is how the
+		capital pitch change percentage arrives.  The user's own setting stays in
+		`_cachedPitch` untouched -- only `_appliedPitch` moves -- so a capital
+		does not permanently retune the voice.  Restored by `_restorePitch()`
+		when the utterance ends.
+		"""
+		want = self._cachedPitch
+		if adj:
+			pct = max(0, min(100, self._get_pitch() + adj))
+			want = self._percentToParam(pct, minPitch, maxPitch)
+		if want != self._appliedPitch:
+			try:
+				_brailab.set_pitch(want)
+				self._appliedPitch = want
+			except Exception:
+				log.error("Brailab: set_pitch failed", exc_info=True)
+
+	def _restorePitch(self):
+		if self._appliedPitch != self._cachedPitch:
+			try:
+				_brailab.set_pitch(self._cachedPitch)
+				self._appliedPitch = self._cachedPitch
+			except Exception:
+				log.error("Brailab: set_pitch restore failed", exc_info=True)
 
 	# ----- Settings ring -----
 
@@ -423,6 +478,7 @@ class SynthDriver(SynthDriver):
 		value = self._quantizePercent(value, 50)
 		raw = self._percentToParam(value, minPitch, maxPitch)
 		self._cachedPitch = raw
+		self._appliedPitch = raw
 		_brailab.set_pitch(raw)
 
 	def _get_volume(self):
@@ -451,6 +507,13 @@ if _ctypes.sizeof(_ctypes.c_void_p) == 8:
 		description = "Brailab PC"
 		synthDriver32Path = os.path.dirname(__file__)
 		synthDriver32Name = "brailab"
+
+		# On 64-bit NVDA this proxy is the class NVDA actually talks to, so it
+		# is this supportedCommands that decides what NVDA will send.  Listing
+		# PitchCommand here is what makes "capital pitch change percentage"
+		# reach the 32-bit driver at all; the bridge forwards the sequence and
+		# the real driver applies it per block.
+		supportedCommands = {IndexCommand, PitchCommand}
 
 		# The bridge proxy only has _get_/_set_ for these 6 settings.
 		# Filter out everything else so the voice dialog doesn't crash.
