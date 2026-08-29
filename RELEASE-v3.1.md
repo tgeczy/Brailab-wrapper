@@ -36,7 +36,8 @@ A caveat for the **real-hardware** add-on. Its pitch slider works, but in three
 steps only — low, normal, high — because the vendor's `TTS.dll` takes just those
 three values.
 
-Capital pitch change does not reach it, and the reason is outside this add-on:
+**We're sorry: capital pitch change still does not work on the `TTS.dll` voice.**
+The reason is outside this add-on:
 on 64-bit NVDA the real-hardware voice runs through NVDA's 32-bit bridge, and the
 bridge rebuilds the speech sequence without pitch commands. It carries text,
 index, character-mode, language, break and phoneme commands, and drops the rest.
@@ -46,9 +47,9 @@ in-process with no bridge in the way.
 
 ### The portable games emulator
 
-`BraiLabPC-portable.zip` is attached to this release for the first time — the
-self-contained bundle for playing the 1991 DOS programs with real BraiLab speech,
-carrying its own Python so it runs on machines too old for a modern install.
+`BraiLabPC-portable.zip` — the self-contained bundle for playing the 1991 DOS
+programs with real BraiLab speech, carrying its own Python so it runs on machines
+too old for a modern install — is updated in this release too.
 
 It gains a **fine pitch trim** in the F12 menu. BraiLab's own `ESC P` command has
 exactly three pitches — low, normal, high — which is coarse if you are going to
@@ -111,8 +112,8 @@ Egy megjegyzés a **valódi hardveres** kiegészítőhöz: a hangmagasság-csús
 működik, de csak három fokozatban — mély, normál, magas —, mert a gyártói
 `TTS.dll` csak ezt a három értéket ismeri.
 
-A nagybetűk hangmagasság-változása viszont nem jut el hozzá, és ennek oka a
-kiegészítőn kívül van: 64 bites NVDA-n a hardveres hang az NVDA 32 bites hídján
+**Elnézést: a nagybetűk hangmagasság-változása a `TTS.dll` hangnál továbbra sem
+működik.** Ennek oka a kiegészítőn kívül van: 64 bites NVDA-n a hardveres hang az NVDA 32 bites hídján
 keresztül fut, a híd pedig hangmagasság-parancsok nélkül építi újra a
 beszédsorozatot. Szöveget, indexet, karaktermódot, nyelvváltást, szünetet és
 fonéma-parancsot visz át, a többit eldobja. A bekötés itt teljes, és változtatás
@@ -122,9 +123,9 @@ híd nélkül.
 
 ### A hordozható játékemulátor
 
-A `BraiLabPC-portable.zip` most először van csatolva a kiadáshoz — ez az önálló
-csomag az 1991-es DOS programok valódi BraiLab-hanggal való játszásához, saját
-Pythonnal, így olyan gépeken is elfut, amelyek egy mai telepítéshez már túl régiek.
+A `BraiLabPC-portable.zip` — az önálló csomag az 1991-es DOS programok valódi
+BraiLab-hanggal való játszásához, saját Pythonnal, így olyan gépeken is elfut,
+amelyek egy mai telepítéshez már túl régiek — szintén frissült ebben a kiadásban.
 
 Kapott egy **finomhangolást** az F12 menübe. A BraiLab saját `ESC P` parancsa
 pontosan három hangmagasságot ismer — mély, normál, magas —, ami elég durva, ha
