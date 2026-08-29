@@ -458,13 +458,23 @@ class SynthDriver(SynthDriver):
 	# ----- Pitch, including NVDA's capital pitch change -----
 
 	def _diagPitch(self, msg):
-		"""Temporary, loud diagnosis of the capital-pitch path (3.1.2).
+		"""Temporary, loud diagnosis of the capital-pitch path (3.1.3).
 
-		At INFO so it lands in a normal NVDA log without debug logging on.
-		Remove once the path is confirmed working.
+		Writes to a file in %TEMP% as well as the NVDA log.  This code runs
+		inside NVDA's 32-bit synth host, and that process's log output does not
+		reach NVDA's own log file -- which is why the 3.1.2 build produced no
+		diagnosis at all.  A file we control is the only reliable channel out.
 		"""
 		try:
 			log.info("Brailab pitch: %s" % msg)
+		except Exception:
+			pass
+		try:
+			import tempfile
+			import time as _t
+			path = os.path.join(tempfile.gettempdir(), "brailab_pitch.log")
+			with open(path, "a", encoding="utf-8") as f:
+				f.write(_t.strftime("%H:%M:%S") + "  " + str(msg) + "\n")
 		except Exception:
 			pass
 
