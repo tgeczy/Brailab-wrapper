@@ -120,3 +120,42 @@ def test_capital_pitch_offset_raises_the_voice():
     capital = chip_synth.render_chip_fast(
         chip_synth.transpose_seq(seq, factor(50, 30)))
     assert measure_f0(capital) > measure_f0(plain) * 1.15
+
+
+def test_device_output_cannot_reach_the_clipping_ceiling():
+    """The output stage must bend, not hit a wall.
+
+    Every emulated build through 3.1.x saturated int16 on loud speech: Tomi's own
+    downloads-list string peaked 44% past the driver's ceiling and clipped 46
+    samples, a say-all sentence 120.  Single words never did it, which is why
+    "harom" alone sounded clean and "harom" inside a version string did not --
+    the intonation slide is what reaches the ceiling.
+
+    The knee asymptotes at 1.0, so this is a property of the arithmetic rather
+    than of any particular corpus: drive the render far past full scale and the
+    output still cannot get there.
+    """
+    seq = steady()
+    quiet = chip_synth.render_chip_fast(seq)
+    assert abs(quiet).max() < 1.0
+
+    # 20x overdrive: without a knee this would be far past the ceiling.  tanh
+    # saturates to exactly 1.0 in float64, so the bound is inclusive.
+    hot = chip_synth.render_chip_fast(seq, scale=20.0)
+    assert abs(hot).max() <= 1.0, "knee must bound the output at full scale"
+
+    # ...and the driver's own int16 stage therefore never saturates.
+    OUT_SCALE, MAX_GAIN = 20000.0, 1.25
+    assert abs(hot).max() * OUT_SCALE * MAX_GAIN < 32767
+
+
+def test_bare_chip_has_no_output_stage():
+    """highpass=0 means the caller asked for silicon, not a device.
+
+    The makeup gain and the knee are both the amplifier, so they must arrive and
+    depart together -- otherwise a measurement of the chip itself is quietly
+    reshaped by a loudspeaker model.
+    """
+    seq = steady()
+    bare = chip_synth.render_chip_fast(seq, scale=20.0, highpass=0.0)
+    assert abs(bare).max() > 1.0, "bare chip must be left unbounded"

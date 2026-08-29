@@ -37,7 +37,18 @@ HIGHPASS_POLES = 3
 
 #: What fits back under the peaks once the deepest rumble is gone.  Cutting
 #: higher would free more headroom, at the price of the bass.
-HIGHPASS_MAKEUP = 0.81
+HIGHPASS_MAKEUP = 0.9315
+
+#: Soft knee on the output stage, as a fraction of full scale.
+#:
+#: A real device's amplifier runs out of swing gradually; a fixed-point buffer
+#: stops dead, which is audible as static on the loudest points of speech.  Above
+#: this threshold the response bends, asymptotically approaching 1.0, so a device
+#: render can never reach full scale however it is later scaled.
+#:
+#: Part of the *device* model, like HIGHPASS_HZ: pass highpass=0 for the bare
+#: chip and no output stage is applied.
+SOFTKNEE = 0.75
 
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so no scipy is needed.  Regenerate with
@@ -68,6 +79,19 @@ def _resample(x, src, dst):
 
 
 
+def _soft_knee(sig, knee):
+    """Bend the top of the swing so a device render cannot reach full scale."""
+    if not knee or knee >= 1.0:
+        return sig
+    a = np.abs(sig)
+    if not (a > knee).any():
+        return sig
+    room = 1.0 - knee
+    return np.where(a > knee,
+                    np.sign(sig) * (knee + room * np.tanh((a - knee) / room)),
+                    sig)
+
+
 def _apply_highpass(sig, fc, rate):
     """Three one-pole high-passes and the makeup gain that goes with them.
 
@@ -86,7 +110,7 @@ def _apply_highpass(sig, fc, rate):
             px = x
             out[n] = py
         sig = out
-    return sig * HIGHPASS_MAKEUP
+    return _soft_knee(sig * HIGHPASS_MAKEUP, SOFTKNEE)
 
 def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
            lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=0.5,

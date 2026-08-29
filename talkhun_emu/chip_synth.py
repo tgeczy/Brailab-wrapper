@@ -56,7 +56,41 @@ CHIP_HIGHPASS_POLES = 3
 #: back.  Trimming only the deepest rumble frees almost none, so this is what
 #: fits under the peaks: slightly quieter, which is the cost of keeping the
 #: bass.  The rest is NVDA's volume slider.
-CHIP_HIGHPASS_MAKEUP = 0.81
+CHIP_HIGHPASS_MAKEUP = 0.9315
+
+#: Soft knee on the output stage, as a fraction of full scale.
+#:
+#: An amplifier runs out of swing gradually; int16 stops dead.  Every emulated
+#: build through 3.1.x hit that wall -- a say-all sentence clipped 120 samples,
+#: peaking 50% past the ceiling -- and it was audible as static on exactly the
+#: loud points of an intonation slide.  Above this threshold the response bends
+#: instead, asymptotically approaching 1.0, so the output can never reach the
+#: ceiling at any volume.  That is arithmetic, not a lucky test corpus.
+#:
+#: Measured against TTS.dll, our average level already matches it (RMS 0.103 vs
+#: 0.107); what differs is crest, 7.70 against 6.16.  TTS.dll is not limiting --
+#: it never exceeds 0.81 of full scale and has no flattened tops -- it simply has
+#: a less spiky waveform, and therefore headroom we lack.  The knee closes part
+#: of that gap, which is what makes room for the makeup gain above.
+#:
+#: At 0.75 it engages on 0.04% of samples (0.49% THD) and buys +1.2 dB.  Lower
+#: is louder and dirtier: 0.62 gives +2.25 dB at 1.42% THD.
+#: Memoryless, so it commutes with the block split and the streaming and
+#: whole-utterance paths stay bit-identical.
+CHIP_SOFTKNEE = 0.75
+
+
+def _soft_knee(x, knee):
+    """Bend the top of the swing instead of letting it hit the ceiling."""
+    if not knee or knee >= 1.0:
+        return x
+    a = np.abs(x)
+    over = a > knee
+    if not over.any():
+        return x
+    room = 1.0 - knee
+    bent = np.sign(x) * (knee + room * np.tanh((a - knee) / room))
+    return np.where(over, bent, x)
 
 # butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so the default output low-pass needs no scipy at all.  A
@@ -351,7 +385,10 @@ def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
     # headroom and making the voice boxy.  See CHIP_HIGHPASS_HZ.
     hpa = math.exp(-2.0 * math.pi * float(highpass) / FS) if highpass else None
     hx0 = hy0 = hx1 = hy1 = hx2 = hy2 = 0.0
+    # Makeup and knee are both the *amplifier*, so they arrive together: with
+    # highpass=0 the caller asked for the bare chip and gets no output stage.
     gain = scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0)
+    knee = CHIP_SOFTKNEE if highpass else 0.0
 
     step = block if (block and block > 0) else N
     if step <= 0:
@@ -398,7 +435,9 @@ def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
                 hy1 = hpa * (hy1 + v - hx1); hx1 = v; v = hy1
                 hy2 = hpa * (hy2 + v - hx2); hx2 = v; v = hy2
             outb[k] = v
-        yield np.array(outb) * gain                 # linear -> commutes with the gain
+        # The knee is memoryless, so applying it per block is identical to
+        # applying it to the whole utterance -- fast == stream by construction.
+        yield _soft_knee(np.array(outb) * gain, knee)
         a = b
 
 
