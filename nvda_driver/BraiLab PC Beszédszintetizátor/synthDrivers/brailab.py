@@ -199,9 +199,6 @@ class SynthDriver(SynthDriver):
 		# What is actually set on the engine right now.  It follows _cachedPitch
 		# except while a PitchCommand (a capital) is in force.
 		self._appliedPitch = self._cachedPitch
-		self._diagPitch("driver ready; supportedCommands=%s cachedPitch=%s"
-						% (sorted(c.__name__ for c in self.supportedCommands),
-						   self._cachedPitch))
 		self._cachedVolume = result.get("volume", 0)
 
 		# Background queue thread (for ordering speech requests)
@@ -327,11 +324,6 @@ class SynthDriver(SynthDriver):
 				synthDoneSpeaking.notify(synth=self)
 			return
 
-		if any(isinstance(i, PitchCommand) for i in speechSequence):
-			self._diagPitch("speak() got %s"
-							% [type(i).__name__ + ("(%s)" % i.offset
-													if isinstance(i, PitchCommand) else "")
-							   for i in speechSequence])
 		hasIndex = any(isinstance(i, IndexCommand) for i in speechSequence)
 		blocks, anyText, allIndexes = self._buildBlocks(speechSequence, coalesceSayAll=hasIndex)
 
@@ -367,7 +359,14 @@ class SynthDriver(SynthDriver):
 			if not self.speaking:
 				break
 
-			self._applyBlockPitch(pitchAdj)
+			# Only a block that actually says something may move the pitch.
+			# NVDA ends a spelled capital with an IndexCommand, which becomes a
+			# block of its own with no text and the offset already back at 0;
+			# letting that block call set_pitch would undo the capital, because
+			# the host latches the pitch at commit_utterance() and the last
+			# write before the commit is the one that counts.
+			if text:
+				self._applyBlockPitch(pitchAdj)
 
 			if text:
 				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
@@ -427,7 +426,14 @@ class SynthDriver(SynthDriver):
 			if not self.speaking:
 				break
 
-			self._applyBlockPitch(pitchAdj)
+			# Only a block that actually says something may move the pitch.
+			# NVDA ends a spelled capital with an IndexCommand, which becomes a
+			# block of its own with no text and the offset already back at 0;
+			# letting that block call set_pitch would undo the capital, because
+			# the host latches the pitch at commit_utterance() and the last
+			# write before the commit is the one that counts.
+			if text:
+				self._applyBlockPitch(pitchAdj)
 
 			if text:
 				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
@@ -457,27 +463,6 @@ class SynthDriver(SynthDriver):
 
 	# ----- Pitch, including NVDA's capital pitch change -----
 
-	def _diagPitch(self, msg):
-		"""Temporary, loud diagnosis of the capital-pitch path (3.1.3).
-
-		Writes to a file in %TEMP% as well as the NVDA log.  This code runs
-		inside NVDA's 32-bit synth host, and that process's log output does not
-		reach NVDA's own log file -- which is why the 3.1.2 build produced no
-		diagnosis at all.  A file we control is the only reliable channel out.
-		"""
-		try:
-			log.info("Brailab pitch: %s" % msg)
-		except Exception:
-			pass
-		try:
-			import tempfile
-			import time as _t
-			path = os.path.join(tempfile.gettempdir(), "brailab_pitch.log")
-			with open(path, "a", encoding="utf-8") as f:
-				f.write(_t.strftime("%H:%M:%S") + "  " + str(msg) + "\n")
-		except Exception:
-			pass
-
 	def _applyBlockPitch(self, adj):
 		"""Set the engine's pitch for one block, user setting plus NVDA's offset.
 
@@ -491,21 +476,12 @@ class SynthDriver(SynthDriver):
 		if adj:
 			pct = max(0, min(100, self._get_pitch() + adj))
 			want = self._percentToParam(pct, minPitch, maxPitch)
-		if adj:
-			self._diagPitch("adj=%s userPct=%s -> raw %s (applied %s, cached %s)"
-							% (adj, self._get_pitch(), want, self._appliedPitch,
-							   self._cachedPitch))
 		if want != self._appliedPitch:
 			try:
 				_brailab.set_pitch(want)
 				self._appliedPitch = want
-				if adj:
-					self._diagPitch("set_pitch(%s) sent to the host" % want)
 			except Exception:
 				log.error("Brailab: set_pitch failed", exc_info=True)
-		elif adj:
-			self._diagPitch("NO CHANGE: want %s already applied -- the capital "
-							"cannot be heard at this user pitch" % want)
 
 	def _restorePitch(self):
 		if self._appliedPitch != self._cachedPitch:

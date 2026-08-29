@@ -36,13 +36,15 @@ A caveat for the **real-hardware** add-on. Its pitch slider works, but in three
 steps only — low, normal, high — because the vendor's `TTS.dll` takes just those
 three values.
 
-**Correction (3.1.1):** an earlier version of these notes said capital pitch
-change could not work on the `TTS.dll` voice because NVDA's 32-bit bridge dropped
-pitch commands. **That was wrong, and unfair to NVDA — the bridge carries them
-correctly.** The fault was a bug in this add-on: the speech host applies pitch at
-the moment an utterance *runs*, and we restored the user's own setting a moment
-too early, wiping the capital's pitch before any sound was produced. Fixed in
-`brailab-3.1.1.nvda-addon`.
+**Fixed in 3.1.1–3.1.4.** Getting here took four attempts and two wrong
+theories, so for the record: NVDA's bridge was never at fault — an earlier
+version of these notes blamed it, which was wrong and unfair. The bug was ours,
+in two parts. The speech host applies pitch at the moment an utterance *runs*,
+and we restored the user's setting a moment too early. Then, once that was
+fixed, NVDA's spelled-capital sequence ends with an index marker, which became a
+block of its own carrying no text and the offset already back at zero — and that
+block reset the pitch again, still before the utterance ran. A block with
+nothing to say no longer touches the pitch.
 
 One real limit remains, and it is small: the hardware voice carries one pitch per
 utterance, so a pitch change in the middle of a sentence is not possible there.
@@ -115,14 +117,17 @@ Egy megjegyzés a **valódi hardveres** kiegészítőhöz: a hangmagasság-csús
 működik, de csak három fokozatban — mély, normál, magas —, mert a gyártói
 `TTS.dll` csak ezt a három értéket ismeri.
 
-**Helyesbítés (3.1.1):** e jegyzetek korábbi változata azt állította, hogy a
-nagybetűk hangmagasság-változása a `TTS.dll` hangnál azért nem működhet, mert az
-NVDA 32 bites hídja eldobja a hangmagasság-parancsokat. **Ez tévedés volt, és
-igazságtalan az NVDA-val szemben — a híd rendben átviszi őket.** A hiba ebben a
-kiegészítőben volt: a beszédkiszolgáló akkor alkalmazza a hangmagasságot, amikor
-egy megnyilatkozás *lefut*, mi pedig egy pillanattal korábban állítottuk vissza a
-felhasználó saját beállítását, így a nagybetű hangmagassága még azelőtt eltűnt,
-hogy bármilyen hang keletkezett volna. Javítva: `brailab-3.1.1.nvda-addon`.
+**Javítva a 3.1.1–3.1.4 verziókban.** Négy nekifutásba és két téves elméletbe
+került, ezért a pontosság kedvéért: az NVDA hídja soha nem volt hibás — e
+jegyzetek egy korábbi változata azt hibáztatta, ami tévedés volt és
+igazságtalan. A hiba a miénk volt, két részben. A beszédkiszolgáló akkor
+alkalmazza a hangmagasságot, amikor egy megnyilatkozás *lefut*, mi pedig egy
+pillanattal korábban állítottuk vissza a felhasználó beállítását. Miután ezt
+kijavítottuk, kiderült: az NVDA a betűztetett nagybetű után indexjelet küld, ami
+önálló blokk lett — szöveg nélkül, már nullára állt eltolással —, és ez a blokk
+újra visszaállította a hangmagasságot, még mindig a megnyilatkozás lefutása
+előtt. Egy blokk, amelynek nincs mondanivalója, többé nem nyúl a
+hangmagassághoz.
 
 Egy valódi korlát marad, és az kicsi: a hardveres hang megnyilatkozásonként egy
 hangmagasságot tud, így mondat közben nem lehet hangmagasságot váltani. A
