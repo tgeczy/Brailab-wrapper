@@ -29,11 +29,17 @@ class PCF8200:
         self.lowpass = lowpass
         self._pitch_byte = 46            # default start pitch
         self._fs = 0                     # FS1/FS0: standard frame = 12.8 ms
+        #: Stretch or squeeze every frame.  The chip's own speed control is the
+        #: two FS bits, which give four fixed rates; this is the same knob made
+        #: continuous, for callers that want a rate slider rather than a choice
+        #: of four.  1.0 is exactly what the FS bits asked for.
+        self.time_scale = 1.0
         self._seq = []                   # ('pitch',b) / ('frame',bytes5) / ('ctrl',bytes2)
 
     def _std_samples(self, fs):
         """Samples in one standard frame at speed code `fs` (FS_TAB, ms)."""
-        return max(1, int(round(P.FS_TAB[fs & 3][1] * 0.001 * self.rate)))
+        return max(1, int(round(P.FS_TAB[fs & 3][1] * 0.001 * self.rate
+                                * self.time_scale)))
 
     # ---- the chip's commands ----
     def pitch(self, byte):
