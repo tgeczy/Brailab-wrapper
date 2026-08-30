@@ -186,7 +186,13 @@ def test_custom_lowpass_still_has_the_formants():
     `xl = exc.tolist()` copies, leaving `exc` pristine while the cascade wrote
     into the list.  Every formant was discarded and the caller got a lowpassed
     buzz.  The default cutoff was fine, so nothing caught it.
+
+    Skipped without scipy, which CI deliberately does not install: a non-default
+    cutoff is the one path in the library that needs it, and keeping the rest
+    pure-numpy is what lets the whole thing be vendored into an NVDA add-on.
     """
+    import pytest
+    pytest.importorskip("scipy")
     import numpy as np
     from pcf8200.chip import render, LOWPASS_HZ
     chip = PCF8200(voice="male").pitch_hz(110)
