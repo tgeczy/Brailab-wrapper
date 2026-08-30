@@ -24,6 +24,12 @@ STD = int(round(0.0128 * RATE))          # standard frame = 128 samples at 10 kH
 class PCF8200:
     def __init__(self, voice="male", rate=RATE, source_tilt=TILT_HZ, lowpass=LOWPASS_HZ):
         self.female = str(voice).lower().startswith("f")
+        #: The voice the stream *starts* in.  `self.female` tracks the latest
+        #: control write while a stream is being built, so it cannot also serve
+        #: as the decoder's starting state -- by the time tracks() runs it is
+        #: already whatever the last control write said, and a change would be
+        #: invisible.
+        self._female0 = self.female
         self.rate = rate
         self.source_tilt = source_tilt
         self.lowpass = lowpass
@@ -79,7 +85,15 @@ class PCF8200:
     # ---- render the accumulated command stream ----
     def tracks(self):
         """Decode the command stream to per-sample (fc, bw, amp, pitch, voiced)."""
-        nf = 4 if self.female else 5
+        # M/F comes off the wire like FS does.  It is not an ordinary
+        # parameter: it switches the chip between the five- and four-formant
+        # quantization tables, so it changes how many tracks exist, not just
+        # their values.  Control writes before the first frame therefore
+        # reconfigure freely; a change after frames have been emitted cannot
+        # be represented in one set of tracks and is refused rather than
+        # silently decoded against the wrong table.
+        female = self._female0
+        nf = 4 if female else 5
         a_amp, a_p, a_noise = [], [], []
         a_fc = [[] for _ in range(nf)]
         a_bw = [[] for _ in range(nf)]
@@ -97,11 +111,20 @@ class PCF8200:
                 if d['stop']:
                     break
                 std = self._std_samples(d['fs'])
+                if d['female'] != female:
+                    if a_amp:
+                        raise ValueError(
+                            "M/F changes mid-stream; decode the segments "
+                            "either side of the control write separately")
+                    female = d['female']
+                    nf = 4 if female else 5
+                    a_fc = [[] for _ in range(nf)]
+                    a_bw = [[] for _ in range(nf)]
                 continue
             if kind != 'frame':
                 continue
             d = P.decode_frame(val)
-            cur = P.frame_params(d, female=self.female)
+            cur = P.frame_params(d, female=female)
             if prev is None:
                 prev = dict(cur)
             n = max(1, int(round(std * P.FD_MULT[d['FD']])))

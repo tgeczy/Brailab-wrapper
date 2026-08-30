@@ -164,7 +164,10 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     B2 = [(-(np.exp(-np.pi * bw[i] / FS) ** 2)).tolist() for i in range(nf)]
     xl = exc.tolist()
     y1 = [0.0] * nf; y2 = [0.0] * nf
-    lp = bool(lowpass)
+    # Only the default cutoff is the fused, scipy-free pair of sections below.
+    # Any other cutoff is applied after the cascade instead -- running both
+    # would filter twice at two different frequencies.
+    lp = bool(lowpass) and abs(lowpass - LOWPASS_HZ) < 1e-6
     if lp:
         (lb0, lb1, lb2, la1, la2) = _LP_SOS[0]
         (mb0, mb1, mb2, ma1, ma2) = _LP_SOS[1]
@@ -184,10 +187,13 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
             mz1 = mb2 * o - ma2 * v
         xl[k] = v
     sig = np.asarray(xl)
-    if lowpass and abs(lowpass - LOWPASS_HZ) >= 1e-6:
-        # non-default cutoff: needs scipy (optional); default path above is scipy-free
+    if lowpass and not lp:
+        # Non-default cutoff: needs scipy (optional); the default path above is
+        # scipy-free.  This filters the cascade OUTPUT.  It used to be handed
+        # `exc` -- the raw excitation -- which silently discarded every formant
+        # and returned a lowpassed buzz for any cutoff but the default.
         from scipy.signal import butter, sosfilt
-        sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), np.asarray(exc.tolist()))
+        sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
     if rate != FS:
         sig = _resample(sig, FS, rate)
     sig = _apply_highpass(sig, highpass, rate)

@@ -177,3 +177,61 @@ def test_pitch_hz_maps_through_the_table():
     chip.pitch_hz(100)
     expected = int(round(100 / T.PITCH_HZ_PER_UNIT))
     assert chip._seq[-1] == ('pitch', expected)
+
+
+def test_custom_lowpass_still_has_the_formants():
+    """A non-default cutoff must filter the cascade, not the excitation.
+
+    The custom path used to be handed `exc` -- the raw excitation -- because
+    `xl = exc.tolist()` copies, leaving `exc` pristine while the cascade wrote
+    into the list.  Every formant was discarded and the caller got a lowpassed
+    buzz.  The default cutoff was fine, so nothing caught it.
+    """
+    import numpy as np
+    from pcf8200.chip import render, LOWPASS_HZ
+    chip = PCF8200(voice="male").pitch_hz(110)
+    for _ in range(24):
+        chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+    fc, bw, amp, p, voiced = chip.tracks()
+
+    default = render(fc, bw, amp, p, voiced, lowpass=LOWPASS_HZ)
+    custom = render(fc, bw, amp, p, voiced, lowpass=3000.0)
+
+    n = min(len(default), len(custom))
+    corr = np.corrcoef(default[:n], custom[:n])[0, 1]
+    assert corr > 0.9, (
+        "a nearby cutoff must give nearly the same speech, got corr=%.3f "
+        "-- the cascade is being thrown away again" % corr)
+
+
+def test_mf_is_read_off_the_wire_not_off_the_object():
+    """M/F must come from the control write, like FS already does.
+
+    decode_control returns 'female' alongside 'fs'; tracks() consumed the one
+    and ignored the other, applying the object's *final* voice to every frame.
+    A stream that set the female bit itself would decode its frames against the
+    male table.
+    """
+    chip = PCF8200(voice="male")            # constructed male...
+    chip.control(female=True)               # ...but the stream says female
+    chip.pitch(40)
+    for _ in range(2):
+        chip.frame_codes(F1=10, F2=10, F3=4, AM=13, PI=2, FD=1)
+    fc, _bw, _amp, _p, _v = chip.tracks()
+    assert len(fc) == 4, "the wire asked for the four-formant table"
+
+
+def test_mf_change_after_frames_is_refused():
+    """Switching tables mid-utterance changes how many tracks exist.
+
+    It cannot be represented in one decode, so it is an error rather than a
+    silent mis-render of everything before the switch.
+    """
+    import pytest
+    chip = PCF8200(voice="male").pitch(40)
+    chip.frame_codes(F1=10, F2=10, F3=4, AM=13, PI=2, FD=1)
+    chip.frame_codes(F1=10, F2=10, F3=4, AM=13, PI=2, FD=1)
+    chip.control(female=True)               # too late: frames already emitted
+    chip.frame_codes(F1=10, F2=10, F3=4, AM=13, PI=2, FD=1)
+    with pytest.raises(ValueError, match="mid-stream"):
+        chip.tracks()

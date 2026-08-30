@@ -1,21 +1,21 @@
-[build-system]
-requires = ["setuptools>=61"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "pcf8200"
-version = "1.1.2"
-description = "A pure-numpy software model of the Philips PCF8200 formant speech chip (BraiLab / Ciber232), drivable at the chip's command level or phonetically from formants."
-readme = "README.md"
-requires-python = ">=3.8"
-license = { text = "MIT" }
-authors = [{ name = "Tamás Géczy", email = "gt1991@gmail.com" }]
-keywords = ["pcf8200", "speech-synthesis", "formant", "brailab", "ciber232", "tts", "retro"]
-dependencies = ["numpy>=1.20"]
-
-[project.urls]
-Homepage = "https://github.com/tgeczy/Brailab-wrapper"
-
-[tool.setuptools]
-packages = ["pcf8200"]
-package-dir = { "pcf8200" = "." }
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pcf8200"
+version = "1.1.3"
+description = "A pure-numpy software model of the Philips PCF8200 formant speech chip (BraiLab / Ciber232), drivable at the chip's command level or phonetically from formants."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Tamás Géczy", email = "gt1991@gmail.com" }]
+keywords = ["pcf8200", "speech-synthesis", "formant", "brailab", "ciber232", "tts", "retro"]
+dependencies = ["numpy>=1.20"]
+
+[project.urls]
+Homepage = "https://github.com/tgeczy/Brailab-wrapper"
+
+[tool.setuptools]
+packages = ["pcf8200"]
+package-dir = { "pcf8200" = "." }
