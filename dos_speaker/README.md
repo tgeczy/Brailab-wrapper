@@ -49,15 +49,17 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
   (that is what lets the start sequence carrying the pitch go out at all);
   back at rest after a STOP control. This is the pacing the JATEKOK games relied
   on: text does not advance until the utterance has been heard.
-- **Output**: IRQ0 at 1193182/119 = 10027 Hz; each tick writes one sample as a
-  PIT channel-2 mode-0 count, 119 levels. The old INT 08 is chained every 551st
-  tick so DOS time and TALKHUN's own timer hook keep their 18.2 Hz. When TALKHUN
-  hooks the timer above us and chains back, that call is handed to the BIOS
-  handler rather than run twice. The re-hook happens inside the timer handler
-  itself, within one tick of anyone hooking above us, so a newcomer's handler
-  never sees the 10 kHz rate; resident code touches the vector table directly
-  and never calls DOS, because INT 61h can arrive from inside TALKHUN's INT 21h
-  and INT 10h hooks.
+- **Output**: the RTC's periodic interrupt (IRQ8) at 8192 Hz; each tick writes
+  one sample as a PIT channel-2 mode-0 count, 144 levels. Nothing else in the
+  machine is touched: not PIT channel 0, not the BIOS tick, not IO.SYS's or
+  TALKHUN's INT 08 hooks. The synth, the low-pass and the frame lengths are
+  designed for the rate in use, so the chip model is unchanged apart from the
+  4 kHz ceiling. `/I` selects the older route instead: IRQ0 at 1193182/119 =
+  10027 Hz with the old INT 08 chained every 551st tick, the re-hook done inside
+  the timer handler within one tick of anyone hooking above us, and no DOS calls
+  in resident code. That route worked under DOSBox-X and stopped the BIOS clock
+  on a real Pentium 166 running Windows 98's DOS, where IO.SYS sits on INT 08;
+  the RTC route exists because of that log.
 - **Speaker ownership**: channel 2 and the gate are taken only while there is
   audio to play. The line is eased from the off level to the idle level over
   12 ms at the first sample, and given back (eased out, channel 2 returned to
@@ -76,6 +78,7 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
     SAY /T               self-test: beep, a sentence, then a beep 110 ms after it
     BRAISPK /P           self-test: a vowel through the synth, no TALKHUN needed
     BRAISPK /L           install with breadcrumbs in BRAISPK.LOG, for a machine with no monitor
+    BRAISPK /I           clock the samples from IRQ0 at 10027 Hz instead of the RTC
     BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns, overruns
     BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
     BRAISPK /U           unload (refused while TALKHUNS is loaded: reboot instead)

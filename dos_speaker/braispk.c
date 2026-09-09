@@ -50,9 +50,24 @@
 
 #define MAGIC        0xB7A1
 #define API_INT      0x61
-#define PIT_DIV      119            /* 1193182 / 119 = 10027 Hz               */
+#define PIT_DIV      119            /* 1193182 / 119 = 10027 Hz  (IRQ0 mode)   */
 #define CHAIN_TICKS  551            /* 10027 / 18.2065 -> old INT 08 at 18.2  */
-#define FS           10027.0        /* the actual sample rate we run at        */
+#define RTC_RATE     3              /* CMOS reg 0Ah rate 3 = 8192 Hz (RTC mode) */
+
+/* Which interrupt carries the samples.  RTC (IRQ8) is the default: it leaves
+ * PIT channel 0, the BIOS tick, IO.SYS's and TALKHUN's INT 08 hooks alone.
+ * On the first real machine (Pentium 166, Windows 98 DOS) the IRQ0 route
+ * played the chirp but the BIOS tick stopped advancing while it ran, and the
+ * box froze on the first utterance; IO.SYS sits on INT 08 there and DOSBox
+ * has nothing on it, so that chain was never exercised before. */
+#define CLOCK_RTC    1
+#define CLOCK_PIT    0
+static unsigned char clock_mode = CLOCK_RTC;
+static double fs_hz = 8192.0;       /* the actual sample rate we run at        */
+#define FS           fs_hz
+/* PWM: one PIT channel-2 mode-0 count per tick; the count must stay below the
+ * tick period in PIT cycles (145.6 at 8192 Hz, 119 at 10027 Hz). */
+static int pwm_top = 144, pwm_mid = 72, pwm_amp = 69;
 
 #define RING_SIZE    4096           /* samples (power of two), ~400 ms         */
 #define RING_MASK    (RING_SIZE - 1)
@@ -95,9 +110,28 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
 #define HIGHPASS_HZ   90.0
 #define MAKEUP        0.9315
 #define SOFTKNEE      0.75
-/* butter(4, 2600, 'low', fs=10000) as two second-order sections */
-static const double LP_A[5] = {0.10631234573760745, 0.2126246914752149, 0.10631234573760745, 0.06533681044002995, 0.04055215548149342};
-static const double LP_B[5] = {1.0, 2.0, 1.0, 0.09087377369825426, 0.4472530945667702};
+/* butter(4, 2600, 'low') as two second-order sections, designed at run time
+ * for the rate in use: Butterworth Qs 0.5412 and 1.3066, RBJ bilinear form.
+ * At 10 kHz this reproduces the table the NVDA voice was tuned with. */
+#define LP_HZ         2600.0
+static double LP_A[5], LP_B[5];
+static void lp_design(double fs)
+{
+    static const double Q[2] = {0.54119610014619701, 1.3065629648763764};
+    double w0 = 2.0 * 3.14159265358979 * LP_HZ / fs, c = cos(w0), sn = sin(w0);
+    double alpha, a0, g = 1.0;
+    int k;
+    for (k = 0; k < 2; k++) {
+        double *A = k ? LP_B : LP_A;
+        alpha = sn / (2.0 * Q[k]);
+        a0 = 1.0 + alpha;
+        A[0] = (1.0 - c) / 2.0 / a0; A[1] = (1.0 - c) / a0; A[2] = A[0];
+        A[3] = -2.0 * c / a0; A[4] = (1.0 - alpha) / a0;
+    }
+    /* fold section 2's numerator gain into section 1, as the table did */
+    g = LP_B[0]; LP_B[0] = 1.0; LP_B[1] /= g; LP_B[2] /= g;
+    LP_A[0] *= g; LP_A[1] *= g; LP_A[2] *= g;
+}
 
 /* ---- resident state -------------------------------------------------------- */
 static unsigned char ring[RING_SIZE];
@@ -105,9 +139,11 @@ static volatile unsigned ring_head;          /* ISR reads here                  
 static volatile unsigned ring_tail;          /* synth writes here               */
 static volatile unsigned long tick_count;
 static unsigned chain_count;
-static unsigned char idle_level = 60;
+static unsigned char idle_level = 72;
 
 static void (__interrupt __far *old08)(void);
+static void (__interrupt __far *old70)(void);
+static unsigned char rtc_rate_saved, pic1_saved, pic2_saved;
 static void (__interrupt __far *old61)(void);
 static unsigned resident_psp;
 
@@ -140,7 +176,7 @@ static struct {
 static unsigned char chip_timing;                /* /C: honour FS bits */
 static double out_gain = 1.0;                   /* /Vn: 0.25 .. 5.6 */
 static const double GAIN_TAB[10] = {0.25, 0.35, 0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66};
-static const int FS_SAMPLES[4] = {128, 88, 104, 176};   /* 12.8/8.8/10.4/17.6 ms */
+static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
 static unsigned char fpu_save[108];
 static unsigned char api_stack[3072];
@@ -164,7 +200,7 @@ static unsigned char ramp;
 #define SPK_RAMP_IN  1                           /* easing the line from off to idle    */
 #define SPK_PLAY     2
 #define SPK_RAMP_OUT 3
-#define RAMP_TOP     119                         /* a full period low = the gated-off level */
+#define RAMP_TOP     pwm_top                     /* a full period low = the gated-off level */
 
 /* The speaker is ours only while there is something to say.  A game's own
  * beeps program channel 2 in mode 3; touching 42h while idle would wreck
@@ -187,22 +223,9 @@ static void speaker_release(void)
     spk_state = SPK_OFF;
 }
 
-static void __interrupt __far isr08(void)
+static void speaker_tick(void)
 {
-    unsigned h;
-    /* TALKHUN hooks INT 08 above us after it loads and saved *our* handler as
-     * its old vector.  We re-hook on top so it keeps its 18.2 Hz, chain to it
-     * every CHAIN_TICKS, and when it chains straight back into us, pass that
-     * call on to the BIOS handler instead of running the tick twice. */
-    if (in_chain) {
-        in_chain = 0;
-        _chain_intr(bios08);
-    }
-    if (IVT08 != isr08) {                      /* hooked above us since last tick: */
-        old08 = IVT08;                         /* the newcomer gets 18.2 Hz through */
-        IVT08 = isr08;                         /* us, never our 10 kHz             */
-    }
-    h = ring_head;
+    unsigned h = ring_head;
     switch (spk_state) {
     case SPK_OFF:
         if (h != ring_tail) speaker_acquire();
@@ -231,6 +254,36 @@ static void __interrupt __far isr08(void)
         break;
     }
     tick_count++;
+}
+
+/* RTC periodic interrupt, 8192 Hz.  Reading register 0Ch is what lets the
+ * chip raise the next one.  Nothing is chained: the BIOS only uses IRQ8 for
+ * INT 15h AH=83h/86h waits, which are unavailable while we are resident. */
+static void __interrupt __far isr70(void)
+{
+    outp(0x70, 0x0C);
+    inp(0x71);
+    speaker_tick();
+    outp(0xA0, 0x20);
+    outp(0x20, 0x20);
+}
+
+/* IRQ0 at 10027 Hz (/I).  TALKHUN hooks INT 08 above us after it loads and
+ * saves *our* handler as its old vector.  We re-hook on top so it keeps its
+ * 18.2 Hz, chain to it every CHAIN_TICKS, and when it chains straight back
+ * into us, pass that call on to the BIOS handler instead of running the tick
+ * twice. */
+static void __interrupt __far isr08(void)
+{
+    if (in_chain) {
+        in_chain = 0;
+        _chain_intr(bios08);
+    }
+    if (IVT08 != isr08) {                      /* hooked above us since last tick: */
+        old08 = IVT08;                         /* the newcomer gets 18.2 Hz through */
+        IVT08 = isr08;                         /* us, never our 10 kHz             */
+    }
+    speaker_tick();
     if (++chain_count >= CHAIN_TICKS) {
         chain_count = 0;
         if (old08 != bios08) in_chain = 1;
@@ -248,8 +301,8 @@ static void push_sample(double v)
 {
     int c;
     if (v > 1.0) v = 1.0; else if (v < -1.0) v = -1.0;
-    c = (int)(60.0 + v * 57.0);          /* 3..117, strictly inside 1..118   */
-    if (c < 2) c = 2; else if (c > 117) c = 117;
+    c = (int)(pwm_mid + v * pwm_amp);    /* strictly inside 1..period-1      */
+    if (c < 2) c = 2; else if (c > pwm_top - 2) c = pwm_top - 2;
     if (((ring_tail + 1) & RING_MASK) == ring_head) { n_overrun++; return; }
     ring[ring_tail] = (unsigned char)c;
     ring_tail = (ring_tail + 1) & RING_MASK;
@@ -265,6 +318,7 @@ static void synth_reset(void)
     S.rng = 12345UL;
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
+    lp_design(FS);
 }
 
 static double soft_knee(double x)
@@ -329,7 +383,7 @@ static void synth_frame(const unsigned char *f)
         S.prev_amp = amp;
         S.have_prev = 1;
     }
-    n = (chip_timing ? FS_SAMPLES[S.fs & 3] : STD_SAMPLES) * FD_MULT[fd];
+    n = (int)((chip_timing ? FS_MS10[S.fs & 3] : STD_SAMPLES) * fs_hz / 10000.0 + 0.5) * FD_MULT[fd];
     pt = S.pitch + pi * FD_MULT[fd];
     if (pt < 40.0) pt = 40.0; else if (pt > 400.0) pt = 400.0;
 
@@ -455,6 +509,7 @@ static void handshake_reset(void)
 }
 
 static void __interrupt __far isr61(union INTPACK r);
+static void lg(const char *line);
 
 /* Runs on the private stack.  Reads api_ah/api_al, leaves results in api_*. */
 static void __cdecl api_dispatch(void)
@@ -477,7 +532,7 @@ static void __interrupt __far isr61(union INTPACK r)
     /* TALKHUN may hook INT 08 above us after we load; it expects 18.2 Hz, we
      * deliver 10 kHz.  Heal by re-hooking on top: its handler becomes the one we
      * chain to.  One vector compare per call. */
-    if (IVT08 != isr08) {                      /* IF is clear: INT cleared it   */
+    if (clock_mode == CLOCK_PIT && IVT08 != isr08) {   /* IF is clear here */
         old08 = IVT08;
         IVT08 = isr08;
     }
@@ -552,6 +607,51 @@ static void pit_speech(void)
     _enable();
 }
 
+static unsigned char cmos_read(unsigned char reg)
+{
+    outp(0x70, reg);
+    return (unsigned char)inp(0x71);
+}
+static void cmos_write(unsigned char reg, unsigned char v)
+{
+    outp(0x70, reg);
+    outp(0x71, v);
+}
+
+/* RTC periodic interrupt at 8192 Hz on IRQ8: rate nibble 3, PIE on, IRQ8 and
+ * the IRQ2 cascade unmasked.  Vector hooked before the chip is told to fire. */
+static void rtc_speech(void)
+{
+    unsigned char b;
+    _disable();
+    old70 = _dos_getvect(0x70);
+    _dos_setvect(0x70, isr70);
+    rtc_rate_saved = cmos_read(0x0A);
+    cmos_write(0x0A, (rtc_rate_saved & 0xF0) | RTC_RATE);
+    b = cmos_read(0x0B);
+    cmos_write(0x0B, b | 0x40);
+    cmos_read(0x0C);                           /* clear whatever is pending     */
+    pic2_saved = (unsigned char)inp(0xA1); outp(0xA1, pic2_saved & ~1);
+    pic1_saved = (unsigned char)inp(0x21); outp(0x21, pic1_saved & ~4);
+    _enable();
+}
+
+static void rtc_normal(unsigned ds)
+{
+    unsigned char b;
+    _disable();
+    b = cmos_read(0x0B);
+    cmos_write(0x0B, b & ~0x40);
+    cmos_write(0x0A, *(unsigned char far *)MK_FP(ds, (unsigned)&rtc_rate_saved));
+    cmos_read(0x0C);
+    outp(0xA1, (inp(0xA1) & ~1) | (*(unsigned char far *)MK_FP(ds, (unsigned)&pic2_saved) & 1));
+    outp(0x21, (inp(0x21) & ~4) | (*(unsigned char far *)MK_FP(ds, (unsigned)&pic1_saved) & 4));
+    _dos_setvect(0x70, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old70));
+    outp(0x61, inp(0x61) & ~3);
+    outp(0x43, 0xB6);
+    _enable();
+}
+
 static void pit_normal(void)
 {
     _disable();
@@ -592,16 +692,29 @@ static int uninstall(void)
     }
     v08 = *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old08);
     v61 = _dos_getvect(API_INT);
-    if (v08 != *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08) || FP_SEG(v61) != cs) {
-        printf("braispk: another program hooked INT 08 or INT 61 after us; cannot unload safely\r\n");
+    if (FP_SEG(v61) != cs) {
+        printf("braispk: another program hooked INT 61h after us; cannot unload safely\r\n");
         return 1;
     }
-    _disable();
-    if (*(unsigned char far *)MK_FP(ds, (unsigned)&spk_state)) { outp(0x61, inp(0x61) & ~3); outp(0x43, 0xB6); }
-    _dos_setvect(8, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08));
-    _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
-    _enable();
-    pit_normal();
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT) {
+        if (v08 != *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08)) {
+            printf("braispk: another program hooked INT 08 after us; cannot unload safely\r\n");
+            return 1;
+        }
+        _disable();
+        if (*(unsigned char far *)MK_FP(ds, (unsigned)&spk_state)) { outp(0x61, inp(0x61) & ~3); outp(0x43, 0xB6); }
+        _dos_setvect(8, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08));
+        _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
+        _enable();
+        pit_normal();
+    } else {
+        if (FP_SEG(_dos_getvect(0x70)) != cs) {
+            printf("braispk: another program hooked INT 70h after us; cannot unload safely\r\n");
+            return 1;
+        }
+        rtc_normal(ds);
+        _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
+    }
     _dos_freemem(psp);
     printf("braispk: unloaded\r\n");
     return 0;
@@ -650,16 +763,23 @@ static int selftest(void)
     int k;
     union REGS r;
     if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    lg("P1 self-test: start sequence");
     i2c_xfer(settings, 2);
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
+    lg("P2 start sequence sent, frames follow");
     for (k = 0; k < 40; k++) {
-        if (!wait_ready()) { printf("braispk: adapter never became ready\r\n"); return 1; }
+        if (!wait_ready()) { lg("P! adapter never became ready"); printf("braispk: adapter never became ready\r\n"); return 1; }
         frame[2] = (unsigned char)(k < 30 ? 0x40 : 0x5D);          /* PI: fall at the end */
         i2c_xfer(frame, 6);
+        if (k == 0) lg("P3 first frame synthesised");
+        if (k == 9) lg("P4 ten frames");
+        if (k == 29) lg("P5 thirty frames");
     }
+    lg("P6 all forty frames sent, STOP follows");
     i2c_xfer(ctl_stop, 3);
     do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
+    lg("P7 drained, self-test done");
     printf("braispk: self-test played\r\n");
     return 0;
 }
@@ -684,7 +804,9 @@ static int report(void)
     unsigned ds;
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     r.h.ah = 0xFD; int86(API_INT, &r, &r);
-    printf("braispk: frames %u  controls %u  pitches %u  queued %u samples\r\n", r.x.ax, r.x.bx, r.x.cx, r.x.dx);
+    printf("braispk: %s clock; frames %u  controls %u  pitches %u  queued %u samples\r\n",
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT ? "IRQ0 10027 Hz" : "RTC 8192 Hz",
+           r.x.ax, r.x.bx, r.x.cx, r.x.dx);
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
@@ -723,7 +845,8 @@ int main(int argc, char **argv)
                 return 0;
             }
             case 'P': return selftest();
-            case 'L': logging = 1; remove("BRAISPK.LOG"); lg("1 start"); break;
+            case 'L': logging = 1; lg("--- braispk"); break;
+            case 'I': clock_mode = CLOCK_PIT; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
@@ -731,6 +854,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
                        "  BRAISPK /Vn    output level 0..9 (5 = as the NVDA voice, 7 = twice)\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
+                       "  BRAISPK /I     clock the samples from IRQ0 at 10027 Hz instead of the RTC at 8192\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /S     show counters\r\n"
                        "  BRAISPK /R     reset handshake and queue\r\n"
@@ -758,14 +882,29 @@ int main(int argc, char **argv)
     old08 = bios08 = _dos_getvect(8);
     _dos_setvect(API_INT, isr61);
     lg("3 INT 61h hooked");
-    pit_speech();
-    _dos_setvect(8, isr08);
-    lg("4 PIT channel 0 at 10027 Hz, INT 08 hooked");
-    if (logging) {                             /* does IRQ0 reach us, does the BIOS tick survive it */
+    if (clock_mode == CLOCK_PIT) {
+        fs_hz = 10027.0; pwm_top = 119; pwm_mid = 60; pwm_amp = 57; idle_level = 60;
+        synth_reset();
+        pit_speech();
+        _dos_setvect(8, isr08);
+        lg("4 PIT channel 0 at 10027 Hz, INT 08 hooked");
+    } else {
+        fs_hz = 8192.0; pwm_top = 144; pwm_mid = 72; pwm_amp = 69; idle_level = 72;
+        synth_reset();
+        if (logging) {
+            sprintf(logbuf, "4 RTC: INT 70h was %04X:%04X, reg 0Ah %02X, reg 0Bh %02X, PIC masks %02X/%02X",
+                    FP_SEG(_dos_getvect(0x70)), FP_OFF(_dos_getvect(0x70)),
+                    cmos_read(0x0A), cmos_read(0x0B), inp(0x21), inp(0xA1));
+            lg(logbuf);
+        }
+        rtc_speech();
+        lg("4 RTC periodic interrupt at 8192 Hz on IRQ8, INT 70h hooked");
+    }
+    if (logging) {                             /* does the interrupt reach us; does the BIOS tick go on */
         volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
         unsigned long t0 = *bios, n = 0, c0 = tick_count;
-        while (*bios - t0 < 4 && ++n < 400000L) ;
-        sprintf(logbuf, "5 after %lu loops: our ticks %lu, BIOS ticks +%lu (want ~2200 and 4)",
+        while (tick_count - c0 < 3000 && ++n < 5000000L) ;
+        sprintf(logbuf, "5 after %lu loops: our ticks %lu, BIOS ticks +%lu (want 3000 and 5..7)",
                 n, tick_count - c0, *bios - t0);
         lg(logbuf);
     }
@@ -789,8 +928,9 @@ int main(int argc, char **argv)
     _asm { mov sp_now, sp }
     top = sp_now + 512;                        /* we are near the top of DGROUP  */
     paras = (unsigned)((((unsigned long)FP_SEG((void __far *)&ring_head) << 4) + top - ((unsigned long)_psp << 4) + 15) >> 4);
-    printf("braispk: resident, %u KB, 10027 Hz PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
-           (paras + 63) / 64, API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
+    printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
+           (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : "8192 Hz RTC",
+           API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
            chip_timing ? ", chip frame timing" : "");
     fflush(stdout);                            /* _dos_keep does not flush     */
     _dos_keep(0, paras);
