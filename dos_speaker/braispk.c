@@ -76,6 +76,7 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define CLOCK_CARD   3      /* /A: no speaker at all -- the bytes go to a real
                              * PCF8200 on the PC-ROBOT ISA card (Nikol, 1993) */
 static unsigned card_port = 0x100;
+static int card_write(unsigned char b);
 static unsigned char clock_mode = CLOCK_PIT_HI;   /* /8 = RTC, /I = IRQ0 at 10 kHz */
 static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
 static unsigned char force_bypass;  /* /X: take that path even when nothing hooks INT 08 */
@@ -602,7 +603,6 @@ static void handshake_reset(void)
 
 static void __interrupt __far isr61(union INTPACK r);
 static void lg(const char *line);
-static int card_write(unsigned char b);
 
 /* Runs on the private stack.  Reads api_ah/api_al, leaves results in api_*. */
 static void __cdecl api_dispatch(void)
