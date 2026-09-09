@@ -43,6 +43,9 @@
 #include <conio.h>
 #include <dos.h>
 #include <i86.h>
+#include <io.h>
+#include <fcntl.h>
+#include <float.h>
 
 /* The INT 08 vector, read and written directly.  Resident code must not call
  * DOS: INT 61h can arrive from inside TALKHUN's INT 21h and INT 10h hooks. */
@@ -787,15 +790,21 @@ static int selftest(void)
 /* /L: breadcrumbs for a machine with no monitor.  One open/write/close per
  * line, so the directory entry is up to date if the next step freezes the
  * box; the file is read back under Windows after the reboot. */
-static int logging;
+static int logging, log_failed;
 static void lg(const char *line)
 {
-    FILE *f;
+    int h;
+    unsigned n;
     if (!logging) return;
-    f = fopen("BRAISPK.LOG", "a");
-    if (!f) return;
-    fprintf(f, "%s\r\n", line);
-    fclose(f);
+    if (_dos_open("BRAISPK.LOG", O_WRONLY, &h) != 0 &&
+        _dos_creat("BRAISPK.LOG", _A_NORMAL, &h) != 0) {
+        if (!log_failed) { log_failed = 1; beeps(4); }
+        return;
+    }
+    lseek(h, 0L, SEEK_END);
+    _dos_write(h, line, strlen(line), &n);
+    _dos_write(h, "\r\n", 2, &n);
+    _dos_close(h);
 }
 
 static int report(void)
@@ -825,6 +834,7 @@ int main(int argc, char **argv)
     unsigned far *bda_lpt1 = (unsigned far *)MK_FP(0x40, 0x08);
     int i;
 
+    _control87(_MCW_EM, _MCW_EM);              /* no FPU traps, whatever Windows left */
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '/' || argv[i][0] == '-') {
             switch (argv[i][1] & 0xDF) {
@@ -845,7 +855,19 @@ int main(int argc, char **argv)
                 return 0;
             }
             case 'P': return selftest();
-            case 'L': logging = 1; lg("--- braispk"); break;
+            case 'L': {
+                unsigned msw;
+                logging = 1;
+                _asm {
+                    smsw ax
+                    mov  msw, ax
+                }
+                sprintf(logbuf, "--- braispk 0.6: %s  DOS %d.%02d  PSP %04X  MSW %04X  FPU CW %04X SW %04X",
+                        argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87());
+                lg(logbuf);
+                break;
+            }
+            case 'N': lg("N alive, one beep, exit"); beeps(1); return 0;
             case 'I': clock_mode = CLOCK_PIT; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
@@ -856,6 +878,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /I     clock the samples from IRQ0 at 10027 Hz instead of the RTC at 8192\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
+                       "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
                        "  BRAISPK /S     show counters\r\n"
                        "  BRAISPK /R     reset handshake and queue\r\n"
                        "  BRAISPK /U     unload\r\n"
