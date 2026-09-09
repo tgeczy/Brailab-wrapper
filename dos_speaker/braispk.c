@@ -75,6 +75,7 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define CLOCK_PIT_HI 2
 static unsigned char clock_mode = CLOCK_RTC;
 static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
+static unsigned char force_bypass;  /* /X: take that path even when nothing hooks INT 08 */
 static double fs_hz = 8192.0;       /* the actual sample rate we run at        */
 #define FS           fs_hz
 /* PWM: one PIT channel-2 mode-0 count per tick; the count must stay below the
@@ -990,7 +991,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.12: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.13: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -998,6 +999,7 @@ int main(int argc, char **argv)
             case 'N': lg("N alive, one beep, exit"); beeps(1); return 0;
             case 'I': clock_mode = CLOCK_PIT; break;
             case 'H': clock_mode = CLOCK_PIT_HI; break;
+            case 'X': force_bypass = 1; break;          /* test: bypass even without an OS hook */
             case 'F': full_range = 1; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
@@ -1043,10 +1045,32 @@ int main(int argc, char **argv)
          * did not pass our 10 kHz-paced chain on to the BIOS tick on the real
          * machine.  Chain to the BIOS's own compatibility entry instead; the
          * hook is simply not called while we are resident. */
-        if (FP_SEG(orig08) < 0xF000) {
-            old08 = bios08 = (void (__interrupt __far *)(void))MK_FP(0xF000, 0xFEA5);
-            bios_bypass = 1;
+        if (FP_SEG(orig08) < 0xF000 || force_bypass) {
+            /* Watcom turns a far data pointer cast to a far function pointer
+             * into segment 0: on the 166 that sent IRQ0 into the vector table
+             * and hung the box solid.  Build the pointer from its bits. */
+            union { void (__interrupt __far *f)(void); unsigned long l; } u;
+            const unsigned char far *b;
+            u.l = 0xF000FEA5UL;
+            b = (const unsigned char far *)u.f;
+            /* The compatibility entry should start like a handler.  If it
+             * does not, this BIOS has none there: fall back to the RTC. */
+            if (b[0] == 0xFB || b[0] == 0xE9 || b[0] == 0xEB || b[0] == 0xEA ||
+                b[0] == 0xFA || b[0] == 0x50 || b[0] == 0x1E || b[0] == 0x9C || b[0] == 0x60) {
+                old08 = bios08 = u.f;
+                bios_bypass = 1;
+            } else {
+                if (logging) {
+                    sprintf(logbuf, "4 no BIOS handler at F000:FEA5 (bytes %02X %02X %02X %02X): using the RTC instead",
+                            b[0], b[1], b[2], b[3]);
+                    lg(logbuf);
+                }
+                printf("braispk: this BIOS has no timer entry at F000:FEA5; using the RTC clock\r\n");
+                clock_mode = CLOCK_RTC;
+            }
         }
+    }
+    if (clock_mode != CLOCK_RTC) {
         if (clock_mode == CLOCK_PIT) {
             fs_hz = 10027.0; pit_div = 119; chain_ticks = 551; ticks_per_sample = 1; ramp_mask = 1;
             pwm_top = 119; pwm_mid = 60; pwm_amp = 57; idle_level = 60;
