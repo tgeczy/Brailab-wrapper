@@ -73,6 +73,9 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define CLOCK_RTC    1
 #define CLOCK_PIT    0
 #define CLOCK_PIT_HI 2
+#define CLOCK_CARD   3      /* /A: no speaker at all -- the bytes go to a real
+                             * PCF8200 on the PC-ROBOT ISA card (Nikol, 1993) */
+static unsigned card_port = 0x100;
 static unsigned char clock_mode = CLOCK_PIT_HI;   /* /8 = RTC, /I = IRQ0 at 10 kHz */
 static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
 static unsigned char force_bypass;  /* /X: take that path even when nothing hooks INT 08 */
@@ -482,6 +485,14 @@ static void transaction_done(void)
     const unsigned char *body = w_cur + 1;     /* drop the 0x20 device address */
     int len = (int)w_ncur - 1;
     if (len <= 0) return;
+    if (clock_mode == CLOCK_CARD) {            /* the real chip gets the bytes */
+        int k;
+        for (k = 0; k < len; k++) card_write(body[k]);
+        if (len == 5) n_frames++;
+        else if (len == 2) { n_ctrls++; if ((body[1] & 0xA0) == 0xA0) armed = 1; }
+        else if (len == 1) { if (singles & 1) n_pitches++; singles++; }
+        return;
+    }
     if (len == 5) {
         n_frames++;
         if (spk_state == SPK_PLAY && idle_ticks) n_underrun++;   /* ring ran dry between frames */
@@ -529,8 +540,50 @@ static void wire_step(unsigned char bits)
     w_data = data;
 }
 
+static unsigned n_card_timeouts;
+
+static unsigned char card_status(void)
+{
+    return (unsigned char)inp(card_port);
+}
+
+/* Wait for REQN, then hand the chip one byte.  40000 polls is what the
+ * Windows driver allowed before giving up. */
+static int card_write(unsigned char b)
+{
+    unsigned n;
+    for (n = 0; n < 40000U; n++)
+        if (!(inp(card_port) & 0x80)) { outp(card_port, b); outp(0x80, 0); return 1; }
+    n_card_timeouts++;
+    return 0;
+}
+
+/* The driver's probe: raw zeros until REQN drops (at most six), then BUSY
+ * must clear.  Then the chip is put into STOP with the two-byte control
+ * write 00h A1h, exactly what the driver does at reset. */
+static int card_probe(void)
+{
+    int k;
+    unsigned n;
+    for (k = 0; k < 6; k++) {
+        outp(card_port, 0); outp(0x80, 0);
+        for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x80)) break;
+        if (n < 40000U) break;
+    }
+    if (k == 6) return 0;
+    for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x40)) break;
+    if (n == 40000U) return 0;
+    if (!card_write(0x00) || !card_write(0xA1)) return 0;
+    return 1;
+}
+
 static unsigned char poll_status(void)
 {
+    if (clock_mode == CLOCK_CARD) {
+        if (armed || (inp(card_port) & 0x80)) { n_polls_busy++; return STATUS_BUSY; }
+        n_polls_ready++;
+        return STATUS_READY;
+    }
     if (queued() > FIFO_BUSY || armed) { n_polls_busy++; return STATUS_BUSY; }
     n_polls_ready++;
     return STATUS_READY;
@@ -543,6 +596,7 @@ static void handshake_reset(void)
     _enable();
     armed = 1; singles = 0;
     w_clock = w_data = w_active = 0; w_nbits = w_bits = w_ncur = 0;
+    if (clock_mode == CLOCK_CARD) { card_write(0x00); card_write(0xA1); return; }   /* STOP the chip */
     synth_reset();
 }
 
@@ -600,7 +654,7 @@ static void __interrupt __far isr61(union INTPACK r)
     /* TALKHUN may hook INT 08 above us after we load; it expects 18.2 Hz, we
      * deliver 10 kHz.  Heal by re-hooking on top: its handler becomes the one we
      * chain to.  One vector compare per call. */
-    if (clock_mode != CLOCK_RTC && IVT08 != isr08) {   /* IF is clear here */
+    if ((clock_mode == CLOCK_PIT || clock_mode == CLOCK_PIT_HI) && IVT08 != isr08) {   /* IF is clear here */
         old08 = IVT08;
         IVT08 = isr08;
     }
@@ -774,7 +828,9 @@ static int uninstall(void)
         printf("braispk: another program hooked INT 61h after us; cannot unload safely\r\n");
         return 1;
     }
-    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_RTC) {
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD) {
+        _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
+    } else if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_RTC) {
         if (v08 != *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08)) {
             printf("braispk: another program hooked INT 08 after us; cannot unload safely\r\n");
             return 1;
@@ -914,10 +970,15 @@ static int report(void)
     unsigned ds;
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     r.h.ah = 0xFD; int86(API_INT, &r, &r);
-    printf("braispk: %s clock; frames %u  controls %u  pitches %u  queued %u samples\r\n",
-           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT ? "IRQ0 10027 Hz" :
-           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz" : "RTC 8192 Hz",
+    printf("braispk: %s; frames %u  controls %u  pitches %u  queued %u samples\r\n",
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT ? "IRQ0 10027 Hz clock" :
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz clock" :
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
+        printf("         card port %03Xh status %02Xh (bit7 REQN, bit6 BUSY)  write timeouts %u\r\n",
+               *(unsigned far *)MK_FP(ds, (unsigned)&card_port), inp(*(unsigned far *)MK_FP(ds, (unsigned)&card_port)),
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_card_timeouts));
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
@@ -991,7 +1052,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.14: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.15: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1000,6 +1061,9 @@ int main(int argc, char **argv)
             case 'I': clock_mode = CLOCK_PIT; break;
             case 'H': clock_mode = CLOCK_PIT_HI; break;
             case '8': clock_mode = CLOCK_RTC; break;
+            case 'A': clock_mode = CLOCK_CARD;
+                      if (argv[i][2]) card_port = (unsigned)strtoul(argv[i] + 2, 0, 16);
+                      break;
             case 'X': force_bypass = 1; break;          /* test: bypass even without an OS hook */
             case 'F': full_range = 1; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
@@ -1012,6 +1076,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
+                       "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
@@ -1039,6 +1104,24 @@ int main(int argc, char **argv)
     synth_reset();
     old61 = _dos_getvect(API_INT);
     orig08 = old08 = bios08 = _dos_getvect(8);
+    if (clock_mode == CLOCK_CARD) {
+        unsigned char st0 = card_status();
+        int ok = card_probe();
+        if (logging) {
+            sprintf(logbuf, "4 PC-ROBOT card at %03Xh: status before %02Xh, probe %s, status after %02Xh",
+                    card_port, st0, ok ? "OK" : "FAILED", card_status());
+            lg(logbuf);
+        }
+        if (!ok) {
+            printf("braispk: no PC-ROBOT card answering at %03Xh (status %02Xh)\r\n", card_port, card_status());
+            beeps(6);
+            return 1;
+        }
+        _dos_setvect(API_INT, isr61);
+        lg("3 INT 61h hooked, card mode");
+        beeps(1);
+        goto resident;
+    }
     _dos_setvect(API_INT, isr61);
     lg("3 INT 61h hooked");
     if (clock_mode != CLOCK_RTC) {
@@ -1130,6 +1213,7 @@ int main(int argc, char **argv)
                 queued(), *bios - t0, spk_state);
         lg(logbuf);
     }
+resident:
     lg("7 going resident");
 
     /* free the environment, keep PSP..top of our stack resident */
@@ -1137,6 +1221,10 @@ int main(int argc, char **argv)
     _asm { mov sp_now, sp }
     top = sp_now + 512;                        /* we are near the top of DGROUP  */
     paras = (unsigned)((((unsigned long)FP_SEG((void __far *)&ring_head) << 4) + top - ((unsigned long)_psp << 4) + 15) >> 4);
+    if (clock_mode == CLOCK_CARD)
+        printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
+               (paras + 63) / 64, card_port, API_INT);
+    else
     printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
            API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
