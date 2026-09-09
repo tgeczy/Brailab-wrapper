@@ -562,19 +562,26 @@ static int card_write(unsigned char b)
 /* The driver's probe: raw zeros until REQN drops (at most six), then BUSY
  * must clear.  Then the chip is put into STOP with the two-byte control
  * write 00h A1h, exactly what the driver does at reset. */
+static const char *card_note = "";
+
+/* Present = the port does not read FFh.  Then the driver's sequence is tried
+ * and what the chip did with it is recorded, but a present card is always
+ * accepted: the real traffic and /S's timeout counter are the better test. */
 static int card_probe(void)
 {
     int k;
     unsigned n;
+    if (card_status() == 0xFF) return 0;
     for (k = 0; k < 6; k++) {
         outp(card_port, 0); outp(0x80, 0);
         for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x80)) break;
         if (n < 40000U) break;
     }
-    if (k == 6) return 0;
+    card_note = (k == 6) ? "REQN never dropped after zeros" : "REQN answered a zero";
     for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x40)) break;
-    if (n == 40000U) return 0;
-    if (!card_write(0x00) || !card_write(0xA1)) return 0;
+    if (n == 40000U) card_note = "BUSY stuck high";
+    n_card_timeouts = 0;
+    card_write(0x00); card_write(0xA1);
     return 1;
 }
 
@@ -1077,7 +1084,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.16: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.17: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1134,8 +1141,8 @@ int main(int argc, char **argv)
         unsigned char st0 = card_status();
         int ok = card_probe();
         if (logging) {
-            sprintf(logbuf, "4 PC-ROBOT card at %03Xh: status before %02Xh, probe %s, status after %02Xh",
-                    card_port, st0, ok ? "OK" : "FAILED", card_status());
+            sprintf(logbuf, "4 PC-ROBOT card at %03Xh: status before %02Xh, %s, %s, STOP write timeouts %u, status after %02Xh",
+                    card_port, st0, ok ? "present" : "ABSENT (reads FFh)", card_note, n_card_timeouts, card_status());
             lg(logbuf);
         }
         if (!ok) {
