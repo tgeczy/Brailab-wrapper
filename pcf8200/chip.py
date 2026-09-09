@@ -143,11 +143,22 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     phase = phase - np.floor(phase)
     edge = FS * 0.5
     KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
-    kk = np.arange(1, KMAX + 1)
-    W = np.clip((edge - np.outer(p, kk)) / (edge * 0.16), 0.0, 1.0)
-    W = W * W * (3.0 - 2.0 * W)
-    Smat = np.sin(2.0 * np.pi * np.outer(phase, kk))
-    vsrc = -(2.0 / np.pi) * (Smat * (W / kk)).sum(1)
+    # One harmonic at a time, accumulated in order.  The same sum as a
+    # (samples x harmonics) matrix reduced along the harmonics -- but that
+    # reduction is pairwise, so its rounding depends on how many harmonics the
+    # matrix has, which depends on the lowest pitch in *this* call.  Summing
+    # sequentially, a harmonic beyond a sample's own cutoff adds an exact zero
+    # and the result no longer depends on KMAX: rendering any prefix of a track
+    # set gives the prefix of the full render, bit for bit, which is what lets
+    # a caller stream a growing utterance by re-rendering it and passing on
+    # only the new samples.  It also never materialises the matrix (30 MB for
+    # three seconds of speech).
+    vsrc = np.zeros(N)
+    for k in range(1, KMAX + 1):
+        w = np.clip((edge - p * k) / (edge * 0.16), 0.0, 1.0)
+        w = w * w * (3.0 - 2.0 * w)
+        vsrc += np.sin(2.0 * np.pi * phase * k) * (w / k)
+    vsrc *= -(2.0 / np.pi)
     if source_tilt:                              # one-pole glottal tilt (voiced only)
         ta = math.exp(-2.0 * math.pi * source_tilt / FS)
         c0 = 1.0 - ta
@@ -172,6 +183,16 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
         (lb0, lb1, lb2, la1, la2) = _LP_SOS[0]
         (mb0, mb1, mb2, ma1, ma2) = _LP_SOS[1]
         lz0 = lz1 = mz0 = mz1 = 0.0
+    # The device's three output high-pass poles ride in this same loop when
+    # nothing sits between the cascade and them (no resampling, no scipy
+    # low-pass): three one-poles applied one after another per sample perform
+    # exactly the operations _apply_highpass performs in three passes, in the
+    # same order, so the result is bit-identical -- minus two array
+    # allocations and three more Python traversals of every sample.
+    hp = bool(highpass) and rate == FS and (lp or not lowpass)
+    if hp:
+        ha = math.exp(-2.0 * math.pi * float(highpass) / rate)
+        hx1 = hy1 = hx2 = hy2 = hx3 = hy3 = 0.0
     rng_nf = range(nf)
     for k in range(N):
         v = xl[k]
@@ -185,6 +206,11 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
             v = mb0 * o + mz0
             mz0 = mb1 * o - ma1 * v + mz1
             mz1 = mb2 * o - ma2 * v
+        if hp:
+            hy1 = ha * (hy1 + v - hx1); hx1 = v
+            hy2 = ha * (hy2 + hy1 - hx2); hx2 = hy1
+            hy3 = ha * (hy3 + hy2 - hx3); hx3 = hy2
+            v = hy3
         xl[k] = v
     sig = np.asarray(xl)
     if lowpass and not lp:
@@ -196,7 +222,10 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
     if rate != FS:
         sig = _resample(sig, FS, rate)
-    sig = _apply_highpass(sig, highpass, rate)
+    if hp:
+        sig = _soft_knee(sig * HIGHPASS_MAKEUP, SOFTKNEE)   # _apply_highpass's tail
+    else:
+        sig = _apply_highpass(sig, highpass, rate)
     return sig
 
 
