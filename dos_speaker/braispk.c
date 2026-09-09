@@ -613,12 +613,20 @@ static void pit_speech(void)
 static unsigned char cmos_read(unsigned char reg)
 {
     outp(0x70, reg);
+    outp(0x80, 0);                             /* I/O delay: fast CPU, slow RTC */
     return (unsigned char)inp(0x71);
 }
 static void cmos_write(unsigned char reg, unsigned char v)
 {
     outp(0x70, reg);
+    outp(0x80, 0);
     outp(0x71, v);
+    outp(0x80, 0);
+}
+static unsigned char pic_reg(unsigned port, unsigned char ocw3)
+{
+    outp(port, ocw3);                          /* 0Ah = IRR, 0Bh = ISR         */
+    return (unsigned char)inp(port);
 }
 
 /* RTC periodic interrupt at 8192 Hz on IRQ8: rate nibble 3, PIE on, IRQ8 and
@@ -862,7 +870,7 @@ int main(int argc, char **argv)
                     smsw ax
                     mov  msw, ax
                 }
-                sprintf(logbuf, "--- braispk 0.6: %s  DOS %d.%02d  PSP %04X  MSW %04X  FPU CW %04X SW %04X",
+                sprintf(logbuf, "--- braispk 0.7: %s  DOS %d.%02d  PSP %04X  MSW %04X  FPU CW %04X SW %04X",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87());
                 lg(logbuf);
                 break;
@@ -921,14 +929,20 @@ int main(int argc, char **argv)
             lg(logbuf);
         }
         rtc_speech();
-        lg("4 RTC periodic interrupt at 8192 Hz on IRQ8, INT 70h hooked");
+        if (logging) {
+            sprintf(logbuf, "4 RTC on: reg 0Ah now %02X (want x3), reg 0Bh now %02X (bit 6 set), PIC masks %02X/%02X, INT 70h %04X:%04X",
+                    cmos_read(0x0A), cmos_read(0x0B), inp(0x21), inp(0xA1),
+                    FP_SEG(_dos_getvect(0x70)), FP_OFF(_dos_getvect(0x70)));
+            lg(logbuf);
+        }
     }
     if (logging) {                             /* does the interrupt reach us; does the BIOS tick go on */
         volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
         unsigned long t0 = *bios, n = 0, c0 = tick_count;
         while (tick_count - c0 < 3000 && ++n < 5000000L) ;
-        sprintf(logbuf, "5 after %lu loops: our ticks %lu, BIOS ticks +%lu (want 3000 and 5..7)",
-                n, tick_count - c0, *bios - t0);
+        sprintf(logbuf, "5 after %lu loops: our ticks %lu, BIOS ticks +%lu (want 3000 and 5..7); PIC IRR/ISR master %02X/%02X slave %02X/%02X",
+                n, tick_count - c0, *bios - t0,
+                pic_reg(0x20, 0x0A), pic_reg(0x20, 0x0B), pic_reg(0xA0, 0x0A), pic_reg(0xA0, 0x0B));
         lg(logbuf);
     }
     {                                          /* audible "resident" chirp       */
