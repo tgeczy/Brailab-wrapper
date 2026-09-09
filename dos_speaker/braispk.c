@@ -520,6 +520,7 @@ static int find_resident(unsigned *ds, unsigned *cs, unsigned *psp)
         const unsigned char far *b = (const unsigned char far *)isr61;
         int k, diff = 0;
         if (a[0] == 0xCF) return 0;
+        if (FP_SEG(v) >= 0xF000) return 0;       /* BIOS-parked dummy routine  */
         for (k = 0; k < 32; k++) if (a[k] != b[k]) diff++;
         if (diff > 4) return -1;
     }
@@ -570,6 +571,15 @@ static int uninstall(void)
     unsigned ds, cs, psp;
     void (__interrupt __far *v08)(void), (__interrupt __far *v61)(void);
     if (find_resident(&ds, &cs, &psp) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    {   /* TALKHUNS still loaded?  Its next utterance would hit a dead INT 61h
+         * and its INT 08 hook would be orphaned.  Refuse; reboot instead. */
+        union REGS r;
+        r.h.ah = 3; r.h.al = 0; r.x.dx = 3; int86(0x14, &r, &r);
+        if (r.x.ax == 0x30) {
+            printf("braispk: TALKHUNS is still loaded; reboot instead of unloading\r\n");
+            return 1;
+        }
+    }
     v08 = _dos_getvect(8); v61 = _dos_getvect(API_INT);
     if (FP_SEG(v08) != cs || FP_SEG(v61) != cs) {
         printf("braispk: another program hooked INT 08 or INT 61 after us; cannot unload safely\r\n");

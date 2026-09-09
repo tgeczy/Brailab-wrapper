@@ -72,7 +72,7 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
     SAY /T               self-test: beep, a sentence, then a beep 110 ms after it
     BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns
     BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
-    BRAISPK /U           unload
+    BRAISPK /U           unload (refused while TALKHUNS is loaded: reboot instead)
 
 What you should hear on a machine with no monitor: BRAISPK plays a two-tone
 chirp (440 then 660 Hz) the moment it goes resident; two short beeps mean it
