@@ -664,6 +664,20 @@ static int selftest(void)
     return 0;
 }
 
+/* /L: breadcrumbs for a machine with no monitor.  One open/write/close per
+ * line, so the directory entry is up to date if the next step freezes the
+ * box; the file is read back under Windows after the reboot. */
+static int logging;
+static void lg(const char *line)
+{
+    FILE *f;
+    if (!logging) return;
+    f = fopen("BRAISPK.LOG", "a");
+    if (!f) return;
+    fprintf(f, "%s\r\n", line);
+    fclose(f);
+}
+
 static int report(void)
 {
     union REGS r;
@@ -680,6 +694,8 @@ static int report(void)
            *(unsigned far *)MK_FP(ds, (unsigned)&n_overrun));
     return 0;
 }
+
+static char logbuf[160];
 
 int main(int argc, char **argv)
 {
@@ -707,6 +723,7 @@ int main(int argc, char **argv)
                 return 0;
             }
             case 'P': return selftest();
+            case 'L': logging = 1; remove("BRAISPK.LOG"); lg("1 start"); break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
@@ -714,6 +731,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
                        "  BRAISPK /Vn    output level 0..9 (5 = as the NVDA voice, 7 = twice)\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
+                       "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /S     show counters\r\n"
                        "  BRAISPK /R     reset handshake and queue\r\n"
                        "  BRAISPK /U     unload\r\n"
@@ -723,6 +741,13 @@ int main(int argc, char **argv)
         }
     }
     i = find_resident(0, 0, 0);
+    if (logging) {
+        void (__interrupt __far *v)(void) = _dos_getvect(API_INT);
+        sprintf(logbuf, "2 INT 61h vector %04X:%04X -> %s; INT 08 vector %04X:%04X; BDA LPT1 %04X",
+                FP_SEG(v), FP_OFF(v), i == 0 ? "free" : i == 1 ? "ours" : "FOREIGN",
+                FP_SEG(_dos_getvect(8)), FP_OFF(_dos_getvect(8)), *bda_lpt1);
+        lg(logbuf);
+    }
     if (i == 1) { printf("braispk: already resident\r\n"); beeps(2); return 1; }
     if (i == -1) { printf("braispk: INT %02Xh is already in use by another program; not installing\r\n", API_INT); beeps(3); return 1; }
 
@@ -732,13 +757,32 @@ int main(int argc, char **argv)
     old61 = _dos_getvect(API_INT);
     old08 = bios08 = _dos_getvect(8);
     _dos_setvect(API_INT, isr61);
+    lg("3 INT 61h hooked");
     pit_speech();
     _dos_setvect(8, isr08);
+    lg("4 PIT channel 0 at 10027 Hz, INT 08 hooked");
+    if (logging) {                             /* does IRQ0 reach us, does the BIOS tick survive it */
+        volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+        unsigned long t0 = *bios, n = 0, c0 = tick_count;
+        while (*bios - t0 < 4 && ++n < 400000L) ;
+        sprintf(logbuf, "5 after %lu loops: our ticks %lu, BIOS ticks +%lu (want ~2200 and 4)",
+                n, tick_count - c0, *bios - t0);
+        lg(logbuf);
+    }
     {                                          /* audible "resident" chirp       */
         int k;
         for (k = 0; k < 700; k++) push_sample(0.6 * sin(k * 6.28318530717958 * 440.0 / FS));
         for (k = 0; k < 700; k++) push_sample(0.6 * sin(k * 6.28318530717958 * 660.0 / FS));
     }
+    if (logging) {                             /* did the chirp drain: the speaker path ran */
+        volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+        unsigned long t0 = *bios, n = 0;
+        while (queued() && *bios - t0 < 18 && ++n < 2000000L) ;
+        sprintf(logbuf, "6 chirp: %u samples still queued after %lu BIOS ticks, speaker state %u",
+                queued(), *bios - t0, spk_state);
+        lg(logbuf);
+    }
+    lg("7 going resident");
 
     /* free the environment, keep PSP..top of our stack resident */
     _dos_freemem(*(unsigned far *)MK_FP(_psp, 0x2C));

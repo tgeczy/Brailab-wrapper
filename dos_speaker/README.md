@@ -75,6 +75,7 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
     SAY /F FILE.TXT      speak a file, line by line
     SAY /T               self-test: beep, a sentence, then a beep 110 ms after it
     BRAISPK /P           self-test: a vowel through the synth, no TALKHUN needed
+    BRAISPK /L           install with breadcrumbs in BRAISPK.LOG, for a machine with no monitor
     BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns, overruns
     BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
     BRAISPK /U           unload (refused while TALKHUNS is loaded: reboot instead)
