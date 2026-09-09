@@ -53,8 +53,13 @@
 
 #define MAGIC        0xB7A1
 #define API_INT      0x61
-#define PIT_DIV      119            /* 1193182 / 119 = 10027 Hz  (IRQ0 mode)   */
-#define CHAIN_TICKS  551            /* 10027 / 18.2065 -> old INT 08 at 18.2  */
+/* IRQ0 modes: /I = 1193182/119 = 10027 Hz, one sample per tick, 119 levels;
+ * /H = 1193182/60 = 19886 Hz, two ticks per sample (linear interpolation
+ * between samples), 58 levels: the carrier is above hearing instead of the
+ * 8 kHz television whistle of the RTC route.  The old INT 08 is chained
+ * every chain_ticks so the BIOS keeps its 18.2 Hz. */
+static unsigned pit_div = 119, chain_ticks = 551;
+static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define RTC_RATE     3              /* CMOS reg 0Ah rate 3 = 8192 Hz (RTC mode) */
 
 /* Which interrupt carries the samples.  RTC (IRQ8) is the default: it leaves
@@ -65,7 +70,9 @@
  * has nothing on it, so that chain was never exercised before. */
 #define CLOCK_RTC    1
 #define CLOCK_PIT    0
+#define CLOCK_PIT_HI 2
 static unsigned char clock_mode = CLOCK_RTC;
+static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
 static double fs_hz = 8192.0;       /* the actual sample rate we run at        */
 #define FS           fs_hz
 /* PWM: one PIT channel-2 mode-0 count per tick; the count must stay below the
@@ -145,6 +152,7 @@ static unsigned chain_count;
 static unsigned char idle_level = 72;
 
 static void (__interrupt __far *old08)(void);
+static void (__interrupt __far *orig08)(void);   /* what the IVT held at install */
 static void (__interrupt __far *old70)(void);
 static unsigned char rtc_rate_saved, pic1_saved, pic2_saved;
 static void (__interrupt __far *old61)(void);
@@ -177,7 +185,7 @@ static struct {
     int fs;
 } S;
 static unsigned char chip_timing;                /* /C: honour FS bits */
-static double out_gain = 1.0;                   /* /Vn: 0.25 .. 5.6 */
+static double out_gain = 4.0;                   /* /Vn: 0.25 .. 5.66, default /V8: a cone wants drive */
 static const double GAIN_TAB[10] = {0.25, 0.35, 0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66};
 static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
@@ -234,13 +242,20 @@ static void speaker_tick(void)
         if (h != ring_tail) speaker_acquire();
         break;
     case SPK_RAMP_IN:
-        if (ramp > idle_level) { if (tick_count & 1) ramp--; outp(0x42, ramp); }
+        if (ramp > idle_level) { if ((tick_count & ramp_mask) == 0) ramp--; outp(0x42, ramp); }
         else { spk_state = SPK_PLAY; idle_ticks = 0; }
         break;
     case SPK_PLAY:
         if (h != ring_tail) {
-            outp(0x42, ring[h]);
-            ring_head = (h + 1) & RING_MASK;
+            if (ticks_per_sample == 2 && (tick_count & 1)) {
+                unsigned n2 = (h + 1) & RING_MASK;           /* odd tick: halfway   */
+                unsigned char b = (n2 != ring_tail) ? ring[n2] : ring[h];
+                outp(0x42, (unsigned char)(((unsigned)ring[h] + b) >> 1));
+                ring_head = n2;
+            } else {
+                outp(0x42, ring[h]);
+                if (ticks_per_sample == 1) ring_head = (h + 1) & RING_MASK;
+            }
             idle_ticks = 0;
         } else {
             /* Drained.  After a STOP (armed) the utterance is over: give the
@@ -252,7 +267,7 @@ static void speaker_tick(void)
         break;
     default: /* SPK_RAMP_OUT */
         if (h != ring_tail) spk_state = SPK_RAMP_IN;          /* more to say: ease back in */
-        else if (ramp < RAMP_TOP) { if (tick_count & 1) ramp++; outp(0x42, ramp); }
+        else if (ramp < RAMP_TOP) { if ((tick_count & ramp_mask) == 0) ramp++; outp(0x42, ramp); }
         else speaker_release();
         break;
     }
@@ -287,7 +302,7 @@ static void __interrupt __far isr08(void)
         IVT08 = isr08;                         /* us, never our 10 kHz             */
     }
     speaker_tick();
-    if (++chain_count >= CHAIN_TICKS) {
+    if (++chain_count >= chain_ticks) {
         chain_count = 0;
         if (old08 != bios08) in_chain = 1;
         _chain_intr(old08);
@@ -538,7 +553,7 @@ static void __interrupt __far isr61(union INTPACK r)
     /* TALKHUN may hook INT 08 above us after we load; it expects 18.2 Hz, we
      * deliver 10 kHz.  Heal by re-hooking on top: its handler becomes the one we
      * chain to.  One vector compare per call. */
-    if (clock_mode == CLOCK_PIT && IVT08 != isr08) {   /* IF is clear here */
+    if (clock_mode != CLOCK_RTC && IVT08 != isr08) {   /* IF is clear here */
         old08 = IVT08;
         IVT08 = isr08;
     }
@@ -608,8 +623,8 @@ static void pit_speech(void)
 {
     _disable();
     outp(0x43, 0x34);                          /* ch0 lo/hi, mode 2             */
-    outp(0x40, PIT_DIV & 0xFF);
-    outp(0x40, PIT_DIV >> 8);
+    outp(0x40, pit_div & 0xFF);
+    outp(0x40, pit_div >> 8);
     _enable();
 }
 
@@ -710,14 +725,14 @@ static int uninstall(void)
         printf("braispk: another program hooked INT 61h after us; cannot unload safely\r\n");
         return 1;
     }
-    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT) {
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_RTC) {
         if (v08 != *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08)) {
             printf("braispk: another program hooked INT 08 after us; cannot unload safely\r\n");
             return 1;
         }
         _disable();
         if (*(unsigned char far *)MK_FP(ds, (unsigned)&spk_state)) { outp(0x61, inp(0x61) & ~3); outp(0x43, 0xB6); }
-        _dos_setvect(8, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08));
+        _dos_setvect(8, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&orig08));
         _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
         _enable();
         pit_normal();
@@ -825,7 +840,8 @@ static int report(void)
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     r.h.ah = 0xFD; int86(API_INT, &r, &r);
     printf("braispk: %s clock; frames %u  controls %u  pitches %u  queued %u samples\r\n",
-           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT ? "IRQ0 10027 Hz" : "RTC 8192 Hz",
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT ? "IRQ0 10027 Hz" :
+           *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz" : "RTC 8192 Hz",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
@@ -899,21 +915,23 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.8: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.9: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
             }
             case 'N': lg("N alive, one beep, exit"); beeps(1); return 0;
             case 'I': clock_mode = CLOCK_PIT; break;
+            case 'H': clock_mode = CLOCK_PIT_HI; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
-                       "  BRAISPK /Vn    output level 0..9 (5 = as the NVDA voice, 7 = twice)\r\n"
+                       "  BRAISPK /Vn    output level 0..9 (8 = default, 4 = as the NVDA voice)\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
-                       "  BRAISPK /I     clock the samples from IRQ0 at 10027 Hz instead of the RTC at 8192\r\n"
+                       "  BRAISPK /H     IRQ0 at 19886 Hz: carrier above hearing (BIOS chained directly)\r\n"
+                       "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
                        "  BRAISPK /S     show counters\r\n"
@@ -939,15 +957,37 @@ int main(int argc, char **argv)
     resident_psp = _psp;
     synth_reset();
     old61 = _dos_getvect(API_INT);
-    old08 = bios08 = _dos_getvect(8);
+    orig08 = old08 = bios08 = _dos_getvect(8);
     _dos_setvect(API_INT, isr61);
     lg("3 INT 61h hooked");
-    if (clock_mode == CLOCK_PIT) {
-        fs_hz = 10027.0; pwm_top = 119; pwm_mid = 60; pwm_amp = 57; idle_level = 60;
+    if (clock_mode != CLOCK_RTC) {
+        /* An operating-system hook on INT 08 (Windows 98's IO.SYS sits there)
+         * did not pass our 10 kHz-paced chain on to the BIOS tick on the real
+         * machine.  Chain to the BIOS's own compatibility entry instead; the
+         * hook is simply not called while we are resident. */
+        if (FP_SEG(orig08) < 0xF000) {
+            old08 = bios08 = (void (__interrupt __far *)(void))MK_FP(0xF000, 0xFEA5);
+            bios_bypass = 1;
+        }
+        if (clock_mode == CLOCK_PIT) {
+            fs_hz = 10027.0; pit_div = 119; chain_ticks = 551; ticks_per_sample = 1; ramp_mask = 1;
+            pwm_top = 119; pwm_mid = 60; pwm_amp = 57; idle_level = 60;
+        } else {
+            fs_hz = 1193182.0 / 60.0 / 2.0; pit_div = 60; chain_ticks = 1092; ticks_per_sample = 2; ramp_mask = 3;
+            pwm_top = 58; pwm_mid = 29; pwm_amp = 27; idle_level = 29;
+        }
         synth_reset();
+        if (logging) {
+            const unsigned char far *b = (const unsigned char far *)bios08;
+            sprintf(logbuf, "4 IRQ0 at %u Hz: chaining to %04X:%04X (%s), bytes there %02X %02X %02X %02X",
+                    (unsigned)(1193182L / pit_div), FP_SEG(bios08), FP_OFF(bios08),
+                    bios_bypass ? "BIOS entry, IO.SYS bypassed" : "the vector as found",
+                    b[0], b[1], b[2], b[3]);
+            lg(logbuf);
+        }
         pit_speech();
         _dos_setvect(8, isr08);
-        lg("4 PIT channel 0 at 10027 Hz, INT 08 hooked");
+        lg("4 PIT channel 0 reprogrammed, INT 08 hooked");
     } else {
         fs_hz = 8192.0; pwm_top = 144; pwm_mid = 72; pwm_amp = 69; idle_level = 72;
         synth_reset();
@@ -995,7 +1035,7 @@ int main(int argc, char **argv)
     top = sp_now + 512;                        /* we are near the top of DGROUP  */
     paras = (unsigned)((((unsigned long)FP_SEG((void __far *)&ring_head) << 4) + top - ((unsigned long)_psp << 4) + 15) >> 4);
     printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
-           (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : "8192 Hz RTC",
+           (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
            API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
            chip_timing ? ", chip frame timing" : "");
     fflush(stdout);                            /* _dos_keep does not flush     */
