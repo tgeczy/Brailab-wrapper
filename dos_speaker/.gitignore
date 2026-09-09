@@ -1,0 +1,8 @@
+# Patched TALKHUN is derived from the rights-uncleared archive copy: never committed.
+TALKHUNS.COM
+*.exe
+*.obj
+*.err
+*.map
+_edit*.py
+dist/
