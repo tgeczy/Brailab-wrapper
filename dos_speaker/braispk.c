@@ -523,7 +523,10 @@ static void __cdecl api_dispatch(void)
     case 0xFD: api_bx = n_ctrls; api_cx = n_pitches; api_dx = queued(); break;
     case 0xFC: handshake_reset(); break;
     default:
-        _asm { fsave fpu_save }
+        _asm {
+            clts
+            fsave fpu_save
+        }
         wire_step(api_ah & 3);
         _asm { frstor fpu_save }
         break;
@@ -834,7 +837,28 @@ static int report(void)
     return 0;
 }
 
-static char logbuf[160];
+static char logbuf[200];
+
+/* Windows 98's DOS leaves CR0.TS (task switched) and CR0.MP set, the lazy
+ * FPU-switch state of the VMM.  In real mode that makes the first x87
+ * instruction trap to INT 7, whose handler on the Pentium 166 evidently
+ * skips the instruction as if no coprocessor existed: the Watcom runtime
+ * concluded "no 8087" (control word read back as 0000) and every double in
+ * the synth became garbage until a math loop spun.  DOSBox never sets TS.
+ * CLTS is legal in real mode on a 286 and up. */
+extern unsigned char _8087, _real87;
+static unsigned clear_ts(void)
+{
+    unsigned msw;
+    _asm {
+        clts
+        smsw ax
+        mov  msw, ax
+    }
+    _8087 = 3;                                 /* 387 or better, and it is real */
+    _real87 = 3;
+    return msw;
+}
 
 int main(int argc, char **argv)
 {
@@ -842,6 +866,7 @@ int main(int argc, char **argv)
     unsigned far *bda_lpt1 = (unsigned far *)MK_FP(0x40, 0x08);
     int i;
 
+    clear_ts();
     _control87(_MCW_EM, _MCW_EM);              /* no FPU traps, whatever Windows left */
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '/' || argv[i][0] == '-') {
@@ -865,13 +890,17 @@ int main(int argc, char **argv)
             case 'P': return selftest();
             case 'L': {
                 unsigned msw;
+                double two = 2.0, root;
+                long check;
                 logging = 1;
                 _asm {
                     smsw ax
                     mov  msw, ax
                 }
-                sprintf(logbuf, "--- braispk 0.7: %s  DOS %d.%02d  PSP %04X  MSW %04X  FPU CW %04X SW %04X",
-                        argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87());
+                root = sqrt(two);
+                check = (long)(root * 1000.0);
+                sprintf(logbuf, "--- braispk 0.8: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                        argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
             }
