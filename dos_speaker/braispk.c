@@ -44,6 +44,10 @@
 #include <dos.h>
 #include <i86.h>
 
+/* The INT 08 vector, read and written directly.  Resident code must not call
+ * DOS: INT 61h can arrive from inside TALKHUN's INT 21h and INT 10h hooks. */
+#define IVT08        (*(void (__interrupt __far * __far *)(void))MK_FP(0, 0x20))
+
 #define MAGIC        0xB7A1
 #define API_INT      0x61
 #define PIT_DIV      119            /* 1193182 / 119 = 10027 Hz               */
@@ -153,6 +157,7 @@ static volatile unsigned char in_chain;
 static volatile unsigned char spk_state;         /* SPK_* below                    */
 static unsigned idle_ticks;
 static unsigned n_underrun;
+static unsigned n_overrun;                       /* ring full: sample dropped      */
 static unsigned char ramp;
 #define RELEASE_TICKS 500                        /* mid-utterance silence before giving it back (~50 ms) */
 #define SPK_OFF      0                           /* channel 2 and the gate are not ours */
@@ -192,6 +197,10 @@ static void __interrupt __far isr08(void)
     if (in_chain) {
         in_chain = 0;
         _chain_intr(bios08);
+    }
+    if (IVT08 != isr08) {                      /* hooked above us since last tick: */
+        old08 = IVT08;                         /* the newcomer gets 18.2 Hz through */
+        IVT08 = isr08;                         /* us, never our 10 kHz             */
     }
     h = ring_head;
     switch (spk_state) {
@@ -241,6 +250,7 @@ static void push_sample(double v)
     if (v > 1.0) v = 1.0; else if (v < -1.0) v = -1.0;
     c = (int)(60.0 + v * 57.0);          /* 3..117, strictly inside 1..118   */
     if (c < 2) c = 2; else if (c > 117) c = 117;
+    if (((ring_tail + 1) & RING_MASK) == ring_head) { n_overrun++; return; }
     ring[ring_tail] = (unsigned char)c;
     ring_tail = (ring_tail + 1) & RING_MASK;
 }
@@ -467,9 +477,9 @@ static void __interrupt __far isr61(union INTPACK r)
     /* TALKHUN may hook INT 08 above us after we load; it expects 18.2 Hz, we
      * deliver 10 kHz.  Heal by re-hooking on top: its handler becomes the one we
      * chain to.  One vector compare per call. */
-    if (_dos_getvect(8) != isr08) {
-        old08 = _dos_getvect(8);
-        _dos_setvect(8, isr08);
+    if (IVT08 != isr08) {                      /* IF is clear: INT cleared it   */
+        old08 = IVT08;
+        IVT08 = isr08;
     }
     api_ah = r.h.ah; api_al = r.h.al;
     api_bx = r.x.bx; api_cx = r.x.cx; api_dx = r.x.dx;
@@ -580,8 +590,9 @@ static int uninstall(void)
             return 1;
         }
     }
-    v08 = _dos_getvect(8); v61 = _dos_getvect(API_INT);
-    if (FP_SEG(v08) != cs || FP_SEG(v61) != cs) {
+    v08 = *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old08);
+    v61 = _dos_getvect(API_INT);
+    if (v08 != *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08) || FP_SEG(v61) != cs) {
         printf("braispk: another program hooked INT 08 or INT 61 after us; cannot unload safely\r\n");
         return 1;
     }
@@ -596,6 +607,63 @@ static int uninstall(void)
     return 0;
 }
 
+/* /P: a vowel through the whole path -- start sequence, 40 frames, STOP -- fed
+ * over INT 61h exactly as TALKHUNS feeds it, with the busy handshake.  Proves
+ * the synth and this machine's x87 without loading TALKHUN. */
+static void wire(unsigned bits)
+{
+    union REGS r;
+    r.h.ah = (unsigned char)bits; r.h.al = 0;
+    int86(API_INT, &r, &r);
+}
+
+static void i2c_xfer(const unsigned char *p, int n)
+{
+    int k, b;
+    wire(3); wire(2); wire(0);                 /* idle, START, clock low        */
+    for (k = 0; k < n; k++) {
+        for (b = 7; b >= 0; b--) { unsigned d = (p[k] >> b) & 1; wire(d); wire(2 | d); wire(d); }
+        wire(1); wire(3); wire(1);             /* ack slot                      */
+    }
+    wire(0); wire(2); wire(3);                 /* STOP                          */
+}
+
+static int wait_ready(void)
+{
+    volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+    unsigned long t0 = *bios, n = 0;
+    union REGS r;
+    for (;;) {
+        r.h.ah = 0xFF; r.h.al = 0; int86(API_INT, &r, &r);
+        if (r.h.al == STATUS_READY) return 1;
+        if (*bios - t0 > 18 || ++n > 200000L) return 0;
+    }
+}
+
+static int selftest(void)
+{
+    static const unsigned char settings[2] = {0x20, 0x00};
+    static const unsigned char pitch[2]    = {0x20, 46};           /* 112 Hz  */
+    static const unsigned char ctl_go[3]   = {0x20, 0x00, 0x80};
+    static const unsigned char ctl_stop[3] = {0x20, 0x00, 0xA0};
+    unsigned char frame[6] = {0x20, 0x75, 0x40, 0x3D, 0x4D, 0x93};  /* an /a/  */
+    int k;
+    union REGS r;
+    if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    i2c_xfer(settings, 2);
+    i2c_xfer(pitch, 2);
+    i2c_xfer(ctl_go, 3);
+    for (k = 0; k < 40; k++) {
+        if (!wait_ready()) { printf("braispk: adapter never became ready\r\n"); return 1; }
+        frame[2] = (unsigned char)(k < 30 ? 0x40 : 0x5D);          /* PI: fall at the end */
+        i2c_xfer(frame, 6);
+    }
+    i2c_xfer(ctl_stop, 3);
+    do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
+    printf("braispk: self-test played\r\n");
+    return 0;
+}
+
 static int report(void)
 {
     union REGS r;
@@ -603,12 +671,13 @@ static int report(void)
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     r.h.ah = 0xFD; int86(API_INT, &r, &r);
     printf("braispk: frames %u  controls %u  pitches %u  queued %u samples\r\n", r.x.ax, r.x.bx, r.x.cx, r.x.dx);
-    printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u\r\n",
+    printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
            *(unsigned long far *)MK_FP(ds, (unsigned)&tick_count),
            *(unsigned char far *)MK_FP(ds, (unsigned)&armed),
-           *(unsigned far *)MK_FP(ds, (unsigned)&n_underrun));
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_underrun),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_overrun));
     return 0;
 }
 
@@ -637,12 +706,14 @@ int main(int argc, char **argv)
                 printf("identify AX=%04X BX=%04X CX=%04X DX=%04X  find=%d\r\n", r.x.ax, r.x.bx, r.x.cx, r.x.dx, find_resident(0,0,0));
                 return 0;
             }
+            case 'P': return selftest();
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
                        "  BRAISPK /Vn    output level 0..9 (5 = as the NVDA voice, 7 = twice)\r\n"
+                       "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /S     show counters\r\n"
                        "  BRAISPK /R     reset handshake and queue\r\n"
                        "  BRAISPK /U     unload\r\n"

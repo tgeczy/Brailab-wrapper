@@ -53,7 +53,11 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
   PIT channel-2 mode-0 count, 119 levels. The old INT 08 is chained every 551st
   tick so DOS time and TALKHUN's own timer hook keep their 18.2 Hz. When TALKHUN
   hooks the timer above us and chains back, that call is handed to the BIOS
-  handler rather than run twice.
+  handler rather than run twice. The re-hook happens inside the timer handler
+  itself, within one tick of anyone hooking above us, so a newcomer's handler
+  never sees the 10 kHz rate; resident code touches the vector table directly
+  and never calls DOS, because INT 61h can arrive from inside TALKHUN's INT 21h
+  and INT 10h hooks.
 - **Speaker ownership**: channel 2 and the gate are taken only while there is
   audio to play. The line is eased from the off level to the idle level over
   12 ms at the first sample, and given back (eased out, channel 2 returned to
@@ -70,7 +74,8 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
     SAY Jó napot.        speak
     SAY /F FILE.TXT      speak a file, line by line
     SAY /T               self-test: beep, a sentence, then a beep 110 ms after it
-    BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns
+    BRAISPK /P           self-test: a vowel through the synth, no TALKHUN needed
+    BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns, overruns
     BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
     BRAISPK /U           unload (refused while TALKHUNS is loaded: reboot instead)
 
