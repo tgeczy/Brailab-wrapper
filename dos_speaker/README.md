@@ -54,6 +54,13 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
   tick so DOS time and TALKHUN's own timer hook keep their 18.2 Hz. When TALKHUN
   hooks the timer above us and chains back, that call is handed to the BIOS
   handler rather than run twice.
+- **Speaker ownership**: channel 2 and the gate are taken only while there is
+  audio to play. The line is eased from the off level to the idle level over
+  12 ms at the first sample, and given back (eased out, channel 2 returned to
+  square-wave mode, gate off) as soon as an utterance's STOP has drained, or
+  50 ms into a mid-utterance gap. Between utterances the games' own beeps find
+  the timer as they left it, and a real cone sits silent rather than carrying a
+  10 kHz tone.
 
 ## Use
 
@@ -62,8 +69,17 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
     SAY /C               the configuration HUN.BAT used to send with COPY ... COM4
     SAY Jó napot.        speak
     SAY /F FILE.TXT      speak a file, line by line
-    BRAISPK /S           counters: frames, controls, pitches, queued samples
+    SAY /T               self-test: beep, a sentence, then a beep 110 ms after it
+    BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns
+    BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
     BRAISPK /U           unload
+
+What you should hear on a machine with no monitor: BRAISPK plays a two-tone
+chirp (440 then 660 Hz) the moment it goes resident; two short beeps mean it
+already was, three mean something else owns INT 61h and it did not install.
+Then TALKHUNS loads, SAY /C's "configured" is spoken, and `SAY Kesz.` says
+Kész. No chirp: BRAISPK. Chirp but no speech: TALKHUNS or SAY. Speech but
+wrong: the synth.
 
 `/C` honours the chip's FS bits: TALKHUN's default speed (ESC S6) sets FS=1,
 which on real silicon means 8.8 ms frames rather than 12.8. The emulator the
@@ -77,11 +93,17 @@ DOSBox-X; it mutes the mixer and the capture is zeros.
 On the real machine: copy `BRAISPK.EXE`, `TALKHUNS.COM`, `SAY.EXE` next to the
 JATEKOK programs, boot to real DOS, run the three lines above. The games'
 PC-speaker jingles run off CPU-timed loops and are unaffected; `CPUCACHE.COM`
-from the same archive slows the machine to 486 pace for those.
+from the same archive slows the machine to 486 pace for those. Test BRAISPK
+alone first and add CPUCACHE afterwards: with the cache off a 166 is a much
+slower machine, and the underrun counter in `/S` says whether the synth still
+kept up.
 
 ## Verified
 
 - DOSBox-X renders the one-shot PWM: 440/880 Hz test tones land within 1%.
 - The full chain speaks two sentences headless, counters matching the Unicorn
   model (one pitch start per intonation unit, STOP after each), and unloads.
+- `SAY /T` under DOSBox-X: a plain mode-3 beep, the sentence, and a beep 110 ms
+  after the text come out as two clean 1 kHz tones around the speech, the tail
+  is silent, and no underruns are counted.
 - Not yet: the Pentium 166's real cone speaker, and a game session.

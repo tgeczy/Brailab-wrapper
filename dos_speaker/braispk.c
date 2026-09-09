@@ -150,6 +150,37 @@ static unsigned api_bx, api_cx, api_dx;
 /* ------------------------------------------------------------------------- */
 static void (__interrupt __far *bios08)(void);   /* the vector at install */
 static volatile unsigned char in_chain;
+static volatile unsigned char spk_state;         /* SPK_* below                    */
+static unsigned idle_ticks;
+static unsigned n_underrun;
+static unsigned char ramp;
+#define RELEASE_TICKS 500                        /* mid-utterance silence before giving it back (~50 ms) */
+#define SPK_OFF      0                           /* channel 2 and the gate are not ours */
+#define SPK_RAMP_IN  1                           /* easing the line from off to idle    */
+#define SPK_PLAY     2
+#define SPK_RAMP_OUT 3
+#define RAMP_TOP     119                         /* a full period low = the gated-off level */
+
+/* The speaker is ours only while there is something to say.  A game's own
+ * beeps program channel 2 in mode 3; touching 42h while idle would wreck
+ * them, and a 50% carrier on a real cone is not silence.  The line is eased
+ * between the off level and the idle level over ~12 ms so that taking and
+ * releasing the speaker does not thump the cone. */
+static void speaker_acquire(void)
+{
+    outp(0x43, 0x90);                          /* ch2 lobyte, mode 0 one-shot   */
+    outp(0x42, RAMP_TOP);
+    outp(0x61, inp(0x61) | 3);                 /* gate + speaker data           */
+    ramp = RAMP_TOP;
+    spk_state = SPK_RAMP_IN;
+}
+
+static void speaker_release(void)
+{
+    outp(0x61, inp(0x61) & ~3);
+    outp(0x43, 0xB6);                          /* ch2 back to square-wave mode  */
+    spk_state = SPK_OFF;
+}
 
 static void __interrupt __far isr08(void)
 {
@@ -163,11 +194,32 @@ static void __interrupt __far isr08(void)
         _chain_intr(bios08);
     }
     h = ring_head;
-    if (h != ring_tail) {
-        outp(0x42, ring[h]);
-        ring_head = (h + 1) & RING_MASK;
-    } else {
-        outp(0x42, idle_level);
+    switch (spk_state) {
+    case SPK_OFF:
+        if (h != ring_tail) speaker_acquire();
+        break;
+    case SPK_RAMP_IN:
+        if (ramp > idle_level) { if (tick_count & 1) ramp--; outp(0x42, ramp); }
+        else { spk_state = SPK_PLAY; idle_ticks = 0; }
+        break;
+    case SPK_PLAY:
+        if (h != ring_tail) {
+            outp(0x42, ring[h]);
+            ring_head = (h + 1) & RING_MASK;
+            idle_ticks = 0;
+        } else {
+            /* Drained.  After a STOP (armed) the utterance is over: give the
+             * speaker back at once, so a game's jingle right after the text
+             * finds channel 2 free.  Mid-utterance starvation waits a little. */
+            outp(0x42, idle_level);
+            if (armed || ++idle_ticks >= RELEASE_TICKS) { spk_state = SPK_RAMP_OUT; ramp = idle_level; }
+        }
+        break;
+    default: /* SPK_RAMP_OUT */
+        if (h != ring_tail) spk_state = SPK_RAMP_IN;          /* more to say: ease back in */
+        else if (ramp < RAMP_TOP) { if (tick_count & 1) ramp++; outp(0x42, ramp); }
+        else speaker_release();
+        break;
     }
     tick_count++;
     if (++chain_count >= CHAIN_TICKS) {
@@ -330,6 +382,7 @@ static void transaction_done(void)
     if (len <= 0) return;
     if (len == 5) {
         n_frames++;
+        if (spk_state == SPK_PLAY && idle_ticks) n_underrun++;   /* ring ran dry between frames */
         synth_frame(body);
     } else if (len == 2) {
         unsigned char c = body[1];
@@ -450,11 +503,26 @@ static void __interrupt __far isr61(union INTPACK r)
 /* ------------------------------------------------------------------------- */
 /* install / uninstall / report                                              */
 /* ------------------------------------------------------------------------- */
+/* 1 = ours is resident, 0 = vector free, -1 = someone else owns INT 61h.
+ * The resident copy is this same executable, so its handler starts with the
+ * same bytes as ours; compare before calling anything. */
 static int find_resident(unsigned *ds, unsigned *cs, unsigned *psp)
 {
     union REGS r;
     void (__interrupt __far *v)(void) = _dos_getvect(API_INT);
     if (v == 0) return 0;
+    {
+        /* Same code as ours?  The resident copy is this executable, so the
+         * handler bytes match except the two segment words the loader
+         * relocates (mov ax,DGROUP in the prologue, and the CS compare in the
+         * INT 08 self-heal).  A bare IRET means the vector is merely parked. */
+        const unsigned char far *a = (const unsigned char far *)v;
+        const unsigned char far *b = (const unsigned char far *)isr61;
+        int k, diff = 0;
+        if (a[0] == 0xCF) return 0;
+        for (k = 0; k < 32; k++) if (a[k] != b[k]) diff++;
+        if (diff > 4) return -1;
+    }
     r.h.ah = 0xFE; r.h.al = 0;
     int86(API_INT, &r, &r);
     if (r.x.ax != MAGIC) return 0;
@@ -467,9 +535,6 @@ static int find_resident(unsigned *ds, unsigned *cs, unsigned *psp)
 static void pit_speech(void)
 {
     _disable();
-    outp(0x43, 0x90);                          /* ch2 lobyte, mode 0 one-shot   */
-    outp(0x42, idle_level);
-    outp(0x61, inp(0x61) | 3);                 /* gate + speaker data           */
     outp(0x43, 0x34);                          /* ch0 lo/hi, mode 2             */
     outp(0x40, PIT_DIV & 0xFF);
     outp(0x40, PIT_DIV >> 8);
@@ -485,17 +550,33 @@ static void pit_normal(void)
     _enable();
 }
 
+/* Plain mode-3 beeps for the installer's own messages -- the user of this has
+ * no monitor on that machine.  n short beeps, ~90 ms each. */
+static void beeps(int n)
+{
+    volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+    unsigned long t;
+    while (n-- > 0) {
+        outp(0x43, 0xB6); outp(0x42, 0xA9); outp(0x42, 0x04);   /* ~1 kHz */
+        outp(0x61, inp(0x61) | 3);
+        t = *bios; while (*bios - t < 2) ;
+        outp(0x61, inp(0x61) & ~3);
+        t = *bios; while (*bios - t < 2) ;
+    }
+}
+
 static int uninstall(void)
 {
     unsigned ds, cs, psp;
     void (__interrupt __far *v08)(void), (__interrupt __far *v61)(void);
-    if (!find_resident(&ds, &cs, &psp)) { printf("braispk: not resident\r\n"); return 1; }
+    if (find_resident(&ds, &cs, &psp) != 1) { printf("braispk: not resident\r\n"); return 1; }
     v08 = _dos_getvect(8); v61 = _dos_getvect(API_INT);
     if (FP_SEG(v08) != cs || FP_SEG(v61) != cs) {
         printf("braispk: another program hooked INT 08 or INT 61 after us; cannot unload safely\r\n");
         return 1;
     }
     _disable();
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&spk_state)) { outp(0x61, inp(0x61) & ~3); outp(0x43, 0xB6); }
     _dos_setvect(8, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&bios08));
     _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
     _enable();
@@ -509,14 +590,15 @@ static int report(void)
 {
     union REGS r;
     unsigned ds;
-    if (!find_resident(&ds, 0, 0)) { printf("braispk: not resident\r\n"); return 1; }
+    if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     r.h.ah = 0xFD; int86(API_INT, &r, &r);
     printf("braispk: frames %u  controls %u  pitches %u  queued %u samples\r\n", r.x.ax, r.x.bx, r.x.cx, r.x.dx);
-    printf("         polls busy %u  ready %u  ticks %lu  armed %u\r\n",
+    printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
            *(unsigned long far *)MK_FP(ds, (unsigned)&tick_count),
-           *(unsigned char far *)MK_FP(ds, (unsigned)&armed));
+           *(unsigned char far *)MK_FP(ds, (unsigned)&armed),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_underrun));
     return 0;
 }
 
@@ -533,7 +615,19 @@ int main(int argc, char **argv)
             case 'C': chip_timing = 1; break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') out_gain = GAIN_TAB[argv[i][2] - '0']; break;
             case 'S': return report();
-            case 'R': { union REGS r; r.h.ah = 0xFC; if (!find_resident(0,0,0)) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
+            case 'D': {                       /* debug: what does the resident check see */
+                union REGS r; int k;
+                void (__interrupt __far *v)(void) = _dos_getvect(API_INT);
+                const unsigned char far *a = (const unsigned char far *)v;
+                const unsigned char far *b = (const unsigned char far *)isr61;
+                printf("vector %04X:%04X  ours %04X:%04X\r\n", FP_SEG(v), FP_OFF(v), FP_SEG(b), FP_OFF(b));
+                printf("at vector:"); for (k = 0; k < 32; k++) printf(" %02X", a[k]); printf("\r\n");
+                printf("ours     :"); for (k = 0; k < 32; k++) printf(" %02X", b[k]); printf("\r\n");
+                r.h.ah = 0xFE; r.h.al = 0; int86(API_INT, &r, &r);
+                printf("identify AX=%04X BX=%04X CX=%04X DX=%04X  find=%d\r\n", r.x.ax, r.x.bx, r.x.cx, r.x.dx, find_resident(0,0,0));
+                return 0;
+            }
+            case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
@@ -541,12 +635,15 @@ int main(int argc, char **argv)
                        "  BRAISPK /Vn    output level 0..9 (5 = as the NVDA voice, 7 = twice)\r\n"
                        "  BRAISPK /S     show counters\r\n"
                        "  BRAISPK /R     reset handshake and queue\r\n"
-                       "  BRAISPK /U     unload\r\n");
+                       "  BRAISPK /U     unload\r\n"
+                       "  BRAISPK /D     debug: show what the resident check sees\r\n");
                 return 0;
             }
         }
     }
-    if (find_resident(0, 0, 0)) { printf("braispk: already resident\r\n"); return 1; }
+    i = find_resident(0, 0, 0);
+    if (i == 1) { printf("braispk: already resident\r\n"); beeps(2); return 1; }
+    if (i == -1) { printf("braispk: INT %02Xh is already in use by another program; not installing\r\n", API_INT); beeps(3); return 1; }
 
     if (*bda_lpt1 == 0) *bda_lpt1 = 0x378;     /* TALKHUN refuses to bind to LPT 0 */
     resident_psp = _psp;
@@ -556,6 +653,11 @@ int main(int argc, char **argv)
     _dos_setvect(API_INT, isr61);
     pit_speech();
     _dos_setvect(8, isr08);
+    {                                          /* audible "resident" chirp       */
+        int k;
+        for (k = 0; k < 700; k++) push_sample(0.6 * sin(k * 6.28318530717958 * 440.0 / FS));
+        for (k = 0; k < 700; k++) push_sample(0.6 * sin(k * 6.28318530717958 * 660.0 / FS));
+    }
 
     /* free the environment, keep PSP..top of our stack resident */
     _dos_freemem(*(unsigned far *)MK_FP(_psp, 0x2C));

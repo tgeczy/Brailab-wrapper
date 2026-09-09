@@ -8,6 +8,7 @@
  *                             so this does it in-process.
  *   SAY /E<seq>               raw ESC sequence, e.g. /EF1 = furcsa on
  *   SAY /F file               speak the file's text (CP852), line by line
+ *   SAY /T                    self-test: beep, speak a sentence, wait, beep
  *
  * The API, recovered from the 1991 handler: INT 14h with DL=3 (COM4),
  * AH=0 reset, AH=1 AL=char feed one byte, AH=3 status (AX=0x30 when the
@@ -17,6 +18,7 @@
 #include <string.h>
 #include <dos.h>
 #include <i86.h>
+#include <conio.h>
 
 static int present(void)
 {
@@ -33,6 +35,23 @@ static void feed(const char *s)
         r.h.ah = 1; r.h.al = (unsigned char)*s++; r.h.dl = 3;
         int86(0x14, &r, &r);
     }
+}
+
+static void beep(void)
+{
+    volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+    unsigned long t0 = *bios;
+    outp(0x43, 0xB6); outp(0x42, 0xA9); outp(0x42, 0x04);       /* ~1 kHz */
+    outp(0x61, inp(0x61) | 3);
+    while (*bios - t0 < 5) ;
+    outp(0x61, inp(0x61) & ~3);
+}
+
+static unsigned queued(void)
+{
+    union REGS r;
+    r.h.ah = 0xFD; int86(0x61, &r, &r);
+    return r.x.dx;
 }
 
 static void reset(void)
@@ -75,6 +94,19 @@ int main(int argc, char **argv)
                 feed(buf);
             }
             fclose(fp);
+            return 0;
+        }
+        case 'T': {
+            volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+            unsigned long t0;
+            while (queued()) ;                       /* let anything earlier finish */
+            t0 = *bios; while (*bios - t0 < 6) ;
+            beep();
+            t0 = *bios; while (*bios - t0 < 6) ;
+            feed("Ez egy pr\xa2ba, a hangsz\xa2r\xa2 j\xa2l sz\xa2l.");   /* CP852 */
+            while (queued()) ;
+            t0 = *bios; while (*bios - t0 < 2) ;     /* a jingle 110 ms after the text */
+            beep();
             return 0;
         }
         case 'E':

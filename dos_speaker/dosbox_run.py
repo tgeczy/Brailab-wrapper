@@ -22,7 +22,8 @@ def main():
     ap.add_argument("--out", default=os.path.join(os.environ.get("TEMP", "."), "braispk_run"))
     ap.add_argument("--keep", action="store_true", help="do not unload at the end (debug)")
     ap.add_argument("--args", default="", help="extra BRAISPK switches, e.g. /V7")
-    ap.add_argument("text", nargs="+")
+    ap.add_argument("--test", action="store_true", help="also capture SAY /T: beep, speech, beep")
+    ap.add_argument("text", nargs="*")
     a = ap.parse_args()
 
     out = os.path.abspath(a.out)
@@ -34,6 +35,8 @@ def main():
     lines = ["@echo off", 'mount c "%s"' % run, "c:",
              "braispk %s %s > log_braispk.txt" % ("/C" if a.chip else "", a.args),
              "talkhuns 1 > log_talkhun.txt", "say /C > log_say.txt", "braispk /S > stat0.txt"]
+    if a.test:
+        lines += ["DX-CAPTURE /A /-V SAY.EXE /T", "braispk /S > stat_t.txt"]
     for i, txt in enumerate(a.text, 1):
         with open(os.path.join(run, "T%d.TXT" % i), "wb") as f:
             f.write((txt + "\r\n").encode("cp852"))
