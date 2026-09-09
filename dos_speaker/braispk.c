@@ -965,6 +965,29 @@ static int tone_ladder(void)
     return 0;
 }
 
+/* /Z: which I/O addresses answer at all.  A card on the wrong jumpers shows
+ * up as an unexplained block of four; the onboard devices are known. */
+static int port_scan(void)
+{
+    unsigned p, n = 0;
+    char line[160];
+    int pos = 0;
+    logging = 1;
+    lg("Z port scan 100h-3FFh, addresses that do not read FFh:");
+    for (p = 0x100; p < 0x400; p++) {
+        unsigned char v = (unsigned char)inp(p);
+        if (v == 0xFF) continue;
+        pos += sprintf(line + pos, " %03X=%02X", p, v);
+        n++;
+        if (pos > 140) { lg(line); pos = 0; }
+    }
+    if (pos) lg(line);
+    sprintf(line, "Z %u addresses answered", n);
+    lg(line);
+    printf("braispk: %u addresses answered; see BRAISPK.LOG\r\n", n);
+    return 0;
+}
+
 static int report(void)
 {
     union REGS r;
@@ -1042,6 +1065,7 @@ int main(int argc, char **argv)
             }
             case 'P': return selftest();
             case 'K': return tone_ladder();
+            case 'Z': return port_scan();
             case 'L': {
                 unsigned msw;
                 double two = 2.0, root;
@@ -1053,7 +1077,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.15: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.16: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1078,6 +1102,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
+                       "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
