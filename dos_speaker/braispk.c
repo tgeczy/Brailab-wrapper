@@ -126,7 +126,15 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
  * for the rate in use: Butterworth Qs 0.5412 and 1.3066, RBJ bilinear form.
  * At 10 kHz this reproduces the table the NVDA voice was tuned with. */
 #define LP_HZ         2600.0
-static double LP_A[5], LP_B[5];
+#define CUT_HZ        300.0
+static double LP_A[5], LP_B[5], CUT_C[5];
+static void hp_design(double fc, double fs, double *C)
+{
+    double w0 = 2.0 * 3.14159265358979 * fc / fs, c = cos(w0), sn = sin(w0);
+    double alpha = sn / (2.0 * 0.7071), a0 = 1.0 + alpha;
+    C[0] = (1.0 + c) / 2.0 / a0; C[1] = -(1.0 + c) / a0; C[2] = C[0];
+    C[3] = -2.0 * c / a0; C[4] = (1.0 - alpha) / a0;
+}
 static void lp_design(double fs)
 {
     static const double Q[2] = {0.54119610014619701, 1.3065629648763764};
@@ -182,13 +190,15 @@ static struct {
     double tilt_y;
     double lz0, lz1, mz0, mz1;
     double hx0, hy0, hx1, hy1, hx2, hy2;
+    double cz0, cz1;                           /* the 300 Hz cut's state         */
     unsigned long rng;
     double tilt_a, hp_a;
     int fs;
 } S;
 static unsigned char chip_timing;                /* /C: honour FS bits */
-static double out_gain = 4.0;                   /* /Vn: 0.25 .. 5.66, default /V8: a cone wants drive */
-static const double GAIN_TAB[10] = {0.25, 0.35, 0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66};
+static double out_gain = 8.0;                   /* /Vn below; default /V8 = x8: a cone wants drive */
+static const double GAIN_TAB[10] = {0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66, 8.0, 11.3};
+static unsigned char full_range;                /* /F: keep the fundamental (no 300 Hz cut) */
 static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
 static unsigned char fpu_save[108];
@@ -339,6 +349,7 @@ static void synth_reset(void)
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
     lp_design(FS);
+    hp_design(CUT_HZ, FS, CUT_C);
 }
 
 static double soft_knee(double x)
@@ -448,6 +459,12 @@ static void synth_frame(const unsigned char *f)
             S.hy0 = S.hp_a * (S.hy0 + v - S.hx0); S.hx0 = v; v = S.hy0;
             S.hy1 = S.hp_a * (S.hy1 + v - S.hx1); S.hx1 = v; v = S.hy1;
             S.hy2 = S.hp_a * (S.hy2 + v - S.hx2); S.hx2 = v; v = S.hy2;
+            if (!full_range) {                 /* 300 Hz cut, transposed form 2 */
+                o = CUT_C[0] * v + S.cz0;
+                S.cz0 = CUT_C[1] * v - CUT_C[3] * o + S.cz1;
+                S.cz1 = CUT_C[2] * v - CUT_C[4] * o;
+                v = o;
+            }
             push_sample(soft_knee(v * MAKEUP * out_gain));
         }
     }
@@ -973,7 +990,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.11: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.12: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -981,12 +998,14 @@ int main(int argc, char **argv)
             case 'N': lg("N alive, one beep, exit"); beeps(1); return 0;
             case 'I': clock_mode = CLOCK_PIT; break;
             case 'H': clock_mode = CLOCK_PIT_HI; break;
+            case 'F': full_range = 1; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
-                       "  BRAISPK /Vn    output level 0..9 (8 = default, 4 = as the NVDA voice)\r\n"
+                       "  BRAISPK /Vn    output level 0..9 (8 = default x8, 2 = the NVDA voice's level)\r\n"
+                       "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /H     IRQ0 at 19886 Hz: carrier above hearing (BIOS chained directly)\r\n"
