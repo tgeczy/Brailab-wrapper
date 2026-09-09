@@ -550,6 +550,11 @@ static void __cdecl api_dispatch(void)
 
 static void __interrupt __far isr61(union INTPACK r)
 {
+    _asm {
+        jmp short sig_end
+        db 'B', 'R', 'A', 'I', 'S', 'P', 'K', '!'
+    sig_end:
+    }
     /* TALKHUN may hook INT 08 above us after we load; it expects 18.2 Hz, we
      * deliver 10 kHz.  Heal by re-hooking on top: its handler becomes the one we
      * chain to.  One vector compare per call. */
@@ -603,12 +608,13 @@ static int find_resident(unsigned *ds, unsigned *cs, unsigned *psp)
          * relocates (mov ax,DGROUP in the prologue, and the CS compare in the
          * INT 08 self-heal).  A bare IRET means the vector is merely parked. */
         const unsigned char far *a = (const unsigned char far *)v;
-        const unsigned char far *b = (const unsigned char far *)isr61;
-        int k, diff = 0;
+        int k, found = 0;
         if (a[0] == 0xCF) return 0;
         if (FP_SEG(v) >= 0xF000) return 0;       /* BIOS-parked dummy routine  */
-        for (k = 0; k < 32; k++) if (a[k] != b[k]) diff++;
-        if (diff > 4) return -1;
+        for (k = 0; k < 56 && !found; k++)       /* our signature, any version */
+            if (a[k] == 'B' && a[k+1] == 'R' && a[k+2] == 'A' && a[k+3] == 'I' &&
+                a[k+4] == 'S' && a[k+5] == 'P' && a[k+6] == 'K' && a[k+7] == '!') found = 1;
+        if (!found) return -1;
     }
     r.h.ah = 0xFE; r.h.al = 0;
     int86(API_INT, &r, &r);
@@ -915,7 +921,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.9: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.10: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -950,7 +956,7 @@ int main(int argc, char **argv)
                 FP_SEG(_dos_getvect(8)), FP_OFF(_dos_getvect(8)), *bda_lpt1);
         lg(logbuf);
     }
-    if (i == 1) { printf("braispk: already resident\r\n"); beeps(2); return 1; }
+    if (i == 1) { printf("braispk: already resident (a new version needs a reboot first)\r\n"); beeps(2); return 1; }
     if (i == -1) { printf("braispk: INT %02Xh is already in use by another program; not installing\r\n", API_INT); beeps(3); return 1; }
 
     if (*bda_lpt1 == 0) *bda_lpt1 = 0x378;     /* TALKHUN refuses to bind to LPT 0 */

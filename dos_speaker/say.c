@@ -9,6 +9,7 @@
  *   SAY /E<seq>               raw ESC sequence, e.g. /EF1 = furcsa on
  *   SAY /F file               speak the file's text (CP852), line by line
  *   SAY /T                    self-test: beep, speak a sentence, wait, beep
+ *   SAY /Q                    quiet: errorlevel 0 if TALKHUN is loaded, 1 if not
  *
  * The API, recovered from the 1991 handler: INT 14h with DL=3 (COM4),
  * AH=0 reset, AH=1 AL=char feed one byte, AH=3 status (AX=0x30 when the
@@ -109,6 +110,7 @@ int main(int argc, char **argv)
             beep();
             return 0;
         }
+        case 'Q': return 0;                  /* TALKHUN answered: errorlevel 0 */
         case 'E':
             buf[0] = 0x1b; strcpy(buf + 1, argv[1] + 2); feed(buf);
             printf("sent ESC %s\r\n", argv[1] + 2);
