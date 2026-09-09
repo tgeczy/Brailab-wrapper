@@ -14,6 +14,8 @@
  *   AH = FDh          counters:    AX = frames, BX = controls, CX = pitches,
  *                                  DX = samples queued
  *   AH = FCh          reset the handshake and forget queued audio
+ *   AH = FAh          test tone: BX = Hz (0 = noise), CX = samples wanted
+ *                     (<= 1024); AX = samples pushed, 0 = ring has no room
  *   any other AH      one wire step, bits AH&3 = (clock<<1)|data
  *
  * Bytes assemble into transactions exactly as the adapter saw them: five bytes
@@ -537,6 +539,28 @@ static void __cdecl api_dispatch(void)
     case 0xFE: api_bx = FP_SEG((void __far *)&ring_head); api_cx = FP_SEG((void __far *)isr61); api_dx = resident_psp; break;
     case 0xFD: api_bx = n_ctrls; api_cx = n_pitches; api_dx = queued(); break;
     case 0xFC: handshake_reset(); break;
+    case 0xFA: {
+        static double tone_phase;
+        unsigned n = api_cx > 1024 ? 1024 : api_cx, k;
+        if (RING_SIZE - 1 - queued() < n) { api_bx = 0; break; }
+        _asm {
+            clts
+            fsave fpu_save
+        }
+        for (k = 0; k < n; k++) {
+            if (api_bx == 0) {
+                S.rng = S.rng * 1103515245UL + 12345UL;
+                push_sample(0.9 * ((double)((S.rng >> 8) & 0xFFFF) / 32768.0 - 1.0));
+            } else {
+                tone_phase += 6.28318530717958 * api_bx / FS;
+                if (tone_phase > 6.28318530717958) tone_phase -= 6.28318530717958;
+                push_sample(0.9 * sin(tone_phase));
+            }
+        }
+        _asm { frstor fpu_save }
+        api_bx = n;
+        break;
+    }
     default:
         _asm {
             clts
@@ -588,6 +612,7 @@ static void __interrupt __far isr61(union INTPACK r)
     }
     if (api_ah == 0xFE) { r.x.ax = MAGIC; r.x.bx = api_bx; r.x.cx = api_cx; r.x.dx = api_dx; }
     else if (api_ah == 0xFD) { r.x.ax = n_frames; r.x.bx = api_bx; r.x.cx = api_cx; r.x.dx = api_dx; }
+    else if (api_ah == 0xFA) { r.x.ax = api_bx; r.x.bx = api_bx; }
     else r.h.al = api_al;
 }
 
@@ -839,6 +864,32 @@ static void lg(const char *line)
     _dos_close(h);
 }
 
+/* /K: 200, 440, 1000, 2000, 3000 Hz and noise, 0.7 s each with gaps, at
+ * 90% modulation, straight into the ring.  Which of these come out of the
+ * cone says where the low end goes missing. */
+static int tone_ladder(void)
+{
+    static const unsigned hz[6] = {200, 440, 1000, 2000, 3000, 0};
+    volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+    union REGS r;
+    int i;
+    if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    for (i = 0; i < 6; i++) {
+        long left = 5700, guard = 0;           /* ~0.7 s at 8192 Hz         */
+        unsigned long t0;
+        while (left > 0 && guard < 2000000L) {
+            r.h.ah = 0xFA; r.x.bx = hz[i]; r.x.cx = (unsigned)(left > 1024 ? 1024 : left);
+            int86(API_INT, &r, &r);
+            if (r.x.bx) left -= r.x.bx; else guard++;
+        }
+        do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
+        t0 = *bios; while (*bios - t0 < 6) ;    /* a third of a second of silence */
+        printf("%u Hz\r\n", hz[i]);
+    }
+    printf("braispk: tone ladder done (200 440 1000 2000 3000 Hz, noise)\r\n");
+    return 0;
+}
+
 static int report(void)
 {
     union REGS r;
@@ -910,6 +961,7 @@ int main(int argc, char **argv)
                 return 0;
             }
             case 'P': return selftest();
+            case 'K': return tone_ladder();
             case 'L': {
                 unsigned msw;
                 double two = 2.0, root;
@@ -921,7 +973,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.10: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.11: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -936,6 +988,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
                        "  BRAISPK /Vn    output level 0..9 (8 = default, 4 = as the NVDA voice)\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
+                       "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /H     IRQ0 at 19886 Hz: carrier above hearing (BIOS chained directly)\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
