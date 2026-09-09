@@ -602,6 +602,7 @@ static void handshake_reset(void)
 
 static void __interrupt __far isr61(union INTPACK r);
 static void lg(const char *line);
+static int card_write(unsigned char b);
 
 /* Runs on the private stack.  Reads api_ah/api_al, leaves results in api_*. */
 static void __cdecl api_dispatch(void)
