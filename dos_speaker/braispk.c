@@ -73,7 +73,7 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define CLOCK_RTC    1
 #define CLOCK_PIT    0
 #define CLOCK_PIT_HI 2
-static unsigned char clock_mode = CLOCK_RTC;
+static unsigned char clock_mode = CLOCK_PIT_HI;   /* /8 = RTC, /I = IRQ0 at 10 kHz */
 static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
 static unsigned char force_bypass;  /* /X: take that path even when nothing hooks INT 08 */
 static double fs_hz = 8192.0;       /* the actual sample rate we run at        */
@@ -991,7 +991,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.13: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.14: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -999,6 +999,7 @@ int main(int argc, char **argv)
             case 'N': lg("N alive, one beep, exit"); beeps(1); return 0;
             case 'I': clock_mode = CLOCK_PIT; break;
             case 'H': clock_mode = CLOCK_PIT_HI; break;
+            case '8': clock_mode = CLOCK_RTC; break;
             case 'X': force_bypass = 1; break;          /* test: bypass even without an OS hook */
             case 'F': full_range = 1; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
@@ -1010,7 +1011,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
-                       "  BRAISPK /H     IRQ0 at 19886 Hz: carrier above hearing (BIOS chained directly)\r\n"
+                       "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
