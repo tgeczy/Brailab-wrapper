@@ -110,7 +110,8 @@ even tick and the sample on the odd one: 9943 samples a second, the synth's own
 rate, no spinning. Defaults in `/B` mode: full range, level x2; the mixer's
 master and voice are raised to full and the SB Pro output filter bypassed, and
 put back at unload. The Yamaha OPL3-SA on the target machine is Sound Blaster
-Pro class, and its DSP is alive in plain DOS without a driver. A real SB16's
+Pro class, and its DSP answered every port scan so far (all after a restart
+from Windows into DOS mode; a straight boot is untested). A real SB16's
 DSP goes busy in cycles and mangles direct-DAC playback (DOSBox-X's `sb16`
 model shows it); DMA mode would be the answer there.
 

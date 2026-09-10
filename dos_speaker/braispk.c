@@ -310,8 +310,8 @@ static void speaker_tick(void)
 /* command 10h, one byte per sample -- paced by the same IRQ0/RTC tick as the */
 /* speaker path.  No DMA, no sound-card IRQ, nothing else in the machine      */
 /* touched.  The Yamaha OPL3-SA on the Pentium 166 is Sound Blaster Pro       */
-/* class, and the BIOS leaves its DSP alive at 220h in plain DOS (the /Z scan */
-/* there showed 22Ah reading AAh, the reset signature).                       */
+/* class; its DSP answered every /Z scan so far (22Ah read AAh, the reset     */
+/* signature) -- all after a restart from Windows into DOS mode.              */
 /* ------------------------------------------------------------------------- */
 static int dsp_write(unsigned char b)
 {
@@ -1283,7 +1283,8 @@ int main(int argc, char **argv)
             case 'C': chip_timing = 1; break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'B': out_dev = OUT_SB;
-                      if (argv[i][2]) sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); else sb_from_env = 1;
+                      if (argv[i][2]) { sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); sb_from_env = 0; }
+                      else sb_from_env = 1;
                       break;
             case 'S': return report();
             case 'D': {                       /* debug: what does the resident check see */
