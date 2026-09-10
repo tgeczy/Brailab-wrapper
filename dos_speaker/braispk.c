@@ -542,20 +542,40 @@ static void wire_step(unsigned char bits)
 }
 
 static unsigned n_card_timeouts;
+static unsigned char req_seen;               /* a request was seen and not yet served */
+static unsigned char card_last;              /* last status byte read                */
+#define TRACE_N 48
+static unsigned char trace_b[TRACE_N], trace_s0[TRACE_N], trace_s1[TRACE_N];
+static unsigned trace_n;
 
+/* On the 166 the request bit is gone by the time a second read looks for it:
+ * whoever sees it must write at once.  So every status read anywhere
+ * latches it here, and a write consumes the latch. */
 static unsigned char card_status(void)
 {
-    return (unsigned char)inp(card_port);
+    card_last = (unsigned char)inp(card_port);
+    if (!(card_last & 0x80)) req_seen = 1;
+    return card_last;
 }
 
-/* Wait for REQN, then hand the chip one byte.  40000 polls is what the
+/* Hand the chip one byte as soon as it asks.  40000 polls is what the
  * Windows driver allowed before giving up. */
 static int card_write(unsigned char b)
 {
     unsigned n;
-    for (n = 0; n < 40000U; n++)
-        if (!(inp(card_port) & 0x80)) { outp(card_port, b); outp(0x80, 0); return 1; }
+    unsigned char s0;
+    for (n = 0; n < 40000U; n++) {
+        if (!req_seen) card_status();
+        if (req_seen) {
+            s0 = card_last;
+            req_seen = 0;
+            outp(card_port, b); outp(0x80, 0);
+            if (trace_n < TRACE_N) { trace_b[trace_n] = b; trace_s0[trace_n] = s0; trace_s1[trace_n] = (unsigned char)inp(card_port); trace_n++; }
+            return 1;
+        }
+    }
     n_card_timeouts++;
+    if (trace_n < TRACE_N) { trace_b[trace_n] = b; trace_s0[trace_n] = card_last; trace_s1[trace_n] = 0xEE; trace_n++; }
     return 0;
 }
 
@@ -567,28 +587,26 @@ static const char *card_note = "";
 /* Present = the port does not read FFh.  Then the driver's sequence is tried
  * and what the chip did with it is recorded, but a present card is always
  * accepted: the real traffic and /S's timeout counter are the better test. */
+/* The driver's reset, exactly: a raw 00h, then A1h (STOP) the moment the
+ * chip asks for it.  Twice if the first A1h finds no request. */
 static int card_probe(void)
 {
     int k;
-    unsigned n;
     if (card_status() == 0xFF) return 0;
-    for (k = 0; k < 6; k++) {
+    n_card_timeouts = 0; req_seen = 0;
+    for (k = 0; k < 2; k++) {
         outp(card_port, 0); outp(0x80, 0);
-        for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x80)) break;
-        if (n < 40000U) break;
+        if (card_write(0xA1)) break;
     }
-    card_note = (k == 6) ? "REQN never dropped after zeros" : "REQN answered a zero";
-    for (n = 0; n < 40000U; n++) if (!(inp(card_port) & 0x40)) break;
-    if (n == 40000U) card_note = "BUSY stuck high";
-    n_card_timeouts = 0;
-    card_write(0x00); card_write(0xA1);
+    card_note = (k == 0) ? "STOP taken after one zero" : (k == 1) ? "STOP taken after a second zero" : "STOP never taken";
     return 1;
 }
 
 static unsigned char poll_status(void)
 {
     if (clock_mode == CLOCK_CARD) {
-        if (armed || (inp(card_port) & 0x80)) { n_polls_busy++; return STATUS_BUSY; }
+        if (!req_seen) card_status();
+        if (armed || !req_seen) { n_polls_busy++; return STATUS_BUSY; }
         n_polls_ready++;
         return STATUS_READY;
     }
@@ -604,7 +622,7 @@ static void handshake_reset(void)
     _enable();
     armed = 1; singles = 0;
     w_clock = w_data = w_active = 0; w_nbits = w_bits = w_ncur = 0;
-    if (clock_mode == CLOCK_CARD) { card_write(0x00); card_write(0xA1); return; }   /* STOP the chip */
+    if (clock_mode == CLOCK_CARD) { outp(card_port, 0); outp(0x80, 0); card_write(0xA1); return; }   /* STOP the chip */
     synth_reset();
 }
 
@@ -1006,10 +1024,19 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz clock" :
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
-    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
-        printf("         card port %03Xh status %02Xh (bit7 REQN, bit6 BUSY)  write timeouts %u\r\n",
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD) {
+        unsigned k, tn = *(unsigned far *)MK_FP(ds, (unsigned)&trace_n);
+        printf("         card port %03Xh status now %02Xh (bit7 REQN, bit6 BUSY)  write timeouts %u  request latched %u\r\n",
                *(unsigned far *)MK_FP(ds, (unsigned)&card_port), inp(*(unsigned far *)MK_FP(ds, (unsigned)&card_port)),
-               *(unsigned far *)MK_FP(ds, (unsigned)&n_card_timeouts));
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_card_timeouts), *(unsigned char far *)MK_FP(ds, (unsigned)&req_seen));
+        printf("         first writes (byte: status seen -> status after; EE = timed out):");
+        for (k = 0; k < tn; k++)
+            printf("%s %02X:%02X>%02X", (k % 8) ? "" : "\r\n          ",
+                   *(unsigned char far *)MK_FP(ds, (unsigned)&trace_b[k]),
+                   *(unsigned char far *)MK_FP(ds, (unsigned)&trace_s0[k]),
+                   *(unsigned char far *)MK_FP(ds, (unsigned)&trace_s1[k]));
+        printf("\r\n");
+    }
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
@@ -1084,7 +1111,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.17: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.18: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1141,8 +1168,8 @@ int main(int argc, char **argv)
         unsigned char st0 = card_status();
         int ok = card_probe();
         if (logging) {
-            sprintf(logbuf, "4 PC-ROBOT card at %03Xh: status before %02Xh, %s, %s, STOP write timeouts %u, status after %02Xh",
-                    card_port, st0, ok ? "present" : "ABSENT (reads FFh)", card_note, n_card_timeouts, card_status());
+            sprintf(logbuf, "4 PC-ROBOT card at %03Xh: status before %02Xh, %s, %s, timeouts %u, status after %02Xh, request latched %u",
+                    card_port, st0, ok ? "present" : "ABSENT (reads FFh)", card_note, n_card_timeouts, (unsigned char)inp(card_port), req_seen);
             lg(logbuf);
         }
         if (!ok) {
