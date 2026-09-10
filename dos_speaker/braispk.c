@@ -218,6 +218,9 @@ static unsigned n_dac_busy;                     /* DSP not ready at a tick: a wa
 static unsigned char dac_playing;
 static unsigned char dac_cmd;                   /* command 10h sent, its sample byte still owed  */
 static unsigned char dac_next;                  /* that sample byte                              */
+static unsigned char dac_wide;                  /* /W: a command+sample pair EVERY tick (19886 Hz, interpolated) */
+static unsigned char keep_filter;               /* /O: leave the card's output filter as found   */
+static unsigned n_dac_wait;                     /* DSP not ready at first look (but within the bound) */
 static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
 static unsigned char fpu_save[108];
@@ -360,7 +363,7 @@ static int sb_open(void)
     mix_filter_saved = mixer_read(0x0E);
     mixer_write(0x22, 0xEE);
     mixer_write(0x04, 0xEE);
-    mixer_write(0x0E, mix_filter_saved | 0x20);
+    if (!keep_filter) mixer_write(0x0E, mix_filter_saved | 0x20);
     dsp_write(0xD1);                               /* speaker (DAC output) on       */
     dsp_write(0x10); dsp_write(0x80);
     return 1;
@@ -390,13 +393,43 @@ static void sb_close(void)
  * to say: the DAC holds mid-scale, so there is no ramp and no click. */
 static int dac_ready(int spins)
 {
-    do { if (!(inp(sb_port + 0xC) & 0x80)) return 1; } while (--spins > 0);
+    if (!(inp(sb_port + 0xC) & 0x80)) return 1;
+    n_dac_wait++;
+    while (--spins > 0) if (!(inp(sb_port + 0xC) & 0x80)) return 1;
     return 0;
 }
 
 static void dac_tick(void)
 {
     unsigned char two = (unsigned char)(ticks_per_sample == 2), odd = (unsigned char)(tick_count & 1);
+    if (dac_wide && two) {
+        /* /W: the pair every tick, 19886 samples a second with the halfway
+         * value on the odd ticks, so the DAC's images sit above 15 kHz.  The
+         * documented direct-DAC ceiling is 23 kHz, so a real DSP should keep
+         * up; the wait count in /S says whether it had to be waited for. */
+        unsigned h = ring_head;
+        unsigned char s;
+        if (dac_cmd) {
+            if (dac_ready(40)) { outp(sb_port + 0xC, dac_next); dac_cmd = 0; }
+            else { n_dac_busy++; goto done; }
+        }
+        if (!dac_ready(1)) { n_dac_busy++; goto done; }
+        if (h != ring_tail) {
+            if (odd) {
+                unsigned n2 = (h + 1) & RING_MASK;
+                unsigned char b = (n2 != ring_tail) ? ring[n2] : ring[h];
+                s = (unsigned char)(((unsigned)ring[h] + b) >> 1);
+                ring_head = n2;
+            } else s = ring[h];
+            dac_playing = 1;
+        } else if (dac_playing) { s = 0x80; dac_playing = 0; }
+        else goto done;
+        outp(sb_port + 0xC, 0x10);
+        dac_next = s; dac_cmd = 1;
+        if (dac_ready(40)) { outp(sb_port + 0xC, s); dac_cmd = 0; }
+        else n_dac_busy++;
+        goto done;
+    }
     if (dac_cmd && (!two || odd)) {                  /* the byte owed from last time  */
         if (dac_ready(two ? 40 : 60)) { outp(sb_port + 0xC, dac_next); dac_cmd = 0; }
         else n_dac_busy++;
@@ -1219,9 +1252,11 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB)
-        printf("         Sound Blaster DAC at %03Xh, DSP version %u.%02u, DSP busy at a tick %u times\r\n",
+        printf("         Sound Blaster DAC at %03Xh, DSP version %u.%02u, %s; DSP waited for %u times, not ready in time %u times\r\n",
                *(unsigned far *)MK_FP(ds, (unsigned)&sb_port),
                *(unsigned char far *)MK_FP(ds, (unsigned)&sb_ver_hi), *(unsigned char far *)MK_FP(ds, (unsigned)&sb_ver_lo),
+               *(unsigned char far *)MK_FP(ds, (unsigned)&dac_wide) ? "19886 Hz pairs (/W)" : "9943 Hz, command and sample on alternate ticks",
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_dac_wait),
                *(unsigned far *)MK_FP(ds, (unsigned)&n_dac_busy));
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD) {
         unsigned k, tn = *(unsigned far *)MK_FP(ds, (unsigned)&trace_n);
@@ -1282,6 +1317,8 @@ int main(int argc, char **argv)
             case 'U': return uninstall();
             case 'C': chip_timing = 1; break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
+            case 'W': dac_wide = 1; break;
+            case 'O': keep_filter = 1; break;
             case 'B': out_dev = OUT_SB;
                       if (argv[i][2]) { sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); sb_from_env = 0; }
                       else sb_from_env = 1;
@@ -1313,7 +1350,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.24: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.25: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1338,6 +1375,8 @@ int main(int argc, char **argv)
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
+                       "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
+                       "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
                        "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
@@ -1511,9 +1550,10 @@ resident:
         printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
                (paras + 63) / 64, card_port, API_INT);
     else if (out_dev == OUT_SB)
-    printf("braispk: resident, %u KB, %s -> Sound Blaster DAC at %03Xh (DSP %u.%02u), API INT %02Xh, level x%d.%02d%s\r\n",
+    printf("braispk: resident, %u KB, %s -> Sound Blaster DAC at %03Xh (DSP %u.%02u)%s%s, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
-           sb_port, sb_ver_hi, sb_ver_lo, API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
+           sb_port, sb_ver_hi, sb_ver_lo, dac_wide ? ", pairs every tick" : "", keep_filter ? ", filter as found" : "",
+           API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
            chip_timing ? ", chip frame timing" : "");
     else
     printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
