@@ -206,6 +206,18 @@ static unsigned char chip_timing;                /* /C: honour FS bits */
 static double out_gain = 8.0;                   /* /Vn below; default /V8 = x8: a cone wants drive */
 static const double GAIN_TAB[10] = {0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66, 8.0, 11.3};
 static unsigned char full_range;                /* /F: keep the fundamental (no 300 Hz cut) */
+static unsigned char gain_set;                  /* /V given: do not apply a mode's default  */
+#define OUT_SPEAKER  0
+#define OUT_SB       1
+static unsigned char out_dev = OUT_SPEAKER;     /* /B: the Sound Blaster DAC, not the speaker */
+static unsigned sb_port = 0x220;
+static unsigned char sb_from_env;               /* /B without a port: BLASTER=A... decides */
+static unsigned char sb_ver_hi, sb_ver_lo;      /* DSP version (command E1h)               */
+static unsigned char mix_master_saved, mix_voice_saved, mix_filter_saved;
+static unsigned n_dac_busy;                     /* DSP not ready at a tick: a wait or a lost tick */
+static unsigned char dac_playing;
+static unsigned char dac_cmd;                   /* command 10h sent, its sample byte still owed  */
+static unsigned char dac_next;                  /* that sample byte                              */
 static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
 static unsigned char fpu_save[108];
@@ -293,6 +305,128 @@ static void speaker_tick(void)
     tick_count++;
 }
 
+/* ------------------------------------------------------------------------- */
+/* /B: the Sound Blaster DAC instead of the speaker.  Direct mode -- DSP      */
+/* command 10h, one byte per sample -- paced by the same IRQ0/RTC tick as the */
+/* speaker path.  No DMA, no sound-card IRQ, nothing else in the machine      */
+/* touched.  The Yamaha OPL3-SA on the Pentium 166 is Sound Blaster Pro       */
+/* class, and the BIOS leaves its DSP alive at 220h in plain DOS (the /Z scan */
+/* there showed 22Ah reading AAh, the reset signature).                       */
+/* ------------------------------------------------------------------------- */
+static int dsp_write(unsigned char b)
+{
+    unsigned n;
+    for (n = 0; n < 20000; n++)
+        if (!(inp(sb_port + 0xC) & 0x80)) { outp(sb_port + 0xC, b); return 1; }
+    return 0;
+}
+
+static int dsp_read(unsigned char *b)
+{
+    unsigned n;
+    for (n = 0; n < 20000; n++)
+        if (inp(sb_port + 0xE) & 0x80) { *b = (unsigned char)inp(sb_port + 0xA); return 1; }
+    return 0;
+}
+
+static unsigned char mixer_read(unsigned char reg)
+{
+    outp(sb_port + 4, reg); outp(0x80, 0);
+    return (unsigned char)inp(sb_port + 5);
+}
+
+static void mixer_write(unsigned char reg, unsigned char v)
+{
+    outp(sb_port + 4, reg); outp(0x80, 0);
+    outp(sb_port + 5, v); outp(0x80, 0);
+}
+
+/* Reset the DSP (AAh comes back within 100 us), ask its version, open the
+ * output: mixer master and voice to full, the SB Pro output low-pass (about
+ * 3 kHz -- that would be "tompa" all over again, from a new cause) bypassed,
+ * speaker on, DAC parked at mid-scale. */
+static int sb_open(void)
+{
+    unsigned char b = 0;
+    int k;
+    outp(sb_port + 6, 1);
+    for (k = 0; k < 8; k++) outp(0x80, 0);         /* >= 3 us                       */
+    outp(sb_port + 6, 0);
+    if (!dsp_read(&b) || b != 0xAA) return 0;
+    sb_ver_hi = sb_ver_lo = 0;
+    if (dsp_write(0xE1)) { dsp_read(&sb_ver_hi); dsp_read(&sb_ver_lo); }
+    mix_master_saved = mixer_read(0x22);
+    mix_voice_saved  = mixer_read(0x04);
+    mix_filter_saved = mixer_read(0x0E);
+    mixer_write(0x22, 0xEE);
+    mixer_write(0x04, 0xEE);
+    mixer_write(0x0E, mix_filter_saved | 0x20);
+    dsp_write(0xD1);                               /* speaker (DAC output) on       */
+    dsp_write(0x10); dsp_write(0x80);
+    return 1;
+}
+
+/* Unload: sb_port and the three saved mixer bytes were fetched from the
+ * resident copy by the caller. */
+static void sb_close(void)
+{
+    dsp_write(0x10); dsp_write(0x80);
+    dsp_write(0xD3);                               /* speaker off                   */
+    mixer_write(0x22, mix_master_saved);
+    mixer_write(0x04, mix_voice_saved);
+    mixer_write(0x0E, mix_filter_saved);
+}
+
+/* The DSP's write buffer must be free before EVERY byte, the command and the
+ * sample alike; a byte written while it is busy is simply lost, and after a
+ * direct-DAC command the DSP stays busy for tens of microseconds (the
+ * documented 23 kHz ceiling for this mode).  Lose a sample byte and the next
+ * command byte becomes the sample and the next sample a command: DC and
+ * chaos.  So on the 19.9 kHz clock the command goes out on the even tick and
+ * the sample on the odd one -- 9943 samples a second, the synth's own rate,
+ * no interpolation, no spinning -- and on the one-tick clocks the sample
+ * follows the command after a bounded wait.  A sample byte still owed is
+ * retried before anything else.  Nothing is written while there is nothing
+ * to say: the DAC holds mid-scale, so there is no ramp and no click. */
+static int dac_ready(int spins)
+{
+    do { if (!(inp(sb_port + 0xC) & 0x80)) return 1; } while (--spins > 0);
+    return 0;
+}
+
+static void dac_tick(void)
+{
+    unsigned char two = (unsigned char)(ticks_per_sample == 2), odd = (unsigned char)(tick_count & 1);
+    if (dac_cmd && (!two || odd)) {                  /* the byte owed from last time  */
+        if (dac_ready(two ? 40 : 60)) { outp(sb_port + 0xC, dac_next); dac_cmd = 0; }
+        else n_dac_busy++;
+    }
+    if (!dac_cmd && (!two || !odd)) {
+        unsigned h = ring_head;
+        unsigned char s;
+        if (h != ring_tail) s = ring[h];
+        else if (dac_playing) s = 0x80;                /* drained: park mid-scale       */
+        else goto done;
+        if (dac_ready(1)) {
+            outp(sb_port + 0xC, 0x10);
+            dac_cmd = 1; dac_next = s;
+            if (h != ring_tail) { ring_head = (h + 1) & RING_MASK; dac_playing = 1; }
+            else dac_playing = 0;
+            if (!two) {                                /* one-tick clocks: byte now     */
+                if (dac_ready(60)) { outp(sb_port + 0xC, s); dac_cmd = 0; }
+                else n_dac_busy++;
+            }
+        } else n_dac_busy++;
+    }
+done:
+    tick_count++;
+}
+
+static void out_tick(void)
+{
+    if (out_dev == OUT_SB) dac_tick(); else speaker_tick();
+}
+
 /* RTC periodic interrupt, 8192 Hz.  Reading register 0Ch is what lets the
  * chip raise the next one.  Nothing is chained: the BIOS only uses IRQ8 for
  * INT 15h AH=83h/86h waits, which are unavailable while we are resident. */
@@ -300,7 +434,7 @@ static void __interrupt __far isr70(void)
 {
     outp(0x70, 0x0C);
     inp(0x71);
-    speaker_tick();
+    out_tick();
     outp(0xA0, 0x20);
     outp(0x20, 0x20);
 }
@@ -320,7 +454,7 @@ static void __interrupt __far isr08(void)
         old08 = IVT08;                         /* the newcomer gets 18.2 Hz through */
         IVT08 = isr08;                         /* us, never our 10 kHz             */
     }
-    speaker_tick();
+    out_tick();
     if (++chain_count >= chain_ticks) {
         chain_count = 0;
         if (old08 != bios08) in_chain = 1;
@@ -338,8 +472,13 @@ static void push_sample(double v)
 {
     int c;
     if (v > 1.0) v = 1.0; else if (v < -1.0) v = -1.0;
-    c = (int)(pwm_mid + v * pwm_amp);    /* strictly inside 1..period-1      */
-    if (c < 2) c = 2; else if (c > pwm_top - 2) c = pwm_top - 2;
+    if (out_dev == OUT_SB) {             /* 8-bit unsigned, 80h = silence    */
+        c = 128 + (int)(v * 127.0);
+        if (c < 1) c = 1; else if (c > 255) c = 255;
+    } else {
+        c = (int)(pwm_mid + v * pwm_amp);    /* strictly inside 1..period-1      */
+        if (c < 2) c = 2; else if (c > pwm_top - 2) c = pwm_top - 2;
+    }
     if (((ring_tail + 1) & RING_MASK) == ring_head) { n_overrun++; return; }
     ring[ring_tail] = (unsigned char)c;
     ring_tail = (ring_tail + 1) & RING_MASK;
@@ -889,6 +1028,13 @@ static int uninstall(void)
         rtc_normal(ds);
         _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
     }
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB) {
+        sb_port          = *(unsigned far *)MK_FP(ds, (unsigned)&sb_port);
+        mix_master_saved = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_master_saved);
+        mix_voice_saved  = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_voice_saved);
+        mix_filter_saved = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_filter_saved);
+        sb_close();
+    }
     _dos_freemem(psp);
     printf("braispk: unloaded\r\n");
     return 0;
@@ -1072,6 +1218,11 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz clock" :
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB)
+        printf("         Sound Blaster DAC at %03Xh, DSP version %u.%02u, DSP busy at a tick %u times\r\n",
+               *(unsigned far *)MK_FP(ds, (unsigned)&sb_port),
+               *(unsigned char far *)MK_FP(ds, (unsigned)&sb_ver_hi), *(unsigned char far *)MK_FP(ds, (unsigned)&sb_ver_lo),
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_dac_busy));
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD) {
         unsigned k, tn = *(unsigned far *)MK_FP(ds, (unsigned)&trace_n);
         printf("         card port %03Xh status now %02Xh (bit7 REQN, bit6 BUSY)  write timeouts %u  request latched %u\r\n",
@@ -1130,7 +1281,10 @@ int main(int argc, char **argv)
             switch (argv[i][1] & 0xDF) {
             case 'U': return uninstall();
             case 'C': chip_timing = 1; break;
-            case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') out_gain = GAIN_TAB[argv[i][2] - '0']; break;
+            case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
+            case 'B': out_dev = OUT_SB;
+                      if (argv[i][2]) sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); else sb_from_env = 1;
+                      break;
             case 'S': return report();
             case 'D': {                       /* debug: what does the resident check see */
                 union REGS r; int k;
@@ -1158,7 +1312,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.23: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.24: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1182,6 +1336,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
+                       "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
                        "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
@@ -1230,6 +1385,27 @@ int main(int argc, char **argv)
         lg("3 INT 61h hooked, card mode");
         beeps(1);
         goto resident;
+    }
+    if (out_dev == OUT_SB) {
+        int ok;
+        if (sb_from_env) {                         /* BLASTER=A220 I5 D1 T4: only A matters */
+            const char *e = getenv("BLASTER"), *p = e ? strchr(e, 'A') : 0;
+            if (p && p[1]) sb_port = (unsigned)strtoul(p + 1, 0, 16);
+        }
+        ok = sb_open();
+        if (logging) {
+            sprintf(logbuf, "4 Sound Blaster at %03Xh: %s, DSP version %u.%02u, mixer master/voice/filter were %02X/%02X/%02X, now %02X/%02X/%02X",
+                    sb_port, ok ? "DSP reset answered AAh" : "NO DSP (no AAh after reset)", sb_ver_hi, sb_ver_lo,
+                    mix_master_saved, mix_voice_saved, mix_filter_saved, mixer_read(0x22), mixer_read(0x04), mixer_read(0x0E));
+            lg(logbuf);
+        }
+        if (!ok) {
+            printf("braispk: no Sound Blaster DSP answering at %03Xh\r\n", sb_port);
+            beeps(7);
+            return 1;
+        }
+        full_range = 1;                            /* the 300 Hz cut was for the cone */
+        if (!gain_set) out_gain = 2.0;
     }
     _dos_setvect(API_INT, isr61);
     lg("3 INT 61h hooked");
@@ -1333,6 +1509,11 @@ resident:
     if (clock_mode == CLOCK_CARD)
         printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
                (paras + 63) / 64, card_port, API_INT);
+    else if (out_dev == OUT_SB)
+    printf("braispk: resident, %u KB, %s -> Sound Blaster DAC at %03Xh (DSP %u.%02u), API INT %02Xh, level x%d.%02d%s\r\n",
+           (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
+           sb_port, sb_ver_hi, sb_ver_lo, API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
+           chip_timing ? ", chip frame timing" : "");
     else
     printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",

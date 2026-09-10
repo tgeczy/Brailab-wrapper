@@ -8,6 +8,10 @@ Each sentence is spoken by SAY.EXE /F under DX-CAPTURE, so one WAV per
 sentence lands in DIR/cap.  Counters from BRAISPK /S are printed after each.
 Never pass -silent to DOSBox-X: it mutes the mixer, and the capture is all
 zeros.
+
+--sb runs BRAISPK /B on an emulated Sound Blaster (--sbtype sbpro2 by default,
+the OPL3-SA's class; sb16 shows the SB16 busy-cycle mangling direct DAC), and
+--nospk turns the emulated PC speaker off so the capture can only be the DAC.
 """
 import argparse, glob, os, shutil, subprocess, sys, time, wave
 
@@ -25,6 +29,9 @@ def main():
     ap.add_argument("--irq0", action="store_true", help="BRAISPK /I: IRQ0 clock instead of the RTC")
     ap.add_argument("--hi", action="store_true", help="BRAISPK /H: IRQ0 at 19886 Hz")
     ap.add_argument("--test", action="store_true", help="also capture SAY /T: beep, speech, beep")
+    ap.add_argument("--sb", action="store_true", help="BRAISPK /B: the Sound Blaster DAC instead of the speaker")
+    ap.add_argument("--sbtype", default="sbpro2", help="DOSBox-X sbtype for --sb: sbpro2 (the OPL3-SA class), sb16, sb2")
+    ap.add_argument("--nospk", action="store_true", help="pcspeaker=false: proves the sound is not the speaker")
     ap.add_argument("text", nargs="*")
     a = ap.parse_args()
 
@@ -35,7 +42,7 @@ def main():
     for f in ("braispk.exe", "say.exe", "TALKHUNS.COM"):
         shutil.copy(os.path.join(HERE, f), run)
     lines = ["@echo off", 'mount c "%s"' % run, "c:",
-             "braispk %s %s %s > log_braispk.txt" % ("/C" if a.chip else "", "/H" if a.hi else "/I" if a.irq0 else "", a.args),
+             "braispk %s %s %s %s > log_braispk.txt" % ("/C" if a.chip else "", "/H" if a.hi else "/I" if a.irq0 else "", "/B" if a.sb else "", a.args),
              "talkhuns 1 > log_talkhun.txt", "say /C > log_say.txt", "braispk /S > stat0.txt"]
     if a.test:
         lines += ["DX-CAPTURE /A /-V SAY.EXE /T", "braispk /S > stat_t.txt"]
@@ -49,7 +56,8 @@ def main():
     conf = "\n".join(["[sdl]", "autolock=false", "[dosbox]", "captures=" + cap, "startbanner=false",
                       "fastbioslogo=true", "quit warning=false", "show recorded filename=false",
                       "[cpu]", "core=normal", "cycles=%d" % a.cycles, "[mixer]", "rate=48000",
-                      "[speaker]", "pcspeaker=true", "[autoexec]"] + lines) + "\n"
+                      "[sblaster]", "sbtype=%s" % a.sbtype, "sbbase=220", "irq=5", "dma=1", "hdma=5", "oplmode=auto",
+                      "[speaker]", "pcspeaker=%s" % ("false" if a.nospk else "true"), "[autoexec]"] + lines) + "\n"
     confp = os.path.join(out, "run.conf")
     with open(confp, "w", newline="\n") as f:
         f.write(conf)

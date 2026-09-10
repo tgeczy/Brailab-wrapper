@@ -95,9 +95,30 @@ which on real silicon means 8.8 ms frames rather than 12.8. The emulator the
 NVDA voice was tuned on ignores FS, so the default here does too; the switch is
 for the ear to decide.
 
+## Through a Sound Blaster DAC instead (`/B`, 0.24)
+
+`BRAISPK /B` sends the same samples to a Sound Blaster-compatible DAC at 220h
+(`/B240` for another address; without one the `BLASTER` variable's `A` part
+is used). Direct-DAC mode, DSP command 10h with one byte per sample, paced by
+the same IRQ0 tick as the speaker path: no DMA, no sound-card IRQ, nothing else
+in the machine touched. The DSP's write buffer has to be free before *every*
+byte, command and sample alike, and after a direct-DAC command it stays busy for
+tens of microseconds (the mode's documented 23 kHz ceiling); a byte written
+while it is busy is lost, after which the next command byte becomes the sample
+and the sample a command. So on the 19.9 kHz clock the command goes out on the
+even tick and the sample on the odd one: 9943 samples a second, the synth's own
+rate, no spinning. Defaults in `/B` mode: full range, level x2; the mixer's
+master and voice are raised to full and the SB Pro output filter bypassed, and
+put back at unload. The Yamaha OPL3-SA on the target machine is Sound Blaster
+Pro class, and its DSP is alive in plain DOS without a driver. A real SB16's
+DSP goes busy in cycles and mangles direct-DAC playback (DOSBox-X's `sb16`
+model shows it); DMA mode would be the answer there.
+
 Under DOSBox-X: `python dosbox_run.py "Jó napot kívánok."` runs the chain and
-leaves a WAV per sentence in the output directory. Never pass `-silent` to
-DOSBox-X; it mutes the mixer and the capture is zeros.
+leaves a WAV per sentence in the output directory; `--sb` does the same on an
+emulated SB Pro (`--nospk` turns the emulated speaker off, so the capture can
+only be the DAC). Never pass `-silent` to DOSBox-X; it mutes the mixer and the
+capture is zeros.
 
 On the real machine: copy `BRAISPK.EXE`, `TALKHUNS.COM`, `SAY.EXE` next to the
 JATEKOK programs, boot to real DOS, run the three lines above. The games'
