@@ -558,18 +558,29 @@ static unsigned char card_status(void)
     return card_last;
 }
 
-/* Hand the chip one byte as soon as it asks.  40000 polls is what the
- * Windows driver allowed before giving up. */
+/* Hand the chip one byte: at once when it asks (REQN low), or unsolicited
+ * when it is idle (BUSY low and nothing requested) -- the 166's trace showed
+ * the chip only asks for the second byte of a control write and for frame
+ * data; the DAC byte, the pitch and the 00h prefix must simply be written.
+ * A short settle after each write, so the next status read sees BUSY rise.
+ * 40000 polls is what the Windows driver allowed before giving up. */
+static void card_settle(void)
+{
+    int k;
+    for (k = 0; k < 30; k++) outp(0x80, 0);
+}
+
 static int card_write(unsigned char b)
 {
     unsigned n;
     unsigned char s0;
     for (n = 0; n < 40000U; n++) {
         if (!req_seen) card_status();
-        if (req_seen) {
+        if (req_seen || !(card_last & 0x40)) {
             s0 = card_last;
             req_seen = 0;
-            outp(card_port, b); outp(0x80, 0);
+            outp(card_port, b);
+            card_settle();
             if (trace_n < TRACE_N) { trace_b[trace_n] = b; trace_s0[trace_n] = s0; trace_s1[trace_n] = (unsigned char)inp(card_port); trace_n++; }
             return 1;
         }
@@ -606,7 +617,7 @@ static unsigned char poll_status(void)
 {
     if (clock_mode == CLOCK_CARD) {
         if (!req_seen) card_status();
-        if (armed || !req_seen) { n_polls_busy++; return STATUS_BUSY; }
+        if (armed || !(req_seen || !(card_last & 0x40))) { n_polls_busy++; return STATUS_BUSY; }
         n_polls_ready++;
         return STATUS_READY;
     }
@@ -915,7 +926,7 @@ static int wait_ready(void)
 
 static int selftest(void)
 {
-    static const unsigned char settings[2] = {0x20, 0x00};
+    static const unsigned char settings[2] = {0x20, 0x70};   /* DAC gain 3.5x, as TALKHUN */
     static const unsigned char pitch[2]    = {0x20, 46};           /* 112 Hz  */
     static const unsigned char ctl_go[3]   = {0x20, 0x00, 0x80};
     static const unsigned char ctl_stop[3] = {0x20, 0x00, 0xA0};
@@ -1111,7 +1122,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.18: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.19: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
