@@ -944,17 +944,26 @@ static int selftest(void)
     i2c_xfer(settings, 2);
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
-    lg("P2 start sequence sent; a silent dummy frame, then 120 frames of /a/ at full amplitude");
-    for (k = 0; k < 121; k++) {
+    lg("P2 four sounds, 1 s each: /a/ voiced, /a/ on noise, low buzz, /i/ voiced");
+    for (k = 0; k < 4 * 100; k++) {
+        int part = k / 100, j = k % 100;
         if (!wait_ready()) { lg("P! adapter never became ready"); printf("braispk: adapter never became ready\r\n"); return 1; }
-        frame[3] = (unsigned char)(k == 0 ? 0x30 : 0x3F);          /* AM 0 in the dummy   */
-        frame[2] = (unsigned char)(k < 100 ? 0x40 : 0x5D);         /* PI: fall at the end */
+        switch (part) {
+        case 0:  frame[1] = 0x75; frame[2] = 0x40; frame[3] = 0x3F; frame[4] = 0x4D; frame[5] = 0x93; break;  /* /a/ 112 Hz */
+        case 1:  frame[1] = 0x75; frame[2] = 0x50; frame[3] = 0x3F; frame[4] = 0x4D; frame[5] = 0x93; break;  /* same, PI=16 noise */
+        case 2:  frame[1] = 0x40; frame[2] = 0x40; frame[3] = 0x0F; frame[4] = 0x40; frame[5] = 0x01; break;  /* F1 100 Hz, F2 500, wide */
+        default: frame[1] = 0x64; frame[2] = 0x40; frame[3] = 0x6F; frame[4] = 0x5C; frame[5] = 0xAB; break;  /* /i/: F1 258, F2 2328 */
+        }
+        if (j < 78) { /* sound */ }
+        else frame[3] &= 0xF0;                                     /* AM 0: the gap      */
+        if (k == 0) frame[3] &= 0xF0;                              /* silent dummy first */
         i2c_xfer(frame, 6);
         if (k == 1) lg("P3 first voiced frame taken");
-        if (k == 40) lg("P4 forty frames");
-        if (k == 100) lg("P5 hundred frames");
+        if (k == 100) lg("P4 noise part");
+        if (k == 200) lg("P5 low buzz part");
+        if (k == 300) lg("P6 /i/ part");
     }
-    lg("P6 all frames sent, STOP follows");
+    lg("P6b all frames sent, STOP follows");
     i2c_xfer(ctl_stop, 3);
     do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
     if (cport) {
@@ -964,7 +973,7 @@ static int selftest(void)
         s1 = (unsigned char)inp(cport);
         while (*bios - t0 < 4) ; s2 = (unsigned char)inp(cport);
         while (*bios - t0 < 22) ; s3 = (unsigned char)inp(cport);
-        sprintf(logbuf, "P7 status after STOP: at once %02Xh, 0.2 s %02Xh, 1.2 s %02Xh (BFh = stopped by user, 9Fh = bad stop, DFh = still busy)", s1, s2, s3);
+        sprintf(logbuf, "P7 status after STOP: at once %02Xh, 0.2 s %02Xh, 1.2 s %02Xh (9Fh = stopped by the user, BFh = bad stop, DFh = still busy)", s1, s2, s3);
         lg(logbuf);
     }
     lg("P8 self-test done");
@@ -1138,7 +1147,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.21: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.22: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
