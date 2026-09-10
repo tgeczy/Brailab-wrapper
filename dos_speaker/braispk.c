@@ -194,6 +194,7 @@ static struct {
     double prev_fc[MAX_FORMANTS], prev_bw[MAX_FORMANTS], prev_amp;
     int have_prev;
     double y1[MAX_FORMANTS], y2[MAX_FORMANTS];
+    double cB1[MAX_FORMANTS], cB2[MAX_FORMANTS], ca, cp;   /* the ramped values, per sample */
     double tilt_y;
     double lz0, lz1, mz0, mz1;
     double hx0, hy0, hx1, hy1, hx2, hy2;
@@ -218,6 +219,10 @@ static unsigned n_dac_busy;                     /* DSP not ready at a tick: a wa
 static unsigned char dac_playing;
 static unsigned char dac_cmd;                   /* command 10h sent, its sample byte still owed  */
 static unsigned char dac_next;                  /* that sample byte                              */
+static unsigned dos_ds;                         /* DOS 7 data segment (INT 21h AH=52h)     */
+static unsigned char dos_con_saved;             /* its console flag byte as found          */
+static unsigned char dos_con_touch = 1;         /* /T: leave that flag alone               */
+#define DOS_CON_FLAG 0x86                       /* IO.SYS 7.1: bit 4 = fast path armed, bit 3 = never arm it */
 static unsigned char dac_wide;                  /* /W: a command+sample pair EVERY tick (19886 Hz, interpolated) */
 static unsigned char keep_filter;               /* /O: leave the card's output filter as found   */
 static unsigned n_dac_wait;                     /* DSP not ready at first look (but within the bound) */
@@ -597,19 +602,32 @@ static void synth_frame(const unsigned char *f)
     pt = S.pitch + pi * FD_MULT[fd];
     if (pt < 40.0) pt = 40.0; else if (pt > 400.0) pt = 400.0;
 
+    /* Coefficients, amplitude and pitch are computed at each block's END and
+     * ramped to it sample by sample from wherever the previous block left
+     * them.  Stepping them once per block (the old way, and the chip's own
+     * 8-step staircase) injects a broadband haze -- the "swirl" the NVDA
+     * voice was cured of the same way.  Linear steps between two stable
+     * (B1, B2) pairs stay inside the stability triangle. */
     for (pos = 0; pos < n; pos += BLOCK) {
         int m = n - pos < BLOCK ? n - pos : BLOCK, k;
-        frac = (pos + m * 0.5) / n;
+        double d1[MAX_FORMANTS], d2[MAX_FORMANTS], da, dp, ae, pe;
+        frac = (double)(pos + m) / n;
         for (i = 0; i < nf; i++) {
             double cf = S.prev_fc[i] + (fc[i] - S.prev_fc[i]) * frac;
             double cb = S.prev_bw[i] + (bw[i] - S.prev_bw[i]) * frac;
             double Bc = exp(-3.14159265358979 * cb / FS);
             B1[i] = Bc * 2.0 * cos(two_pi * cf / FS);
             B2[i] = -(Bc * Bc);
+            d1[i] = (B1[i] - S.cB1[i]) / m;
+            d2[i] = (B2[i] - S.cB2[i]) / m;
         }
-        a = S.prev_amp + (amp - S.prev_amp) * frac;
-        p = S.pitch + (pt - S.pitch) * frac;
+        ae = S.prev_amp + (amp - S.prev_amp) * frac;
+        pe = S.pitch + (pt - S.pitch) * frac;
+        da = (ae - S.ca) / m;
+        dp = (pe - S.cp) / m;
         for (k = 0; k < m; k++) {
+            S.ca += da; S.cp += dp;
+            a = S.ca; p = S.cp;
             if (noise) {
                 S.rng = S.rng * 1103515245UL + 12345UL;
                 v = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5);
@@ -624,7 +642,8 @@ static void synth_frame(const unsigned char *f)
             }
             v *= a;
             for (i = 0; i < nf; i++) {
-                x = v + B1[i] * S.y1[i] + B2[i] * S.y2[i];
+                S.cB1[i] += d1[i]; S.cB2[i] += d2[i];
+                x = v + S.cB1[i] * S.y1[i] + S.cB2[i] * S.y2[i];
                 S.y2[i] = S.y1[i];
                 S.y1[i] = x;
                 v = x;
@@ -646,6 +665,8 @@ static void synth_frame(const unsigned char *f)
             }
             push_sample(soft_knee(v * MAKEUP * out_gain));
         }
+        for (i = 0; i < nf; i++) { S.cB1[i] = B1[i]; S.cB2[i] = B2[i]; }   /* no drift */
+        S.ca = ae; S.cp = pe;
     }
     S.pitch = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
@@ -956,6 +977,44 @@ static void cmos_write(unsigned char reg, unsigned char v)
     outp(0x71, v);
     outp(0x80, 0);
 }
+/* Seconds since midnight from the clock chip, for the tick accounting in /S:
+ * ticks lost to long interrupts-off stretches are invisible to every counter
+ * we own, but not to an independent clock. */
+static unsigned long cmos_seconds(void)
+{
+    unsigned char s, m, h, b, n = 0;
+    while ((cmos_read(0x0A) & 0x80) && ++n) ;   /* update in progress          */
+    s = cmos_read(0x00); m = cmos_read(0x02); h = cmos_read(0x04) & 0x7F;
+    b = cmos_read(0x0B);
+    if (!(b & 4)) {                              /* BCD                          */
+        s = (s >> 4) * 10 + (s & 15); m = (m >> 4) * 10 + (m & 15); h = (h >> 4) * 10 + (h & 15);
+    }
+    return (unsigned long)h * 3600UL + (unsigned long)m * 60UL + s;
+}
+static unsigned long install_sec, install_ticks;
+
+/* DOS 7's console writes the screen directly: IO.SYS tests bit 4 of the byte
+ * at DOS-data:86h and, if set, stores the character at B800h itself; only
+ * control characters and the last character of each write go through INT 10h
+ * AH=0Eh.  A screen reader hooking INT 10h therefore hears the tail of every
+ * line and nothing else ("ver" = "2]").  The write routine arms bit 4 at the
+ * start of each write unless bit 3 is set.  Set bit 3 and every character
+ * takes the DOS 6 route through the BIOS, where TALKHUN reads it.  ANSI.SYS
+ * consults the same bit.  Found by disassembling the machine's own IO.SYS. */
+static unsigned char far *dos_con_flag(void)
+{
+    union REGS r;
+    struct SREGS s;
+    if (_osmajor < 7) return 0;
+    if (!dos_ds) {
+        segread(&s);
+        r.h.ah = 0x52;
+        int86x(0x21, &r, &r, &s);
+        dos_ds = s.es;
+    }
+    return (unsigned char far *)MK_FP(dos_ds, DOS_CON_FLAG);
+}
+
 static unsigned char pic_reg(unsigned port, unsigned char ocw3)
 {
     outp(port, ocw3);                          /* 0Ah = IRR, 0Bh = ISR         */
@@ -1060,6 +1119,10 @@ static int uninstall(void)
         }
         rtc_normal(ds);
         _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
+    }
+    if (*(unsigned far *)MK_FP(ds, (unsigned)&dos_ds) && *(unsigned char far *)MK_FP(ds, (unsigned)&dos_con_touch)) {
+        unsigned char far *f = (unsigned char far *)MK_FP(*(unsigned far *)MK_FP(ds, (unsigned)&dos_ds), DOS_CON_FLAG);
+        *f = (unsigned char)((*f & ~0x08) | (*(unsigned char far *)MK_FP(ds, (unsigned)&dos_con_saved) & 0x08));
     }
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB) {
         sb_port          = *(unsigned far *)MK_FP(ds, (unsigned)&sb_port);
@@ -1271,6 +1334,20 @@ static int report(void)
                    *(unsigned char far *)MK_FP(ds, (unsigned)&trace_s1[k]));
         printf("\r\n");
     }
+    if (*(unsigned far *)MK_FP(ds, (unsigned)&dos_ds))
+        printf("         DOS console flag at %04X:%04X: was %02X, now %02X (bit 3 = screen through INT 10h, bit 4 = direct write armed)\r\n",
+               *(unsigned far *)MK_FP(ds, (unsigned)&dos_ds), DOS_CON_FLAG,
+               *(unsigned char far *)MK_FP(ds, (unsigned)&dos_con_saved),
+               *(unsigned char far *)MK_FP(*(unsigned far *)MK_FP(ds, (unsigned)&dos_ds), DOS_CON_FLAG));
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_CARD) {
+        unsigned char cm = *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode);
+        unsigned long rate = cm == CLOCK_RTC ? 8192UL : 1193182UL / *(unsigned far *)MK_FP(ds, (unsigned)&pit_div);
+        unsigned long secs = (cmos_seconds() + 86400UL - *(unsigned long far *)MK_FP(ds, (unsigned)&install_sec)) % 86400UL;
+        unsigned long got = *(unsigned long far *)MK_FP(ds, (unsigned)&tick_count) - *(unsigned long far *)MK_FP(ds, (unsigned)&install_ticks);
+        printf("         ticks since install %lu in %lu s = %lu a second, the clock rate is %lu: about %ld ticks %s (a second's worth of slack is %lu)\r\n",
+               got, secs, secs ? got / secs : 0UL, rate,
+               (long)(secs * rate) - (long)got, (long)(secs * rate) - (long)got >= 0 ? "LOST" : "extra", rate);
+    }
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
@@ -1318,6 +1395,7 @@ int main(int argc, char **argv)
             case 'C': chip_timing = 1; break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
+            case 'T': dos_con_touch = 0; break;
             case 'O': keep_filter = 1; break;
             case 'B': out_dev = OUT_SB;
                       if (argv[i][2]) { sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); sb_from_env = 0; }
@@ -1350,7 +1428,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.25: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.26: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1377,6 +1455,8 @@ int main(int argc, char **argv)
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
                        "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
+                       "  BRAISPK /T     leave DOS 7's console alone (it writes the screen directly; by default\r\n"
+                       "                 BRAISPK makes it go through INT 10h so TALKHUN hears ver, dir, prompts)\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
                        "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
@@ -1538,8 +1618,21 @@ int main(int argc, char **argv)
                 queued(), *bios - t0, spk_state);
         lg(logbuf);
     }
+    install_sec = cmos_seconds(); install_ticks = tick_count;
 resident:
     lg("7 going resident");
+    if (dos_con_touch) {
+        unsigned char far *f = dos_con_flag();
+        if (f) {
+            dos_con_saved = *f;
+            if (logging) {
+                sprintf(logbuf, "7b DOS %d.%02d console flag at %04X:%04X was %02X, setting bit 3: the screen is written through INT 10h from now on",
+                        _osmajor, _osminor, dos_ds, DOS_CON_FLAG, dos_con_saved);
+                lg(logbuf);
+            }
+            *f = (unsigned char)((dos_con_saved | 0x08) & ~0x10);
+        }
+    }
 
     /* free the environment, keep PSP..top of our stack resident */
     _dos_freemem(*(unsigned far *)MK_FP(_psp, 0x2C));

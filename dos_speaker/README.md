@@ -95,6 +95,20 @@ which on real silicon means 8.8 ms frames rather than 12.8. The emulator the
 NVDA voice was tuned on ignores FS, so the default here does too; the switch is
 for the ear to decide.
 
+## Making Windows 98's DOS readable (0.26)
+
+DOS 7.1 writes the screen directly. Its console routine in IO.SYS tests bit 4
+of a byte at offset 86h in the DOS data segment (the segment INT 21h AH=52h
+returns) and, if set, stores the character at B800h itself; only control
+characters and the last character of each write take INT 10h AH=0Eh. A screen
+reader hooking INT 10h hears the tail of every line and nothing else. The
+write routine arms bit 4 at the start of each write unless bit 3 is set, and
+nothing in IO.SYS ever sets bit 3. BRAISPK sets it at install and restores it
+at unload; DOS then goes through the BIOS for every character, the DOS 6 way,
+and TALKHUN reads `ver`, `dir` and the games' prompts. ANSI.SYS consults the
+same bit. `/T` leaves DOS alone. All of this was read out of the machine's own
+IO.SYS and ANSI.SYS with capstone.
+
 ## Through a Sound Blaster DAC instead (`/B`, 0.24)
 
 `BRAISPK /B` sends the same samples to a Sound Blaster-compatible DAC at 220h
