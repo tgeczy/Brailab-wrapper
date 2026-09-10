@@ -1488,14 +1488,16 @@ static int report(void)
  * the synth became garbage until a math loop spun.  DOSBox never sets TS.
  * CLTS is legal in real mode on a 286 and up. */
 extern unsigned char _8087, _real87;
+static unsigned char v86;                      /* under EMM386/Jemm: CLTS would fault */
 static unsigned clear_ts(void)
 {
     unsigned msw;
     _asm {
-        clts
         smsw ax
         mov  msw, ax
     }
+    if (msw & 1) v86 = 1;                      /* PE set = virtual-8086 mode      */
+    else _asm { clts }
     _8087 = 3;                                 /* 387 or better, and it is real */
     _real87 = 3;
     return msw;
@@ -1566,7 +1568,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.29: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.30: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1624,6 +1626,19 @@ int main(int argc, char **argv)
     }
     if (i == 1) { printf("braispk: already resident (a new version needs a reboot first)\r\n"); beeps(2); return 1; }
     if (i == -1) { printf("braispk: INT %02Xh is already in use by another program; not installing\r\n", API_INT); beeps(3); return 1; }
+    {   /* Does the x87 actually execute here?  Under a memory manager we
+         * cannot clear CR0.TS ourselves; if the monitor leaves it set, every
+         * double is garbage and the synth would hiss.  Eight beeps. */
+        volatile double two = 2.0;
+        long check = (long)(sqrt(two) * 1000.0);
+        if (check != 1414) {
+            printf("braispk: the coprocessor is not executing (sqrt 2 came back as %ld); %s\r\n", check,
+                   v86 ? "a memory manager is in the way -- try without it" : "unexpected in real mode");
+            beeps(8);
+            return 1;
+        }
+        if (v86) lg("2b virtual-8086 mode (a memory manager is loaded): CLTS skipped, x87 fine");
+    }
 
     if (*bda_lpt1 == 0) *bda_lpt1 = 0x378;     /* TALKHUN refuses to bind to LPT 0 */
     resident_psp = _psp;
