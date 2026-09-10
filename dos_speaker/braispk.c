@@ -937,6 +937,7 @@ static int selftest(void)
     int k;
     union REGS r;
     unsigned ds = 0, cport = 0;
+    unsigned long t_start = 0;
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
         cport = *(unsigned far *)MK_FP(ds, (unsigned)&card_port);
@@ -945,6 +946,10 @@ static int selftest(void)
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
     lg("P2 four sounds, 1 s each: /a/ voiced, /a/ on noise, low buzz, /i/ voiced");
+    {
+        volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+        t_start = *bios;
+    }
     for (k = 0; k < 4 * 100; k++) {
         int part = k / 100, j = k % 100;
         if (!wait_ready()) { lg("P! adapter never became ready"); printf("braispk: adapter never became ready\r\n"); return 1; }
@@ -963,7 +968,13 @@ static int selftest(void)
         if (k == 200) lg("P5 low buzz part");
         if (k == 300) lg("P6 /i/ part");
     }
-    lg("P6b all frames sent, STOP follows");
+    {
+        volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+        unsigned long ticks = *bios - t_start;
+        sprintf(logbuf, "P6b 400 frames took %lu BIOS ticks = %lu ms; at 12.8 ms a frame that is %lu ms, so the chip runs at %lu%% of its nominal clock",
+                ticks, ticks * 55, 400UL * 128 / 10, ticks ? (400UL * 128 / 10) * 100 / (ticks * 55) : 0);
+        lg(logbuf);
+    }
     i2c_xfer(ctl_stop, 3);
     do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
     if (cport) {
@@ -1147,7 +1158,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.22: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.23: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
