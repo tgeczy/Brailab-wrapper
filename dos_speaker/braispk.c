@@ -76,6 +76,7 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
 #define CLOCK_CARD   3      /* /A: no speaker at all -- the bytes go to a real
                              * PCF8200 on the PC-ROBOT ISA card (Nikol, 1993) */
 static unsigned card_port = 0x100;
+static int dac_override = -1;           /* /Gxx: DAC code to send instead of the driver's (70h = max) */
 static int card_write(unsigned char b);
 static char logbuf[200];
 static unsigned char clock_mode = CLOCK_PIT_HI;   /* /8 = RTC, /I = IRQ0 at 10 kHz */
@@ -489,7 +490,8 @@ static void transaction_done(void)
     if (len <= 0) return;
     if (clock_mode == CLOCK_CARD) {            /* the real chip gets the bytes */
         int k;
-        for (k = 0; k < len; k++) card_write(body[k]);
+        if (len == 1 && !(singles & 1) && dac_override >= 0) card_write((unsigned char)dac_override);
+        else for (k = 0; k < len; k++) card_write(body[k]);
         if (len == 5) n_frames++;
         else if (len == 2) { n_ctrls++; if ((body[1] & 0xA0) == 0xA0) armed = 1; }
         else if (len == 1) { if (singles & 1) n_pitches++; singles++; }
@@ -938,7 +940,7 @@ static int selftest(void)
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
         cport = *(unsigned far *)MK_FP(ds, (unsigned)&card_port);
-    lg("P1 self-test: DAC 70h, pitch 2Eh, command 00 80");
+    lg("P1 self-test: DAC 70h (or /G), pitch 2Eh, command 00 80");
     i2c_xfer(settings, 2);
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
@@ -1136,7 +1138,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.20: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.21: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1148,6 +1150,7 @@ int main(int argc, char **argv)
             case 'A': clock_mode = CLOCK_CARD;
                       if (argv[i][2]) card_port = (unsigned)strtoul(argv[i] + 2, 0, 16);
                       break;
+            case 'G': if (argv[i][2]) dac_override = (int)strtoul(argv[i] + 2, 0, 16) & 0xFF; break;
             case 'X': force_bypass = 1; break;          /* test: bypass even without an OS hook */
             case 'F': full_range = 1; break;
             case 'R': { union REGS r; r.h.ah = 0xFC; if (find_resident(0,0,0) != 1) { printf("not resident\r\n"); return 1; } int86(API_INT, &r, &r); printf("reset\r\n"); return 0; }
@@ -1162,6 +1165,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
                        "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
+                       "  BRAISPK /Gxx   card mode: DAC gain code instead of the driver's 70 (20 = 0 dB, 40 = -6 dB)\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
                        "  BRAISPK /L     install with breadcrumbs in BRAISPK.LOG (no monitor)\r\n"
                        "  BRAISPK /N     do nothing but beep once: proves the program runs\r\n"
