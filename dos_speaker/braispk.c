@@ -930,27 +930,41 @@ static int selftest(void)
     static const unsigned char pitch[2]    = {0x20, 46};           /* 112 Hz  */
     static const unsigned char ctl_go[3]   = {0x20, 0x00, 0x80};
     static const unsigned char ctl_stop[3] = {0x20, 0x00, 0xA0};
-    unsigned char frame[6] = {0x20, 0x75, 0x40, 0x3D, 0x4D, 0x93};  /* an /a/  */
+    unsigned char frame[6] = {0x20, 0x75, 0x40, 0x3F, 0x4D, 0x93};  /* an /a/, AM 15 */
     int k;
     union REGS r;
-    if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
-    lg("P1 self-test: start sequence");
+    unsigned ds = 0, cport = 0;
+    if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
+        cport = *(unsigned far *)MK_FP(ds, (unsigned)&card_port);
+    lg("P1 self-test: DAC 70h, pitch 2Eh, command 00 80");
     i2c_xfer(settings, 2);
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
-    lg("P2 start sequence sent, frames follow");
-    for (k = 0; k < 40; k++) {
+    lg("P2 start sequence sent; a silent dummy frame, then 120 frames of /a/ at full amplitude");
+    for (k = 0; k < 121; k++) {
         if (!wait_ready()) { lg("P! adapter never became ready"); printf("braispk: adapter never became ready\r\n"); return 1; }
-        frame[2] = (unsigned char)(k < 30 ? 0x40 : 0x5D);          /* PI: fall at the end */
+        frame[3] = (unsigned char)(k == 0 ? 0x30 : 0x3F);          /* AM 0 in the dummy   */
+        frame[2] = (unsigned char)(k < 100 ? 0x40 : 0x5D);         /* PI: fall at the end */
         i2c_xfer(frame, 6);
-        if (k == 0) lg("P3 first frame synthesised");
-        if (k == 9) lg("P4 ten frames");
-        if (k == 29) lg("P5 thirty frames");
+        if (k == 1) lg("P3 first voiced frame taken");
+        if (k == 40) lg("P4 forty frames");
+        if (k == 100) lg("P5 hundred frames");
     }
-    lg("P6 all forty frames sent, STOP follows");
+    lg("P6 all frames sent, STOP follows");
     i2c_xfer(ctl_stop, 3);
     do { r.h.ah = 0xFD; int86(API_INT, &r, &r); } while (r.x.dx);
-    lg("P7 drained, self-test done");
+    if (cport) {
+        volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+        unsigned long t0 = *bios;
+        unsigned char s1, s2, s3;
+        s1 = (unsigned char)inp(cport);
+        while (*bios - t0 < 4) ; s2 = (unsigned char)inp(cport);
+        while (*bios - t0 < 22) ; s3 = (unsigned char)inp(cport);
+        sprintf(logbuf, "P7 status after STOP: at once %02Xh, 0.2 s %02Xh, 1.2 s %02Xh (BFh = stopped by user, 9Fh = bad stop, DFh = still busy)", s1, s2, s3);
+        lg(logbuf);
+    }
+    lg("P8 self-test done");
     printf("braispk: self-test played\r\n");
     return 0;
 }
@@ -1122,7 +1136,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.19: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.20: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
