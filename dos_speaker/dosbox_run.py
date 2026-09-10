@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--sb", action="store_true", help="BRAISPK /B: the Sound Blaster DAC instead of the speaker")
     ap.add_argument("--sbtype", default="sbpro2", help="DOSBox-X sbtype for --sb: sbpro2 (the OPL3-SA class), sb16, sb2")
     ap.add_argument("--nospk", action="store_true", help="pcspeaker=false: proves the sound is not the speaker")
+    ap.add_argument("--lpt", action="store_true", help="BRAISPK /E on an emulated Covox (DOSBox-X disney=true on LPT1)")
     ap.add_argument("--exe", default=os.path.join(HERE, "braispk.exe"), help="which BRAISPK.EXE to run (A/B against an older build)")
     ap.add_argument("text", nargs="*")
     a = ap.parse_args()
@@ -44,7 +45,7 @@ def main():
         shutil.copy(os.path.join(HERE, f), run)
     shutil.copy(a.exe, os.path.join(run, "braispk.exe"))
     lines = ["@echo off", 'mount c "%s"' % run, "c:",
-             "braispk %s %s %s %s > log_braispk.txt" % ("/C" if a.chip else "", "/H" if a.hi else "/I" if a.irq0 else "", "/B" if a.sb else "", a.args),
+             "braispk %s %s %s %s %s > log_braispk.txt" % ("/C" if a.chip else "", "/H" if a.hi else "/I" if a.irq0 else "", "/B" if a.sb else "", "/E" if a.lpt else "", a.args),
              "talkhuns 1 > log_talkhun.txt", "say /C > log_say.txt", "braispk /S > stat0.txt"]
     if a.test:
         lines += ["DX-CAPTURE /A /-V SAY.EXE /T", "braispk /S > stat_t.txt"]
@@ -59,7 +60,8 @@ def main():
                       "fastbioslogo=true", "quit warning=false", "show recorded filename=false",
                       "[cpu]", "core=normal", "cycles=%d" % a.cycles, "[mixer]", "rate=48000",
                       "[sblaster]", "sbtype=%s" % a.sbtype, "sbbase=220", "irq=5", "dma=1", "hdma=5", "oplmode=auto",
-                      "[speaker]", "pcspeaker=%s" % ("false" if a.nospk else "true"), "[autoexec]"] + lines) + "\n"
+                      "[speaker]", "pcspeaker=%s" % ("false" if a.nospk else "true"), "disney=%s" % ("true" if a.lpt else "false"),
+                      "[parallel]", "parallel1=%s" % ("disney" if a.lpt else "disabled"), "[autoexec]"] + lines) + "\n"
     confp = os.path.join(out, "run.conf")
     with open(confp, "w", newline="\n") as f:
         f.write(conf)

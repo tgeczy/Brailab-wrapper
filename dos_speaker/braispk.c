@@ -216,6 +216,8 @@ static unsigned char full_range;                /* /F: keep the fundamental (no 
 static unsigned char gain_set;                  /* /V given: do not apply a mode's default  */
 #define OUT_SPEAKER  0
 #define OUT_SB       1
+#define OUT_LPT      2                          /* /E: an 8-bit DAC on the printer port (Covox) */
+static unsigned lpt_port;                       /* 0 = BIOS LPT1                           */
 static unsigned char out_dev = OUT_SPEAKER;     /* /B: the Sound Blaster DAC, not the speaker */
 static unsigned sb_port = 0x220;
 static unsigned char sb_from_env;               /* /B without a port: BLASTER=A... decides */
@@ -476,9 +478,36 @@ done:
     tick_count++;
 }
 
+/* /E: a resistor-ladder DAC on the printer port -- Covox Speech Thing and its
+ * clones, the way ReadBoard and the Polish readers spoke.  No handshake, no
+ * chip: the byte on the data lines IS the voltage.  One OUT per tick, the
+ * halfway value on the odd ticks of the 19.9 kHz clock. */
+static void lpt_tick(void)
+{
+    unsigned h = ring_head;
+    if (h != ring_tail) {
+        unsigned char s;
+        if (ticks_per_sample == 2 && (tick_count & 1)) {
+            unsigned n2 = (h + 1) & RING_MASK;
+            unsigned char b = (n2 != ring_tail) ? ring[n2] : ring[h];
+            s = (unsigned char)(((unsigned)ring[h] + b) >> 1);
+            ring_head = n2;
+        } else {
+            s = ring[h];
+            if (ticks_per_sample == 1) ring_head = (h + 1) & RING_MASK;
+        }
+        outp(lpt_port, s);
+        dac_playing = 1;
+    } else if (dac_playing) {
+        outp(lpt_port, 0x80);
+        dac_playing = 0;
+    }
+    tick_count++;
+}
+
 static void out_tick(void)
 {
-    if (out_dev == OUT_SB) dac_tick(); else speaker_tick();
+    if (out_dev == OUT_SB) dac_tick(); else if (out_dev == OUT_LPT) lpt_tick(); else speaker_tick();
 }
 
 /* Windows 3.x/9x announces itself on INT 2Fh: AX=1605h when it starts,
@@ -580,7 +609,7 @@ static void push_sample(double v)
 {
     int c;
     if (v > 1.0) v = 1.0; else if (v < -1.0) v = -1.0;
-    if (out_dev == OUT_SB) {             /* 8-bit unsigned, 80h = silence    */
+    if (out_dev != OUT_SPEAKER) {        /* DACs: 8-bit unsigned, 80h = silence */
         c = 128 + (int)(v * 127.0);
         if (c < 1) c = 1; else if (c > 255) c = 255;
     } else {
@@ -1402,6 +1431,8 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz clock" :
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_LPT)
+        printf("         printer-port DAC at %03Xh\r\n", *(unsigned far *)MK_FP(ds, (unsigned)&lpt_port));
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB)
         printf("         Sound Blaster DAC at %03Xh, DSP version %u.%02u, %s; DSP waited for %u times, not ready in time %u times\r\n",
                *(unsigned far *)MK_FP(ds, (unsigned)&sb_port),
@@ -1487,6 +1518,9 @@ int main(int argc, char **argv)
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
             case 'J': if (argv[i][2] >= '0' && argv[i][2] <= '9') noise_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
+            case 'E': out_dev = OUT_LPT;
+                      if (argv[i][2]) lpt_port = (unsigned)strtoul(argv[i] + 2, 0, 16);
+                      break;
             case 'Q': {                       /* rehearse Windows: broadcast start, then exit */
                 union REGS r; struct SREGS s;
                 if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
@@ -1532,7 +1566,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.28: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.29: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1557,6 +1591,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
+                       "  BRAISPK /E[p]  8-bit DAC on the printer port (Covox), p = 378 etc., default LPT1\r\n"
                        "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
                        "  BRAISPK /Jn    consonant brightness 0..9: low-pass on noise frames 2600 (0, dull) ..\r\n"
@@ -1632,6 +1667,16 @@ int main(int argc, char **argv)
             return 1;
         }
         full_range = 1;                            /* the 300 Hz cut was for the cone */
+        if (!gain_set) out_gain = 2.0;
+    }
+    if (out_dev == OUT_LPT) {
+        if (!lpt_port) lpt_port = *bda_lpt1 ? *bda_lpt1 : 0x378;
+        if (logging) {
+            sprintf(logbuf, "4 printer-port DAC at %03Xh (Covox): no handshake, the byte is the voltage", lpt_port);
+            lg(logbuf);
+        }
+        outp(lpt_port, 0x80);
+        full_range = 1;
         if (!gain_set) out_gain = 2.0;
     }
     _dos_setvect(API_INT, isr61);
@@ -1751,6 +1796,10 @@ resident:
     if (clock_mode == CLOCK_CARD)
         printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
                (paras + 63) / 64, card_port, API_INT);
+    else if (out_dev == OUT_LPT)
+    printf("braispk: resident, %u KB, %s -> printer-port DAC at %03Xh, API INT %02Xh, level x%d.%02d%s\r\n",
+           (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
+           lpt_port, API_INT, (int)out_gain, (int)(out_gain * 100) % 100, chip_timing ? ", chip frame timing" : "");
     else if (out_dev == OUT_SB)
     printf("braispk: resident, %u KB, %s -> Sound Blaster DAC at %03Xh (DSP %u.%02u)%s%s, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
