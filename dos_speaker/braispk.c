@@ -133,8 +133,11 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
  * for the rate in use: Butterworth Qs 0.5412 and 1.3066, RBJ bilinear form.
  * At 10 kHz this reproduces the table the NVDA voice was tuned with. */
 #define LP_HZ         2600.0            /* voiced frames: tames F5 on the harmonic source */
-#define LP_NOISE_HZ   4600.0            /* noise frames: f, s, c live up there; the 2600 Hz
-                                         * cut made "c" and "f" the same dull puff        */
+/* Noise frames: f, s, c live above 3 kHz; the 2600 Hz cut made "c" and "f"
+ * the same dull puff (0.26), 4600 Hz made "sz" too sharp (0.27).  /Jn picks
+ * the cutoff, 3600 by default. */
+static double noise_lp_hz = 3600.0;
+static const double NOISE_LP_TAB[10] = {2600, 3000, 3200, 3400, 3600, 3800, 4000, 4300, 4600, 4950};
 #define CUT_HZ        300.0
 static double LP_A[5], LP_B[5], LPN_A[5], LPN_B[5], CUT_C[5];
 static void hp_design(double fc, double fs, double *C)
@@ -600,7 +603,7 @@ static void synth_reset(void)
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
     lp_design(FS, LP_HZ, LP_A, LP_B);
-    lp_design(FS, LP_NOISE_HZ, LPN_A, LPN_B);
+    lp_design(FS, noise_lp_hz, LPN_A, LPN_B);
     { int i; for (i = 0; i < 5; i++) { S.lpA[i] = LP_A[i]; S.lpB[i] = LP_B[i]; } }
     hp_design(CUT_HZ, FS, CUT_C);
 }
@@ -1483,6 +1486,7 @@ int main(int argc, char **argv)
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
+            case 'J': if (argv[i][2] >= '0' && argv[i][2] <= '9') noise_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
             case 'Q': {                       /* rehearse Windows: broadcast start, then exit */
                 union REGS r; struct SREGS s;
                 if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
@@ -1528,7 +1532,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.27: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.28: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1555,6 +1559,8 @@ int main(int argc, char **argv)
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
                        "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
+                       "  BRAISPK /Jn    consonant brightness 0..9: low-pass on noise frames 2600 (0, dull) ..\r\n"
+                       "                 3600 (4, default) .. 4600 (8, sharp) .. 4950 (9) Hz\r\n"
                        "  BRAISPK /Q     rehearse a Windows start and exit (INT 2Fh broadcasts) while resident\r\n"
                        "  BRAISPK /T     leave DOS 7's console alone (it writes the screen directly; by default\r\n"
                        "                 BRAISPK makes it go through INT 10h so TALKHUN hears ver, dir, prompts)\r\n"
