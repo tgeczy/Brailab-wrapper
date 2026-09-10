@@ -77,6 +77,7 @@ static unsigned char ticks_per_sample = 1, ramp_mask = 1;
                              * PCF8200 on the PC-ROBOT ISA card (Nikol, 1993) */
 static unsigned card_port = 0x100;
 static int card_write(unsigned char b);
+static char logbuf[200];
 static unsigned char clock_mode = CLOCK_PIT_HI;   /* /8 = RTC, /I = IRQ0 at 10 kHz */
 static unsigned char bios_bypass;   /* IRQ0 modes: chain to the BIOS entry, not IO.SYS */
 static unsigned char force_bypass;  /* /X: take that path even when nothing hooks INT 08 */
@@ -1072,7 +1073,6 @@ static int report(void)
     return 0;
 }
 
-static char logbuf[200];
 
 /* Windows 98's DOS leaves CR0.TS (task switched) and CR0.MP set, the lazy
  * FPU-switch state of the VMM.  In real mode that makes the first x87
