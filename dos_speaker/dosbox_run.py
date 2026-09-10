@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--sb", action="store_true", help="BRAISPK /B: the Sound Blaster DAC instead of the speaker")
     ap.add_argument("--sbtype", default="sbpro2", help="DOSBox-X sbtype for --sb: sbpro2 (the OPL3-SA class), sb16, sb2")
     ap.add_argument("--nospk", action="store_true", help="pcspeaker=false: proves the sound is not the speaker")
+    ap.add_argument("--exe", default=os.path.join(HERE, "braispk.exe"), help="which BRAISPK.EXE to run (A/B against an older build)")
     ap.add_argument("text", nargs="*")
     a = ap.parse_args()
 
@@ -39,8 +40,9 @@ def main():
     run, cap = os.path.join(out, "run"), os.path.join(out, "cap")
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(run); os.makedirs(cap)
-    for f in ("braispk.exe", "say.exe", "TALKHUNS.COM"):
+    for f in ("say.exe", "TALKHUNS.COM"):
         shutil.copy(os.path.join(HERE, f), run)
+    shutil.copy(a.exe, os.path.join(run, "braispk.exe"))
     lines = ["@echo off", 'mount c "%s"' % run, "c:",
              "braispk %s %s %s %s > log_braispk.txt" % ("/C" if a.chip else "", "/H" if a.hi else "/I" if a.irq0 else "", "/B" if a.sb else "", a.args),
              "talkhuns 1 > log_talkhun.txt", "say /C > log_say.txt", "braispk /S > stat0.txt"]

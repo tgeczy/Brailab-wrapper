@@ -132,9 +132,11 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
 /* butter(4, 2600, 'low') as two second-order sections, designed at run time
  * for the rate in use: Butterworth Qs 0.5412 and 1.3066, RBJ bilinear form.
  * At 10 kHz this reproduces the table the NVDA voice was tuned with. */
-#define LP_HZ         2600.0
+#define LP_HZ         2600.0            /* voiced frames: tames F5 on the harmonic source */
+#define LP_NOISE_HZ   4600.0            /* noise frames: f, s, c live up there; the 2600 Hz
+                                         * cut made "c" and "f" the same dull puff        */
 #define CUT_HZ        300.0
-static double LP_A[5], LP_B[5], CUT_C[5];
+static double LP_A[5], LP_B[5], LPN_A[5], LPN_B[5], CUT_C[5];
 static void hp_design(double fc, double fs, double *C)
 {
     double w0 = 2.0 * 3.14159265358979 * fc / fs, c = cos(w0), sn = sin(w0);
@@ -142,10 +144,10 @@ static void hp_design(double fc, double fs, double *C)
     C[0] = (1.0 + c) / 2.0 / a0; C[1] = -(1.0 + c) / a0; C[2] = C[0];
     C[3] = -2.0 * c / a0; C[4] = (1.0 - alpha) / a0;
 }
-static void lp_design(double fs)
+static void lp_design(double fs, double hz, double *LP_A, double *LP_B)
 {
     static const double Q[2] = {0.54119610014619701, 1.3065629648763764};
-    double w0 = 2.0 * 3.14159265358979 * LP_HZ / fs, c = cos(w0), sn = sin(w0);
+    double w0 = 2.0 * 3.14159265358979 * hz / fs, c = cos(w0), sn = sin(w0);
     double alpha, a0, g = 1.0;
     int k;
     for (k = 0; k < 2; k++) {
@@ -195,6 +197,7 @@ static struct {
     int have_prev;
     double y1[MAX_FORMANTS], y2[MAX_FORMANTS];
     double cB1[MAX_FORMANTS], cB2[MAX_FORMANTS], ca, cp;   /* the ramped values, per sample */
+    double lpA[5], lpB[5];                     /* the output low-pass, ramped per sample too */
     double tilt_y;
     double lz0, lz1, mz0, mz1;
     double hx0, hy0, hx1, hy1, hx2, hy2;
@@ -219,6 +222,16 @@ static unsigned n_dac_busy;                     /* DSP not ready at a tick: a wa
 static unsigned char dac_playing;
 static unsigned char dac_cmd;                   /* command 10h sent, its sample byte still owed  */
 static unsigned char dac_next;                  /* that sample byte                              */
+static void (__interrupt __far *old2f)(void);   /* Windows start/exit broadcasts           */
+static volatile unsigned char suspended;        /* Windows is running: we stay out of it   */
+static unsigned n_win;                          /* suspend/resume pairs seen               */
+static void pit_speech(void);
+static void pit_normal(void);
+static void rtc_speech(void);
+static void rtc_normal(unsigned ds);
+static unsigned char cmos_read(unsigned char reg);
+static void cmos_write(unsigned char reg, unsigned char v);
+static unsigned char far *dos_con_flag(void);
 static unsigned dos_ds;                         /* DOS 7 data segment (INT 21h AH=52h)     */
 static unsigned char dos_con_saved;             /* its console flag byte as found          */
 static unsigned char dos_con_touch = 1;         /* /T: leave that flag alone               */
@@ -465,11 +478,61 @@ static void out_tick(void)
     if (out_dev == OUT_SB) dac_tick(); else speaker_tick();
 }
 
+/* Windows 3.x/9x announces itself on INT 2Fh: AX=1605h when it starts,
+ * 1606h when it exits.  While it runs it owns the timer, the PIC and the
+ * sound chip, and on the way out it puts back what it found at start: an
+ * 18.2 Hz PIT under a handler expecting 19886 ticks a second, so the BIOS
+ * tick and TALKHUN's pump crawled a thousand times too slow and the prompt
+ * "froze".  Suspend on the way in (timer normal, DAC parked, DOS console
+ * flag put back), resume on the way out (everything re-armed). */
+static void win_suspend(void)
+{
+    unsigned char far *f;
+    if (suspended || clock_mode == CLOCK_CARD) return;
+    suspended = 1;
+    if (clock_mode == CLOCK_RTC) {
+        unsigned char b = cmos_read(0x0B);
+        cmos_write(0x0B, b & ~0x40);
+        cmos_write(0x0A, rtc_rate_saved);
+        cmos_read(0x0C);
+    } else pit_normal();
+    if (out_dev == OUT_SB) sb_close();
+    spk_state = SPK_OFF; dac_cmd = 0; dac_playing = 0;
+    if (dos_con_touch && (f = dos_con_flag()) != 0) *f = (unsigned char)((*f & ~0x08) | (dos_con_saved & 0x08));
+}
+
+static void win_resume(void)
+{
+    unsigned char far *f;
+    if (!suspended) return;
+    ring_head = ring_tail; armed = 1;
+    chain_count = 0; in_chain = 0;
+    if (out_dev == OUT_SB) sb_open();
+    if (clock_mode == CLOCK_RTC) {
+        unsigned char b;
+        cmos_write(0x0A, (rtc_rate_saved & 0xF0) | RTC_RATE);
+        b = cmos_read(0x0B); cmos_write(0x0B, b | 0x40);
+        cmos_read(0x0C);
+        outp(0xA1, inp(0xA1) & ~1); outp(0x21, inp(0x21) & ~4);
+    } else pit_speech();
+    if (dos_con_touch && (f = dos_con_flag()) != 0) *f = (unsigned char)((*f | 0x08) & ~0x10);
+    n_win++;
+    suspended = 0;
+}
+
+static void __interrupt __far isr2f(union INTPACK r)
+{
+    if (r.x.ax == 0x1605) win_suspend();
+    else if (r.x.ax == 0x1606) win_resume();
+    _chain_intr(old2f);
+}
+
 /* RTC periodic interrupt, 8192 Hz.  Reading register 0Ch is what lets the
  * chip raise the next one.  Nothing is chained: the BIOS only uses IRQ8 for
  * INT 15h AH=83h/86h waits, which are unavailable while we are resident. */
 static void __interrupt __far isr70(void)
 {
+    if (suspended) _chain_intr(old70);
     outp(0x70, 0x0C);
     inp(0x71);
     out_tick();
@@ -487,6 +550,10 @@ static void __interrupt __far isr08(void)
     if (in_chain) {
         in_chain = 0;
         _chain_intr(bios08);
+    }
+    if (suspended) {                           /* Windows: a transparent 18.2 Hz hook */
+        if (old08 != bios08) in_chain = 1;
+        _chain_intr(old08);
     }
     if (IVT08 != isr08) {                      /* hooked above us since last tick: */
         old08 = IVT08;                         /* the newcomer gets 18.2 Hz through */
@@ -532,7 +599,9 @@ static void synth_reset(void)
     S.rng = 12345UL;
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
-    lp_design(FS);
+    lp_design(FS, LP_HZ, LP_A, LP_B);
+    lp_design(FS, LP_NOISE_HZ, LPN_A, LPN_B);
+    { int i; for (i = 0; i < 5; i++) { S.lpA[i] = LP_A[i]; S.lpB[i] = LP_B[i]; } }
     hp_design(CUT_HZ, FS, CUT_C);
 }
 
@@ -587,6 +656,8 @@ static void synth_frame(const unsigned char *f)
 {
     double fc[MAX_FORMANTS], bw[MAX_FORMANTS], amp, pi;
     double B1[MAX_FORMANTS], B2[MAX_FORMANTS];
+    double dlA[5], dlB[5];
+    const double *tA, *tB;
     int noise, fd, nf, n, pos, i;
     double pt, p, a, frac, v, o, x;
     const double two_pi = 6.28318530717958;
@@ -599,6 +670,11 @@ static void synth_frame(const unsigned char *f)
         S.have_prev = 1;
     }
     n = (int)((chip_timing ? FS_MS10[S.fs & 3] : STD_SAMPLES) * fs_hz / 10000.0 + 0.5) * FD_MULT[fd];
+    /* The output low-pass follows the source: 2600 Hz on voiced frames (F5
+     * buzz), 4600 Hz on noise frames (the fricatives), ramped across the
+     * frame so the switch is not a click. */
+    tA = noise ? LPN_A : LP_A; tB = noise ? LPN_B : LP_B;
+    for (i = 0; i < 5; i++) { dlA[i] = (tA[i] - S.lpA[i]) / n; dlB[i] = (tB[i] - S.lpB[i]) / n; }
     pt = S.pitch + pi * FD_MULT[fd];
     if (pt < 40.0) pt = 40.0; else if (pt > 400.0) pt = 400.0;
 
@@ -648,12 +724,13 @@ static void synth_frame(const unsigned char *f)
                 S.y1[i] = x;
                 v = x;
             }
-            o = LP_A[0] * v + S.lz0;
-            S.lz0 = LP_A[1] * v - LP_A[3] * o + S.lz1;
-            S.lz1 = LP_A[2] * v - LP_A[4] * o;
-            v = LP_B[0] * o + S.mz0;
-            S.mz0 = LP_B[1] * o - LP_B[3] * v + S.mz1;
-            S.mz1 = LP_B[2] * o - LP_B[4] * v;
+            for (i = 0; i < 5; i++) { S.lpA[i] += dlA[i]; S.lpB[i] += dlB[i]; }
+            o = S.lpA[0] * v + S.lz0;
+            S.lz0 = S.lpA[1] * v - S.lpA[3] * o + S.lz1;
+            S.lz1 = S.lpA[2] * v - S.lpA[4] * o;
+            v = S.lpB[0] * o + S.mz0;
+            S.mz0 = S.lpB[1] * o - S.lpB[3] * v + S.mz1;
+            S.mz1 = S.lpB[2] * o - S.lpB[4] * v;
             S.hy0 = S.hp_a * (S.hy0 + v - S.hx0); S.hx0 = v; v = S.hy0;
             S.hy1 = S.hp_a * (S.hy1 + v - S.hx1); S.hx1 = v; v = S.hy1;
             S.hy2 = S.hp_a * (S.hy2 + v - S.hx2); S.hx2 = v; v = S.hy2;
@@ -668,6 +745,7 @@ static void synth_frame(const unsigned char *f)
         for (i = 0; i < nf; i++) { S.cB1[i] = B1[i]; S.cB2[i] = B2[i]; }   /* no drift */
         S.ca = ae; S.cp = pe;
     }
+    for (i = 0; i < 5; i++) { S.lpA[i] = tA[i]; S.lpB[i] = tB[i]; }
     S.pitch = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
     S.prev_amp = amp;
@@ -1099,6 +1177,13 @@ static int uninstall(void)
         printf("braispk: another program hooked INT 61h after us; cannot unload safely\r\n");
         return 1;
     }
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_CARD) {
+        if (FP_SEG(_dos_getvect(0x2F)) != cs) {
+            printf("braispk: another program hooked INT 2Fh after us; cannot unload safely\r\n");
+            return 1;
+        }
+        _dos_setvect(0x2F, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old2f));
+    }
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD) {
         _dos_setvect(API_INT, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old61));
     } else if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) != CLOCK_RTC) {
@@ -1348,6 +1433,8 @@ static int report(void)
                got, secs, secs ? got / secs : 0UL, rate,
                (long)(secs * rate) - (long)got, (long)(secs * rate) - (long)got >= 0 ? "LOST" : "extra", rate);
     }
+    printf("         Windows start/exit pairs seen %u, suspended now %u\r\n",
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_win), *(unsigned char far *)MK_FP(ds, (unsigned)&suspended));
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),
@@ -1396,6 +1483,19 @@ int main(int argc, char **argv)
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
+            case 'Q': {                       /* rehearse Windows: broadcast start, then exit */
+                union REGS r; struct SREGS s;
+                if (find_resident(0, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+                segread(&s); s.es = 0; s.ds = 0;
+                r.x.ax = 0x1605; r.x.bx = 0; r.x.si = 0; r.x.cx = 0; r.x.dx = 0; r.x.di = 0x30A;
+                int86x(0x2F, &r, &r, &s);
+                printf("braispk: Windows-start broadcast sent (timer normal, DAC parked)\r\n");
+                segread(&s);
+                r.x.ax = 0x1606; r.x.dx = 0;
+                int86x(0x2F, &r, &r, &s);
+                printf("braispk: Windows-exit broadcast sent (re-armed); speech should work again\r\n");
+                return 0;
+            }
             case 'O': keep_filter = 1; break;
             case 'B': out_dev = OUT_SB;
                       if (argv[i][2]) { sb_port = (unsigned)strtoul(argv[i] + 2, 0, 16); sb_from_env = 0; }
@@ -1428,7 +1528,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.26: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.27: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1455,6 +1555,7 @@ int main(int argc, char **argv)
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
                        "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
+                       "  BRAISPK /Q     rehearse a Windows start and exit (INT 2Fh broadcasts) while resident\r\n"
                        "  BRAISPK /T     leave DOS 7's console alone (it writes the screen directly; by default\r\n"
                        "                 BRAISPK makes it go through INT 10h so TALKHUN hears ver, dir, prompts)\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
@@ -1528,7 +1629,9 @@ int main(int argc, char **argv)
         if (!gain_set) out_gain = 2.0;
     }
     _dos_setvect(API_INT, isr61);
-    lg("3 INT 61h hooked");
+    old2f = _dos_getvect(0x2F);
+    _dos_setvect(0x2F, isr2f);
+    lg("3 INT 61h hooked, INT 2Fh hooked for the Windows start/exit broadcasts");
     if (clock_mode != CLOCK_RTC) {
         /* An operating-system hook on INT 08 (Windows 98's IO.SYS sits there)
          * did not pass our 10 kHz-paced chain on to the BIOS tick on the real
