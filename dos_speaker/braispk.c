@@ -965,6 +965,16 @@ static void __cdecl api_dispatch(void)
     case 0xFE: api_bx = FP_SEG((void __far *)&ring_head); api_cx = FP_SEG((void __far *)isr61); api_dx = resident_psp; break;
     case 0xFD: api_bx = n_ctrls; api_cx = n_pitches; api_dx = queued(); break;
     case 0xFC: handshake_reset(); break;
+    case 0xF9: {                               /* retune: BL = /J, BH = /Y (FF = keep), CL = /M (0 = keep) */
+        unsigned j = api_bx & 0xFF, y = (api_bx >> 8) & 0xFF, m = api_cx & 0xFF;
+        if (!v86) _asm { clts }
+        _asm { fsave fpu_save }
+        if (j <= 9) { noise_lp_hz = NOISE_LP_TAB[j]; lp_design(FS, noise_lp_hz, LPN_A, LPN_B); }
+        if (y <= 9) { voiced_lp_hz = NOISE_LP_TAB[y]; lp_design(FS, voiced_lp_hz, LP_A, LP_B); }
+        if (m >= 1 && m <= 8) fifo_frames = (unsigned char)m;
+        _asm { frstor fpu_save }
+        break;
+    }
     case 0xFA: {
         static double tone_phase;
         unsigned n = api_cx > 1024 ? 1024 : api_cx, k;
@@ -1474,6 +1484,10 @@ static int report(void)
                got, secs, secs ? got / secs : 0UL, rate,
                (long)(secs * rate) - (long)got, (long)(secs * rate) - (long)got >= 0 ? "LOST" : "extra", rate);
     }
+    printf("         noise cut %u Hz (/J), voiced cut %u Hz (/Y), queue %u frames (/M)\r\n",
+           (unsigned)*(double far *)MK_FP(ds, (unsigned)&noise_lp_hz),
+           (unsigned)*(double far *)MK_FP(ds, (unsigned)&voiced_lp_hz),
+           *(unsigned char far *)MK_FP(ds, (unsigned)&fifo_frames));
     printf("         Windows start/exit pairs seen %u, suspended now %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_win), *(unsigned char far *)MK_FP(ds, (unsigned)&suspended));
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
@@ -1513,7 +1527,7 @@ int main(int argc, char **argv)
 {
     unsigned sp_now, top, paras;
     unsigned far *bda_lpt1 = (unsigned far *)MK_FP(0x40, 0x08);
-    int i;
+    int i, j_idx = -1, y_idx = -1, m_idx = -1;
 
     clear_ts();
     _control87(_MCW_EM, _MCW_EM);              /* no FPU traps, whatever Windows left */
@@ -1527,9 +1541,9 @@ int main(int argc, char **argv)
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
-            case 'J': if (argv[i][2] >= '0' && argv[i][2] <= '9') noise_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
-            case 'Y': if (argv[i][2] >= '0' && argv[i][2] <= '9') voiced_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
-            case 'M': if (argv[i][2] >= '1' && argv[i][2] <= '8') fifo_frames = (unsigned char)(argv[i][2] - '0'); break;
+            case 'J': if (argv[i][2] >= '0' && argv[i][2] <= '9') { j_idx = argv[i][2] - '0'; noise_lp_hz = NOISE_LP_TAB[j_idx]; } break;
+            case 'Y': if (argv[i][2] >= '0' && argv[i][2] <= '9') { y_idx = argv[i][2] - '0'; voiced_lp_hz = NOISE_LP_TAB[y_idx]; } break;
+            case 'M': if (argv[i][2] >= '1' && argv[i][2] <= '8') { m_idx = argv[i][2] - '0'; fifo_frames = (unsigned char)m_idx; } break;
             case 'E': out_dev = OUT_LPT;
                       if (argv[i][2]) lpt_port = (unsigned)strtoul(argv[i] + 2, 0, 16);
                       break;
@@ -1578,7 +1592,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.31: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.32: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1636,6 +1650,20 @@ int main(int argc, char **argv)
                 FP_SEG(v), FP_OFF(v), i == 0 ? "free" : i == 1 ? "ours" : "FOREIGN",
                 FP_SEG(_dos_getvect(8)), FP_OFF(_dos_getvect(8)), *bda_lpt1);
         lg(logbuf);
+    }
+    if (i == 1 && (j_idx >= 0 || y_idx >= 0 || m_idx >= 0)) {
+        /* The ear's loop: retune the resident copy instead of rebooting. */
+        union REGS r;
+        unsigned ds;
+        find_resident(&ds, 0, 0);
+        r.h.ah = 0xF9; r.h.bl = (unsigned char)j_idx; r.h.bh = (unsigned char)y_idx; r.h.cl = (unsigned char)(m_idx < 0 ? 0 : m_idx);
+        int86(API_INT, &r, &r);
+        printf("braispk: resident copy retuned: noise cut %u Hz, voiced cut %u Hz, queue %u frames\r\n",
+               (unsigned)*(double far *)MK_FP(ds, (unsigned)&noise_lp_hz),
+               (unsigned)*(double far *)MK_FP(ds, (unsigned)&voiced_lp_hz),
+               *(unsigned char far *)MK_FP(ds, (unsigned)&fifo_frames));
+        beeps(1);
+        return 0;
     }
     if (i == 1) { printf("braispk: already resident (a new version needs a reboot first)\r\n"); beeps(2); return 1; }
     if (i == -1) { printf("braispk: INT %02Xh is already in use by another program; not installing\r\n", API_INT); beeps(3); return 1; }
