@@ -137,6 +137,11 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
  * the same dull puff (0.26), 4600 Hz made "sz" too sharp (0.27).  /Jn picks
  * the cutoff, 3600 by default. */
 static double noise_lp_hz = 3600.0;
+/* Voiced frames: 2600 Hz came from the NVDA voice's tuning against TTS.dll,
+ * where it killed an F5 buzz; Arató's thesis says the "microintonation" of
+ * his vowels lives in F4/F5 movement (3500-4600 Hz), which that cut hides.
+ * /Yn opens it, for the ear and, once the crystal is in, for the real chip. */
+static double voiced_lp_hz = 2600.0;
 static const double NOISE_LP_TAB[10] = {2600, 3000, 3200, 3400, 3600, 3800, 4000, 4300, 4600, 4950};
 #define CUT_HZ        300.0
 static double LP_A[5], LP_B[5], LPN_A[5], LPN_B[5], CUT_C[5];
@@ -150,9 +155,12 @@ static void hp_design(double fc, double fs, double *C)
 static void lp_design(double fs, double hz, double *LP_A, double *LP_B)
 {
     static const double Q[2] = {0.54119610014619701, 1.3065629648763764};
-    double w0 = 2.0 * 3.14159265358979 * hz / fs, c = cos(w0), sn = sin(w0);
+    double w0, c, sn;
     double alpha, a0, g = 1.0;
     int k;
+    if (hz > 0.45 * fs) hz = 0.45 * fs;        /* /8 runs at 8192 Hz: a 4600 Hz cut would
+                                                * put the poles outside the circle       */
+    w0 = 2.0 * 3.14159265358979 * hz / fs; c = cos(w0); sn = sin(w0);
     for (k = 0; k < 2; k++) {
         double *A = k ? LP_B : LP_A;
         alpha = sn / (2.0 * Q[k]);
@@ -237,6 +245,8 @@ static void rtc_normal(unsigned ds);
 static unsigned char cmos_read(unsigned char reg);
 static void cmos_write(unsigned char reg, unsigned char v);
 static unsigned char far *dos_con_flag(void);
+static unsigned char v86;                       /* virtual-8086 mode (EMM386/Jemm): no CLTS anywhere */
+static unsigned char fifo_frames = 3;           /* /Mn: frames queued before "busy"; the chip holds ~1 */
 static unsigned dos_ds;                         /* DOS 7 data segment (INT 21h AH=52h)     */
 static unsigned char dos_con_saved;             /* its console flag byte as found          */
 static unsigned char dos_con_touch = 1;         /* /T: leave that flag alone               */
@@ -631,7 +641,7 @@ static void synth_reset(void)
     S.rng = 12345UL;
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
-    lp_design(FS, LP_HZ, LP_A, LP_B);
+    lp_design(FS, voiced_lp_hz, LP_A, LP_B);
     lp_design(FS, noise_lp_hz, LPN_A, LPN_B);
     { int i; for (i = 0; i < 5; i++) { S.lpA[i] = LP_A[i]; S.lpB[i] = LP_B[i]; } }
     hp_design(CUT_HZ, FS, CUT_C);
@@ -724,6 +734,7 @@ static void synth_frame(const unsigned char *f)
             double cf = S.prev_fc[i] + (fc[i] - S.prev_fc[i]) * frac;
             double cb = S.prev_bw[i] + (bw[i] - S.prev_bw[i]) * frac;
             double Bc = exp(-3.14159265358979 * cb / FS);
+            if (cf > 0.47 * FS) cf = 0.47 * FS;    /* /8 at 8192 Hz: F5 at 4600 would fold to 3592 */
             B1[i] = Bc * 2.0 * cos(two_pi * cf / FS);
             B2[i] = -(Bc * Bc);
             d1[i] = (B1[i] - S.cB1[i]) / m;
@@ -927,7 +938,7 @@ static unsigned char poll_status(void)
         n_polls_ready++;
         return STATUS_READY;
     }
-    if (queued() > FIFO_BUSY || armed) { n_polls_busy++; return STATUS_BUSY; }
+    if (queued() > (unsigned)fifo_frames * 128 || armed) { n_polls_busy++; return STATUS_BUSY; }
     n_polls_ready++;
     return STATUS_READY;
 }
@@ -958,10 +969,8 @@ static void __cdecl api_dispatch(void)
         static double tone_phase;
         unsigned n = api_cx > 1024 ? 1024 : api_cx, k;
         if (RING_SIZE - 1 - queued() < n) { api_bx = 0; break; }
-        _asm {
-            clts
-            fsave fpu_save
-        }
+        if (!v86) _asm { clts }                /* faults in virtual-8086 mode   */
+        _asm { fsave fpu_save }
         for (k = 0; k < n; k++) {
             if (api_bx == 0) {
                 S.rng = S.rng * 1103515245UL + 12345UL;
@@ -977,10 +986,8 @@ static void __cdecl api_dispatch(void)
         break;
     }
     default:
-        _asm {
-            clts
-            fsave fpu_save
-        }
+        if (!v86) _asm { clts }                /* faults in virtual-8086 mode   */
+        _asm { fsave fpu_save }
         wire_step(api_ah & 3);
         _asm { frstor fpu_save }
         break;
@@ -1488,7 +1495,6 @@ static int report(void)
  * the synth became garbage until a math loop spun.  DOSBox never sets TS.
  * CLTS is legal in real mode on a 286 and up. */
 extern unsigned char _8087, _real87;
-static unsigned char v86;                      /* under EMM386/Jemm: CLTS would fault */
 static unsigned clear_ts(void)
 {
     unsigned msw;
@@ -1520,6 +1526,8 @@ int main(int argc, char **argv)
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
             case 'J': if (argv[i][2] >= '0' && argv[i][2] <= '9') noise_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
+            case 'Y': if (argv[i][2] >= '0' && argv[i][2] <= '9') voiced_lp_hz = NOISE_LP_TAB[argv[i][2] - '0']; break;
+            case 'M': if (argv[i][2] >= '1' && argv[i][2] <= '8') fifo_frames = (unsigned char)(argv[i][2] - '0'); break;
             case 'E': out_dev = OUT_LPT;
                       if (argv[i][2]) lpt_port = (unsigned)strtoul(argv[i] + 2, 0, 16);
                       break;
@@ -1568,7 +1576,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.30: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.31: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1598,6 +1606,9 @@ int main(int argc, char **argv)
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
                        "  BRAISPK /Jn    consonant brightness 0..9: low-pass on noise frames 2600 (0, dull) ..\r\n"
                        "                 3600 (4, default) .. 4600 (8, sharp) .. 4950 (9) Hz\r\n"
+                       "  BRAISPK /Yn    the same ladder for VOICED frames (default 0 = 2600 Hz; 9 = open, F4/F5 audible)\r\n"
+                       "  BRAISPK /Mn    frames queued before \"busy\" 1..8 (default 3; the chip held about 1: typing\r\n"
+                       "                 interrupts sooner with fewer, a slow machine underruns with too few)\r\n"
                        "  BRAISPK /Q     rehearse a Windows start and exit (INT 2Fh broadcasts) while resident\r\n"
                        "  BRAISPK /T     leave DOS 7's console alone (it writes the screen directly; by default\r\n"
                        "                 BRAISPK makes it go through INT 10h so TALKHUN hears ver, dir, prompts)\r\n"
