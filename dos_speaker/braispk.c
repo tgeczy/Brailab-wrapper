@@ -1519,7 +1519,9 @@ int main(int argc, char **argv)
     _control87(_MCW_EM, _MCW_EM);              /* no FPU traps, whatever Windows left */
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '/' || argv[i][0] == '-') {
-            switch (argv[i][1] & 0xDF) {
+            unsigned char sw = (unsigned char)argv[i][1];
+            if (sw >= 'a' && sw <= 'z') sw -= 32;  /* not "& 0xDF": that turned '8' into 18h and /8 never matched */
+            switch (sw) {
             case 'U': return uninstall();
             case 'C': chip_timing = 1; break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
