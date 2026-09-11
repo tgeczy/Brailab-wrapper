@@ -110,6 +110,13 @@ int main(int argc, char **argv)
             beep();
             return 0;
         }
+        case 'W': {                          /* wait for whatever is being said to end */
+            volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
+            unsigned long t0 = *bios;
+            while (!queued() && *bios - t0 < 18) ;   /* up to 1 s for it to start */
+            while (queued()) ;
+            return 0;
+        }
         case 'Q': return 0;                  /* TALKHUN answered: errorlevel 0 */
         case 'E':
             buf[0] = 0x1b; strcpy(buf + 1, argv[1] + 2); feed(buf);
