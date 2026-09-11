@@ -252,6 +252,24 @@ static unsigned dos_ds;                         /* DOS 7 data segment (INT 21h A
 static unsigned char dos_con_saved;             /* its console flag byte as found          */
 static unsigned char dos_con_touch = 1;         /* /T: leave that flag alone               */
 #define DOS_CON_FLAG 0x86                       /* IO.SYS 7.1: bit 4 = fast path armed, bit 3 = never arm it */
+/* /DMA: auto-init 8-bit DMA instead of direct DAC.  The DSP is told the rate
+ * once (time constant 156 = 10000 Hz, the chip's own), the 8237 streams a
+ * 2 KB buffer in the resident image on its own, and the tick only keeps a
+ * few dozen bytes written ahead of the play pointer.  No per-sample port
+ * writes, no busy bit, no rate guessing: the path every DOS game used, and
+ * the one SBEMU and a real SB16 get right. */
+static unsigned char dma_mode;
+static unsigned char dma_chan = 1, sb_irq = 5;  /* from BLASTER D and I, or /DMAn */
+#define DMA_LEN   2048
+#define DMA_AHEAD 320                           /* bytes kept ahead of the play point (32 ms) */
+static unsigned char dma_area[DMA_LEN * 2];     /* one half never crosses a 64 KB page */
+static unsigned char far *dma_buf;
+static unsigned long dma_phys;
+static unsigned dma_fill;                       /* next byte to write               */
+static unsigned n_dma_late;                     /* the play point overtook the fill */
+static unsigned n_sb_irqs;
+static unsigned char sbirq_vec, sbirq_mask_saved;
+static void (__interrupt __far *old_sbirq)(void);
 static unsigned char dac_wide;                  /* /W: a command+sample pair EVERY tick (19886 Hz, interpolated) */
 static unsigned char keep_filter;               /* /O: leave the card's output filter as found   */
 static unsigned n_dac_wait;                     /* DSP not ready at first look (but within the bound) */
@@ -523,9 +541,85 @@ static void lpt_tick(void)
     tick_count++;
 }
 
+static unsigned dma_played(void)                /* bytes the 8237 has taken this cycle */
+{
+    unsigned lo, hi;
+    outp(0x0C, 0);                              /* flip-flop reset                */
+    lo = inp(dma_chan * 2 + 1); hi = inp(dma_chan * 2 + 1);
+    return (DMA_LEN - 1 - (lo | (hi << 8))) & (DMA_LEN - 1);
+}
+
+static void dma_program(void)
+{
+    static const unsigned char page_port[4] = {0x87, 0x83, 0x81, 0x82};
+    unsigned char c = dma_chan;
+    outp(0x0A, 4 | c);                          /* mask the channel               */
+    outp(0x0C, 0);                              /* clear the flip-flop            */
+    outp(0x0B, 0x58 | c);                       /* single, auto-init, memory -> device */
+    outp(c * 2, (unsigned char)dma_phys); outp(c * 2, (unsigned char)(dma_phys >> 8));
+    outp(page_port[c], (unsigned char)(dma_phys >> 16));
+    outp(0x0C, 0);
+    outp(c * 2 + 1, (unsigned char)((DMA_LEN - 1) & 0xFF)); outp(c * 2 + 1, (unsigned char)((DMA_LEN - 1) >> 8));
+    outp(0x0A, c);                              /* unmask                         */
+}
+
+static void dma_start(void)
+{
+    unsigned k;
+    for (k = 0; k < DMA_LEN; k++) dma_buf[k] = 0x80;
+    dma_fill = DMA_AHEAD;
+    dma_program();
+    dsp_write(0xD1);
+    dsp_write(0x40); dsp_write(156);            /* time constant: 1e6/(256-156) = 10000 Hz */
+    dsp_write(0x48); dsp_write((unsigned char)((DMA_LEN / 2 - 1) & 0xFF)); dsp_write((unsigned char)((DMA_LEN / 2 - 1) >> 8));
+    dsp_write(0x1C);                            /* auto-init 8-bit DMA output     */
+}
+
+static void dma_stop(void)
+{
+    int k;
+    dsp_write(0xD0);                            /* pause DMA                      */
+    dsp_write(0xD3);
+    outp(0x0A, 4 | dma_chan);                   /* mask the channel               */
+    outp(sb_port + 6, 1); for (k = 0; k < 8; k++) outp(0x80, 0); outp(sb_port + 6, 0);   /* DSP reset ends auto-init */
+    { unsigned char b; dsp_read(&b); }
+}
+
+/* Every 8th tick: top the buffer up to DMA_AHEAD bytes ahead of the play
+ * point.  Silence (80h) when the ring is empty, so idle needs no stopping. */
+static void dma_tick(void)
+{
+    if ((tick_count & 7) == 0) {
+        unsigned played = dma_played();
+        unsigned ahead = (dma_fill - played) & (DMA_LEN - 1);
+        if (ahead > DMA_LEN / 2) {              /* we fell behind: resync ahead   */
+            dma_fill = (played + 64) & (DMA_LEN - 1); ahead = 64; n_dma_late++;
+        }
+        while (ahead < DMA_AHEAD) {
+            unsigned h = ring_head;
+            unsigned char s = 0x80;
+            if (h != ring_tail) { s = ring[h]; ring_head = (h + 1) & RING_MASK; dac_playing = 1; }
+            else if (dac_playing) { dac_playing = 0; if (!armed) n_underrun++; }
+            dma_buf[dma_fill] = s;
+            dma_fill = (dma_fill + 1) & (DMA_LEN - 1);
+            ahead++;
+        }
+    }
+    tick_count++;
+}
+
+static void __interrupt __far isr_sb(void)      /* the DSP's block-end interrupt: acknowledge only */
+{
+    inp(sb_port + 0xE);
+    n_sb_irqs++;
+    if (sbirq_vec >= 0x70) outp(0xA0, 0x20);
+    outp(0x20, 0x20);
+}
+
 static void out_tick(void)
 {
-    if (out_dev == OUT_SB) dac_tick(); else if (out_dev == OUT_LPT) lpt_tick(); else speaker_tick();
+    if (dma_mode) dma_tick();
+    else if (out_dev == OUT_SB) dac_tick(); else if (out_dev == OUT_LPT) lpt_tick(); else speaker_tick();
 }
 
 /* Windows 3.x/9x announces itself on INT 2Fh: AX=1605h when it starts,
@@ -568,6 +662,7 @@ static void win_suspend(void)
         cmos_write(0x0A, rtc_rate_saved);
         cmos_read(0x0C);
     } else pit_normal();
+    if (dma_mode) dma_stop();
     if (out_dev == OUT_SB) sb_close();
     spk_state = SPK_OFF; dac_cmd = 0; dac_playing = 0;
     if (dos_con_touch && (f = dos_con_flag()) != 0) *f = (unsigned char)((*f & ~0x08) | (dos_con_saved & 0x08));
@@ -580,6 +675,7 @@ static void win_resume(void)
     ring_head = ring_tail; armed = 1;
     chain_count = 0; in_chain = 0;
     if (out_dev == OUT_SB) sb_open();
+    if (dma_mode) dma_start();
     if (clock_mode == CLOCK_RTC) {
         unsigned char b;
         cmos_write(0x0A, (rtc_rate_saved & 0xF0) | RTC_RATE);
@@ -1314,6 +1410,14 @@ static int uninstall(void)
         mix_master_saved = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_master_saved);
         mix_voice_saved  = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_voice_saved);
         mix_filter_saved = *(unsigned char far *)MK_FP(ds, (unsigned)&mix_filter_saved);
+        if (*(unsigned char far *)MK_FP(ds, (unsigned)&dma_mode)) {
+            unsigned char v = *(unsigned char far *)MK_FP(ds, (unsigned)&sbirq_vec);
+            dma_chan = *(unsigned char far *)MK_FP(ds, (unsigned)&dma_chan);
+            dma_stop();
+            _dos_setvect(v, *(void (__interrupt __far **)(void))MK_FP(ds, (unsigned)&old_sbirq));
+            if (v >= 0x70) outp(0xA1, (inp(0xA1) & ~(1 << (v - 0x70))) | (*(unsigned char far *)MK_FP(ds, (unsigned)&sbirq_mask_saved) & (1 << (v - 0x70))));
+            else outp(0x21, (inp(0x21) & ~(1 << (v - 8))) | (*(unsigned char far *)MK_FP(ds, (unsigned)&sbirq_mask_saved) & (1 << (v - 8))));
+        }
         sb_close();
     }
     _dos_freemem(psp);
@@ -1501,6 +1605,10 @@ static int report(void)
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_LPT)
         printf("         printer-port DAC at %03Xh\r\n", *(unsigned far *)MK_FP(ds, (unsigned)&lpt_port));
+    if (*(unsigned char far *)MK_FP(ds, (unsigned)&dma_mode))
+        printf("         DMA mode: channel %u, IRQ %u, block interrupts seen %u, fill fell behind %u times\r\n",
+               *(unsigned char far *)MK_FP(ds, (unsigned)&dma_chan), *(unsigned char far *)MK_FP(ds, (unsigned)&sb_irq),
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_sb_irqs), *(unsigned far *)MK_FP(ds, (unsigned)&n_dma_late));
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_SB)
         printf("         Sound Blaster DAC at %03Xh, DSP version %u.%02u, %s; DSP waited for %u times, not ready in time %u times\r\n",
                *(unsigned far *)MK_FP(ds, (unsigned)&sb_port),
@@ -1618,7 +1726,13 @@ int main(int argc, char **argv)
                       else sb_from_env = 1;
                       break;
             case 'S': return report();
-            case 'D': {                       /* debug: what does the resident check see */
+            case 'D':
+                if ((argv[i][2] & 0xDF) == 'M') {     /* /DMA[n]: DMA output, channel n */
+                    dma_mode = 1; out_dev = OUT_SB; sb_from_env = 1;
+                    if (argv[i][4] >= '0' && argv[i][4] <= '3' && argv[i][4] != '2') dma_chan = (unsigned char)(argv[i][4] - '0');
+                    break;
+                }
+                {                                 /* debug: what does the resident check see */
                 union REGS r; int k;
                 void (__interrupt __far *v)(void) = _dos_getvect(API_INT);
                 const unsigned char far *a = (const unsigned char far *)v;
@@ -1644,7 +1758,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.35: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.36: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1670,6 +1784,8 @@ int main(int argc, char **argv)
                        "  BRAISPK /K     tone ladder: 200 440 1000 2000 3000 Hz, then noise\r\n"
                        "  BRAISPK /B[p]  Sound Blaster DAC at port p (220) instead of the speaker; level x2, full range\r\n"
                        "  BRAISPK /E[p]  8-bit DAC on the printer port (Covox), p = 378 etc., default LPT1\r\n"
+                       "  BRAISPK /DMA   Sound Blaster by auto-init DMA (channel from BLASTER D or /DMA1, /DMA3; IRQ from\r\n"
+                       "                 BLASTER I): 10000 Hz, no per-sample writes -- for SBEMU, an SB16, or just less CPU\r\n"
                        "  BRAISPK /B /W  the DAC at 19886 Hz (a pair every tick) instead of 9943 Hz\r\n"
                        "  BRAISPK /B /O  leave the card's output filter as found (default: bypassed)\r\n"
                        "  BRAISPK /Jn    consonant brightness 0..9: low-pass on noise frames 2600 (0, dull) ..\r\n"
@@ -1758,9 +1874,11 @@ int main(int argc, char **argv)
     }
     if (out_dev == OUT_SB) {
         int ok;
-        if (sb_from_env) {                         /* BLASTER=A220 I5 D1 T4: only A matters */
+        if (sb_from_env) {                         /* BLASTER=A220 I5 D1 T4 */
             const char *e = getenv("BLASTER"), *p = e ? strchr(e, 'A') : 0;
             if (p && p[1]) sb_port = (unsigned)strtoul(p + 1, 0, 16);
+            p = e ? strchr(e, 'I') : 0; if (p && p[1] >= '0' && p[1] <= '9') sb_irq = (unsigned char)atoi(p + 1);
+            p = e ? strchr(e, 'D') : 0; if (p && p[1] >= '0' && p[1] <= '3' && dma_chan == 1) dma_chan = (unsigned char)(p[1] - '0');
         }
         ok = sb_open();
         if (logging) {
@@ -1776,6 +1894,22 @@ int main(int argc, char **argv)
         }
         full_range = 1;                            /* the 300 Hz cut was for the cone */
         if (!gain_set) out_gain = 2.0;
+        if (dma_mode) {
+            unsigned long phys = ((unsigned long)FP_SEG((void far *)dma_area) << 4) + FP_OFF((void far *)dma_area);
+            if ((phys & 0xFFFFUL) + DMA_LEN > 0x10000UL) phys += DMA_LEN;   /* the other half then */
+            dma_phys = phys;
+            dma_buf = (unsigned char far *)MK_FP((unsigned)(phys >> 4), (unsigned)(phys & 15));
+            sbirq_vec = (unsigned char)(sb_irq < 8 ? 8 + sb_irq : 0x70 + sb_irq - 8);
+            old_sbirq = _dos_getvect(sbirq_vec);
+            _dos_setvect(sbirq_vec, isr_sb);
+            if (sb_irq < 8) { sbirq_mask_saved = (unsigned char)inp(0x21); outp(0x21, sbirq_mask_saved & ~(1 << sb_irq)); }
+            else { sbirq_mask_saved = (unsigned char)inp(0xA1); outp(0xA1, sbirq_mask_saved & ~(1 << (sb_irq - 8))); }
+            if (logging) {
+                sprintf(logbuf, "4 DMA mode: channel %u, IRQ %u (vector %02Xh), buffer at %05lXh, 10000 Hz, block %u",
+                        dma_chan, sb_irq, sbirq_vec, dma_phys, DMA_LEN / 2);
+                lg(logbuf);
+            }
+        }
     }
     if (out_dev == OUT_LPT) {
         if (!lpt_port) lpt_port = *bda_lpt1 ? *bda_lpt1 : 0x378;
@@ -1841,6 +1975,7 @@ int main(int argc, char **argv)
         pit_speech();
         _dos_setvect(8, isr08);
         lg("4 PIT channel 0 reprogrammed, INT 08 hooked");
+        if (dma_mode) { fs_hz = 10000.0; synth_reset(); dma_start(); lg("4 DMA started: synth at 10000 Hz, the tick only refills"); }
     } else {
         fs_hz = 8192.0; pwm_top = 144; pwm_mid = 72; pwm_amp = 69; idle_level = 72;
         synth_reset();
@@ -1851,6 +1986,7 @@ int main(int argc, char **argv)
             lg(logbuf);
         }
         rtc_speech();
+        if (dma_mode) { fs_hz = 10000.0; synth_reset(); dma_start(); lg("4 DMA started: synth at 10000 Hz, the RTC tick only refills"); }
         if (logging) {
             sprintf(logbuf, "4 RTC on: reg 0Ah now %02X (want x3), reg 0Bh now %02X (bit 6 set), PIC masks %02X/%02X, INT 70h %04X:%04X",
                     cmos_read(0x0A), cmos_read(0x0B), inp(0x21), inp(0xA1),
