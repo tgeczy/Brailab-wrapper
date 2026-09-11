@@ -136,7 +136,7 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
 /* Noise frames: f, s, c live above 3 kHz; the 2600 Hz cut made "c" and "f"
  * the same dull puff (0.26), 4600 Hz made "sz" too sharp (0.27).  /Jn picks
  * the cutoff, 3600 by default. */
-static double noise_lp_hz = 3600.0;
+static double noise_lp_hz = 4000.0;            /* /J6 by Tomi's ear, 2026-09-10 */
 /* Voiced frames: 2600 Hz came from the NVDA voice's tuning against TTS.dll,
  * where it killed an F5 buzz; Arató's thesis says the "microintonation" of
  * his vowels lives in F4/F5 movement (3500-4600 Hz), which that cut hides.
@@ -208,7 +208,8 @@ static struct {
     int have_prev;
     double y1[MAX_FORMANTS], y2[MAX_FORMANTS];
     double cB1[MAX_FORMANTS], cB2[MAX_FORMANTS], ca, cp;   /* the ramped values, per sample */
-    double lpA[5], lpB[5];                     /* the output low-pass, ramped per sample too */
+    double nz0, nz1, pz0, pz1;                 /* the noise-cutoff low-pass, run in parallel */
+    double lw;                                 /* crossfade weight: 0 = voiced LP, 1 = noise LP */
     double tilt_y;
     double lz0, lz1, mz0, mz1;
     double hx0, hy0, hx1, hy1, hx2, hy2;
@@ -362,6 +363,13 @@ static int dsp_read(unsigned char *b)
     unsigned n;
     for (n = 0; n < 20000; n++)
         if (inp(sb_port + 0xE) & 0x80) { *b = (unsigned char)inp(sb_port + 0xA); return 1; }
+    return 0;
+}
+
+static int dsp_ready_probe(void)                /* write-status readable and not stuck busy */
+{
+    unsigned n;
+    for (n = 0; n < 1000; n++) if (!(inp(sb_port + 0xC) & 0x80)) return 1;
     return 0;
 }
 
@@ -527,10 +535,32 @@ static void out_tick(void)
  * tick and TALKHUN's pump crawled a thousand times too slow and the prompt
  * "froze".  Suspend on the way in (timer normal, DAC parked, DOS console
  * flag put back), resume on the way out (everything re-armed). */
+static void lg(const char *line);
+static int logging;
+static void __interrupt __far isr08(void);
+static unsigned n_pit_heal;                     /* the PIT was found at a foreign divisor and re-armed */
+
+/* Has something put the timer back to 18.2 Hz behind our back?  Windows on
+ * its way out, a game, anything.  Latch channel 0: in our mode 2 the count
+ * never exceeds our divisor; a bigger count means a bigger divisor. */
+static void pit_check(void)
+{
+    unsigned cnt;
+    if (suspended || (clock_mode != CLOCK_PIT && clock_mode != CLOCK_PIT_HI)) return;
+    outp(0x43, 0x00);                          /* latch channel 0               */
+    cnt = inp(0x40); cnt |= (unsigned)inp(0x40) << 8;
+    if (cnt > pit_div + 2) { pit_speech(); n_pit_heal++; }
+}
+
 static void win_suspend(void)
 {
     unsigned char far *f;
     if (suspended || clock_mode == CLOCK_CARD) return;
+    if (logging) {
+        sprintf(logbuf, "W1 Windows start broadcast: suspending; INT 08 was %04X:%04X, PIC mask %02X",
+                FP_SEG(IVT08), FP_OFF(IVT08), inp(0x21));
+        lg(logbuf);
+    }
     suspended = 1;
     if (clock_mode == CLOCK_RTC) {
         unsigned char b = cmos_read(0x0B);
@@ -560,6 +590,15 @@ static void win_resume(void)
     if (dos_con_touch && (f = dos_con_flag()) != 0) *f = (unsigned char)((*f | 0x08) & ~0x10);
     n_win++;
     suspended = 0;
+    if (logging) {
+        unsigned cnt;
+        outp(0x43, 0x00); cnt = inp(0x40); cnt |= (unsigned)inp(0x40) << 8;
+        sprintf(logbuf, "W2 Windows exit broadcast: resumed; INT 08 now %04X:%04X (ours %04X:%04X, chain %04X:%04X), PIC mask %02X, PIT count %u of %u, DSP %s, console flag %02X",
+                FP_SEG(IVT08), FP_OFF(IVT08), FP_SEG(isr08), FP_OFF(isr08), FP_SEG(old08), FP_OFF(old08),
+                inp(0x21), cnt, pit_div, out_dev == OUT_SB ? (dsp_ready_probe() ? "answers" : "SILENT") : "n/a",
+                f ? *f : 0xFF);
+        lg(logbuf);
+    }
 }
 
 static void __interrupt __far isr2f(union INTPACK r)
@@ -602,6 +641,7 @@ static void __interrupt __far isr08(void)
         IVT08 = isr08;                         /* us, never our 10 kHz             */
     }
     out_tick();
+    if ((chain_count & 63) == 0) pit_check();  /* every ~3 ms; every 3.5 s if the PIT is slow */
     if (++chain_count >= chain_ticks) {
         chain_count = 0;
         if (old08 != bios08) in_chain = 1;
@@ -643,7 +683,6 @@ static void synth_reset(void)
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
     lp_design(FS, voiced_lp_hz, LP_A, LP_B);
     lp_design(FS, noise_lp_hz, LPN_A, LPN_B);
-    { int i; for (i = 0; i < 5; i++) { S.lpA[i] = LP_A[i]; S.lpB[i] = LP_B[i]; } }
     hp_design(CUT_HZ, FS, CUT_C);
 }
 
@@ -698,8 +737,7 @@ static void synth_frame(const unsigned char *f)
 {
     double fc[MAX_FORMANTS], bw[MAX_FORMANTS], amp, pi;
     double B1[MAX_FORMANTS], B2[MAX_FORMANTS];
-    double dlA[5], dlB[5];
-    const double *tA, *tB;
+    double dw, wt;
     int noise, fd, nf, n, pos, i;
     double pt, p, a, frac, v, o, x;
     const double two_pi = 6.28318530717958;
@@ -712,11 +750,14 @@ static void synth_frame(const unsigned char *f)
         S.have_prev = 1;
     }
     n = (int)((chip_timing ? FS_MS10[S.fs & 3] : STD_SAMPLES) * fs_hz / 10000.0 + 0.5) * FD_MULT[fd];
-    /* The output low-pass follows the source: 2600 Hz on voiced frames (F5
-     * buzz), 4600 Hz on noise frames (the fricatives), ramped across the
-     * frame so the switch is not a click. */
-    tA = noise ? LPN_A : LP_A; tB = noise ? LPN_B : LP_B;
-    for (i = 0; i < 5; i++) { dlA[i] = (tA[i] - S.lpA[i]) / n; dlB[i] = (tB[i] - S.lpB[i]) / n; }
+    /* The output low-pass follows the source: the voiced cutoff (F5 buzz) on
+     * voiced frames, the wider noise cutoff on fricatives.  Two filters run
+     * all the time and their outputs are crossfaded across the frame; bending
+     * one filter's coefficients while it held state put a low-frequency
+     * thump at every fricative onset (measured: 139 Hz centroid in the first
+     * 2 ms) -- the "click at the head of the s". */
+    wt = noise ? 1.0 : 0.0;
+    dw = (wt - S.lw) / n;
     pt = S.pitch + pi * FD_MULT[fd];
     if (pt < 40.0) pt = 40.0; else if (pt > 400.0) pt = 400.0;
 
@@ -767,13 +808,23 @@ static void synth_frame(const unsigned char *f)
                 S.y1[i] = x;
                 v = x;
             }
-            for (i = 0; i < 5; i++) { S.lpA[i] += dlA[i]; S.lpB[i] += dlB[i]; }
-            o = S.lpA[0] * v + S.lz0;
-            S.lz0 = S.lpA[1] * v - S.lpA[3] * o + S.lz1;
-            S.lz1 = S.lpA[2] * v - S.lpA[4] * o;
-            v = S.lpB[0] * o + S.mz0;
-            S.mz0 = S.lpB[1] * o - S.lpB[3] * v + S.mz1;
-            S.mz1 = S.lpB[2] * o - S.lpB[4] * v;
+            {
+                double u = v, q, y1v, y1n;
+                S.lw += dw;
+                o = LP_A[0] * u + S.lz0;                       /* voiced-cutoff filter */
+                S.lz0 = LP_A[1] * u - LP_A[3] * o + S.lz1;
+                S.lz1 = LP_A[2] * u - LP_A[4] * o;
+                y1v = LP_B[0] * o + S.mz0;
+                S.mz0 = LP_B[1] * o - LP_B[3] * y1v + S.mz1;
+                S.mz1 = LP_B[2] * o - LP_B[4] * y1v;
+                q = LPN_A[0] * u + S.nz0;                      /* noise-cutoff filter  */
+                S.nz0 = LPN_A[1] * u - LPN_A[3] * q + S.nz1;
+                S.nz1 = LPN_A[2] * u - LPN_A[4] * q;
+                y1n = LPN_B[0] * q + S.pz0;
+                S.pz0 = LPN_B[1] * q - LPN_B[3] * y1n + S.pz1;
+                S.pz1 = LPN_B[2] * q - LPN_B[4] * y1n;
+                v = y1v + (y1n - y1v) * S.lw;
+            }
             S.hy0 = S.hp_a * (S.hy0 + v - S.hx0); S.hx0 = v; v = S.hy0;
             S.hy1 = S.hp_a * (S.hy1 + v - S.hx1); S.hx1 = v; v = S.hy1;
             S.hy2 = S.hp_a * (S.hy2 + v - S.hx2); S.hx2 = v; v = S.hy2;
@@ -788,7 +839,7 @@ static void synth_frame(const unsigned char *f)
         for (i = 0; i < nf; i++) { S.cB1[i] = B1[i]; S.cB2[i] = B2[i]; }   /* no drift */
         S.ca = ae; S.cp = pe;
     }
-    for (i = 0; i < 5; i++) { S.lpA[i] = tA[i]; S.lpB[i] = tB[i]; }
+    S.lw = wt;
     S.pitch = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
     S.prev_amp = amp;
@@ -961,7 +1012,7 @@ static void lg(const char *line);
 static void __cdecl api_dispatch(void)
 {
     switch (api_ah) {
-    case 0xFF: api_al = poll_status(); break;
+    case 0xFF: api_al = poll_status(); if ((n_polls_busy + n_polls_ready) % 256 == 0) pit_check(); break;
     case 0xFE: api_bx = FP_SEG((void __far *)&ring_head); api_cx = FP_SEG((void __far *)isr61); api_dx = resident_psp; break;
     case 0xFD: api_bx = n_ctrls; api_cx = n_pitches; api_dx = queued(); break;
     case 0xFC: handshake_reset(); break;
@@ -1371,7 +1422,7 @@ static int selftest(void)
 /* /L: breadcrumbs for a machine with no monitor.  One open/write/close per
  * line, so the directory entry is up to date if the next step freezes the
  * box; the file is read back under Windows after the reboot. */
-static int logging, log_failed;
+static int log_failed;
 static void lg(const char *line)
 {
     int h;
@@ -1488,8 +1539,9 @@ static int report(void)
            (unsigned)*(double far *)MK_FP(ds, (unsigned)&noise_lp_hz),
            (unsigned)*(double far *)MK_FP(ds, (unsigned)&voiced_lp_hz),
            *(unsigned char far *)MK_FP(ds, (unsigned)&fifo_frames));
-    printf("         Windows start/exit pairs seen %u, suspended now %u\r\n",
-           *(unsigned far *)MK_FP(ds, (unsigned)&n_win), *(unsigned char far *)MK_FP(ds, (unsigned)&suspended));
+    printf("         Windows start/exit pairs seen %u, suspended now %u, timer found slowed and re-armed %u times\r\n",
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_win), *(unsigned char far *)MK_FP(ds, (unsigned)&suspended),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_pit_heal));
     printf("         polls busy %u  ready %u  ticks %lu  armed %u  underruns %u  overruns %u\r\n",
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_busy),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_polls_ready),

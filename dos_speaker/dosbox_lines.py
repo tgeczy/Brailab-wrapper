@@ -18,6 +18,7 @@ while args:
     a = args.pop(0)
     if a == "--t": texts.append(args.pop(0))
     elif a == "--file": files.append((args.pop(0), args.pop(0)))
+    elif a == "--bin": files.append((args.pop(0), bytes.fromhex(args.pop(0))))   # a raw .COM etc.
     elif a == "--args": extra = args.pop(0)
     else: lines.append(a)
 run, cap = os.path.join(out, "run"), os.path.join(out, "cap")
@@ -27,7 +28,7 @@ for f in ("braispk.exe", "say.exe", "TALKHUNS.COM"):
 for i, t in enumerate(texts, 1):
     open(os.path.join(run, "T%d.TXT" % i), "wb").write((t + "\r\n").encode("cp852"))
 for name, t in files:
-    open(os.path.join(run, name), "wb").write((t + "\r\n").encode("cp852"))
+    open(os.path.join(run, name), "wb").write(t if isinstance(t, bytes) else (t + "\r\n").encode("cp852"))
 auto = ["@echo off", 'mount c "%s"' % run, "c:", "braispk /B %s > log_braispk.txt" % extra,
         "talkhuns 1 > log_talkhun.txt", "say /C > log_say.txt"] + lines + ["braispk /S > stat_end.txt", "exit"]
 conf = "\n".join(["[sdl]", "autolock=false", "[dosbox]", "captures=" + cap, "startbanner=false",
