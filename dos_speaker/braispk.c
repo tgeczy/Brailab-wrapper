@@ -454,7 +454,7 @@ static void dac_tick(void)
             if (dac_ready(40)) { outp(sb_port + 0xC, dac_next); dac_cmd = 0; }
             else { n_dac_busy++; goto done; }
         }
-        if (!dac_ready(1)) { n_dac_busy++; goto done; }
+        if (!dac_ready(4)) { n_dac_busy++; goto done; }   /* 4: SBEMU's status bit FLIPS on every read */
         if (h != ring_tail) {
             if (odd) {
                 unsigned n2 = (h + 1) & RING_MASK;
@@ -481,7 +481,7 @@ static void dac_tick(void)
         if (h != ring_tail) s = ring[h];
         else if (dac_playing) s = 0x80;                /* drained: park mid-scale       */
         else goto done;
-        if (dac_ready(1)) {
+        if (dac_ready(4)) {                        /* 4 reads, not 1: SBEMU flips the bit each read */
             outp(sb_port + 0xC, 0x10);
             dac_cmd = 1; dac_next = s;
             if (h != ring_tail) { ring_head = (h + 1) & RING_MASK; dac_playing = 1; }
