@@ -198,6 +198,12 @@ static unsigned singles;
 
 /* counters for the /S report */
 static unsigned n_frames, n_ctrls, n_pitches, n_polls_busy, n_polls_ready;
+static unsigned n_isr61, n_wire_in, n_wire_out, n_start, n_stop;   /* R2 wire-path diagnostic (Dell) */
+static unsigned n_synth, n_synth_out, n_push;   /* R3: does synth_frame run and push on the Dell? */
+static unsigned min_synth_sp = 0xFFFF;          /* private-stack low-water inside synth_frame */
+static int      last_synth_n;                   /* R4: the sample count synth_frame just computed */
+static unsigned min_synth_n = 0xFFFF, max_synth_n;      /* range of n across the run */
+static unsigned synth_sw_tmp, max_synth_sw;     /* x87 status word seen on entry to the FP work (V86) */
 
 /* synth */
 static struct {
@@ -276,6 +282,56 @@ static unsigned n_dac_wait;                     /* DSP not ready at first look (
 static const int FS_MS10[4] = {128, 88, 104, 176};      /* 12.8/8.8/10.4/17.6 ms, in 0.1 ms */
 
 static unsigned char fpu_save[108];
+static unsigned short fpu_cw = 0x127F;           /* the C runtime's x87 control word, captured at install */
+
+/* Give the API's floating-point work a clean x87 before it runs, then put
+ * things back.  Two very different jobs by CPU mode:
+ *
+ *  - Real mode (the P166): CLTS + FSAVE saves the foreground's whole x87 state
+ *    (it may be mid-computation) and, as a side effect, hands synth_frame a
+ *    cleared stack; FRSTOR restores it afterward.
+ *
+ *  - Virtual-8086 (the Dell, under Jemm/HDPMI): FSAVE/FRSTOR misbehave -- they
+ *    trapped and skipped synth_frame outright (0.39: synth calls 0), and once
+ *    they were removed (0.40) synth ran but inherited HDPMI's dirty/overflowed
+ *    x87 stack, so its arithmetic went to garbage (n came out ~6 instead of
+ *    128 -> the 0.4 s ticking).  Plain compute (fld/fmul/fsqrt) is fine in V86,
+ *    the install chirp proves it; only the environment-image instructions are
+ *    poison.  So here we FNINIT (clears the stack, touches no memory, unlike
+ *    FSAVE) and FLDCW the runtime's rounding back.  There is no foreground FPU
+ *    state to preserve under the memory manager.
+ *
+ * Each _asm sits at the top level of its own helper -- Watcom rejects an _asm
+ * block with a memory operand used as an if-body or doubled inside a brace. */
+static void fpu_probe_sw(void)          /* what the x87 looked like on entry (V86 diagnosis) */
+{
+    _asm { fnstsw synth_sw_tmp }        /* 8087 memory form; "fnstsw ax" is 287+ and the inline asm is 8087 */
+}
+static void fpu_reinit(void)            /* clear the stack, restore the control word */
+{
+    _asm { fninit }
+    _asm { fldcw fpu_cw }
+}
+static void fpu_save_real(void)
+{
+    _asm { clts }
+    _asm { fsave fpu_save }
+}
+static void fpu_enter(void)
+{
+    if (v86) {
+        fpu_probe_sw();
+        if (synth_sw_tmp > max_synth_sw) max_synth_sw = synth_sw_tmp;
+        fpu_reinit();
+        return;
+    }
+    fpu_save_real();
+}
+static void fpu_leave(void)
+{
+    if (v86) return;
+    _asm { frstor fpu_save }
+}
 static unsigned char api_stack[3072];
 static unsigned saved_ss, saved_sp;
 static volatile unsigned char in_api;
@@ -422,7 +478,12 @@ static int sb_open(void)
     mix_filter_saved = mixer_read(0x0E);
     mixer_write(0x22, 0xEE);
     mixer_write(0x04, 0xEE);
-    if (!keep_filter) mixer_write(0x0E, mix_filter_saved | 0x20);
+    /* Force MONO.  On a real SB Pro reg 0x0E bit 1 resets to mono, but SBEMU
+     * emulating the Live! can come up in stereo; then our single mono stream is
+     * split alternately L/R and each channel plays at half the rate -- exactly
+     * the half pitch heard on the Dell.  Always clear bit 1; bypass the ~3 kHz
+     * SB Pro output low-pass (bit 5) unless /K asked to keep it. */
+    mixer_write(0x0E, (unsigned char)((mix_filter_saved & ~0x02) | (keep_filter ? 0 : 0x20)));
     dsp_write(0xD1);                               /* speaker (DAC output) on       */
     dsp_write(0x10); dsp_write(0x80);
     return 1;
@@ -763,6 +824,7 @@ static void push_sample(double v)
         if (c < 2) c = 2; else if (c > pwm_top - 2) c = pwm_top - 2;
     }
     if (((ring_tail + 1) & RING_MASK) == ring_head) { n_overrun++; return; }
+    n_push++;
     ring[ring_tail] = (unsigned char)c;
     ring_tail = (ring_tail + 1) & RING_MASK;
 }
@@ -837,7 +899,11 @@ static void synth_frame(const unsigned char *f)
     int noise, fd, nf, n, pos, i;
     double pt, p, a, frac, v, o, x;
     const double two_pi = 6.28318530717958;
+    unsigned spnow;
     nf = S.furcsa ? 4 : 5;
+    n_synth++;
+    _asm { mov spnow, sp }
+    if (spnow < min_synth_sp) min_synth_sp = spnow;
 
     frame_params(f, S.furcsa, fc, bw, &amp, &pi, &noise, &fd);
     if (!S.have_prev) {
@@ -846,6 +912,9 @@ static void synth_frame(const unsigned char *f)
         S.have_prev = 1;
     }
     n = (int)((chip_timing ? FS_MS10[S.fs & 3] : STD_SAMPLES) * fs_hz / 10000.0 + 0.5) * FD_MULT[fd];
+    last_synth_n = n;                                   /* R4: prove n is 128, not the ~6 that ticks */
+    if (n >= 0 && (unsigned)n < min_synth_n) min_synth_n = (unsigned)n;
+    if (n > (int)max_synth_n) max_synth_n = (unsigned)n;
     /* The output low-pass follows the source: the voiced cutoff (F5 buzz) on
      * voiced frames, the wider noise cutoff on fricatives.  Two filters run
      * all the time and their outputs are crossfaded across the frame; bending
@@ -939,6 +1008,7 @@ static void synth_frame(const unsigned char *f)
     S.pitch = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
     S.prev_amp = amp;
+    n_synth_out++;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -961,7 +1031,13 @@ static void transaction_done(void)
     if (len == 5) {
         n_frames++;
         if (spk_state == SPK_PLAY && idle_ticks) n_underrun++;   /* ring ran dry between frames */
+        /* V86 (Jemm/HDPMI) traps FSAVE/FRSTOR and skips right past the call, so
+         * synth_frame never runs -- the exact "synth calls 0" seen on the Dell.
+         * Plain x87 is fine in V86 (the install chirp proves it), so synthesize
+         * directly there and save/restore the FPU only in real mode (the P166). */
+        fpu_enter();
         synth_frame(body);
+        fpu_leave();
     } else if (len == 2) {
         unsigned char c = body[1];
         n_ctrls++;
@@ -987,10 +1063,12 @@ static void wire_step(unsigned char bits)
     unsigned char data = bits & 1, clock = (bits >> 1) & 1;
     if (clock && w_clock) {                    /* clock held high: framing     */
         if (w_data && !data) {                 /* START (or repeated START)     */
+            n_start++;
             if (w_active) transaction_done();
             armed = 0;                         /* addressed: no longer at rest  */
             w_nbits = 0; w_bits = 0; w_ncur = 0; w_active = 1;
         } else if (data && !w_data) {          /* STOP                          */
+            n_stop++;
             if (w_active) transaction_done();
             w_nbits = 0; w_bits = 0; w_ncur = 0; w_active = 0;
         }
@@ -1114,20 +1192,18 @@ static void __cdecl api_dispatch(void)
     case 0xFC: handshake_reset(); break;
     case 0xF9: {                               /* retune: BL = /J, BH = /Y (FF = keep), CL = /M (0 = keep) */
         unsigned j = api_bx & 0xFF, y = (api_bx >> 8) & 0xFF, m = api_cx & 0xFF;
-        if (!v86) _asm { clts }
-        _asm { fsave fpu_save }
+        fpu_enter();
         if (j <= 9) { noise_lp_hz = NOISE_LP_TAB[j]; lp_design(FS, noise_lp_hz, LPN_A, LPN_B); }
         if (y <= 9) { voiced_lp_hz = NOISE_LP_TAB[y]; lp_design(FS, voiced_lp_hz, LP_A, LP_B); }
         if (m >= 1 && m <= 8) fifo_frames = (unsigned char)m;
-        _asm { frstor fpu_save }
+        fpu_leave();
         break;
     }
     case 0xFA: {
         static double tone_phase;
         unsigned n = api_cx > 1024 ? 1024 : api_cx, k;
         if (RING_SIZE - 1 - queued() < n) { api_bx = 0; break; }
-        if (!v86) _asm { clts }                /* faults in virtual-8086 mode   */
-        _asm { fsave fpu_save }
+        fpu_enter();
         for (k = 0; k < n; k++) {
             if (api_bx == 0) {
                 S.rng = S.rng * 1103515245UL + 12345UL;
@@ -1138,15 +1214,14 @@ static void __cdecl api_dispatch(void)
                 push_sample(0.9 * sin(tone_phase));
             }
         }
-        _asm { frstor fpu_save }
+        fpu_leave();
         api_bx = n;
         break;
     }
     default:
-        if (!v86) _asm { clts }                /* faults in virtual-8086 mode   */
-        _asm { fsave fpu_save }
+        n_wire_in++;                           /* wire steps use no x87 unless a frame completes */
         wire_step(api_ah & 3);
-        _asm { frstor fpu_save }
+        n_wire_out++;
         break;
     }
 }
@@ -1167,6 +1242,7 @@ static void __interrupt __far isr61(union INTPACK r)
     }
     api_ah = r.h.ah; api_al = r.h.al;
     api_bx = r.x.bx; api_cx = r.x.cx; api_dx = r.x.dx;
+    n_isr61++;
     if (in_api) {
         api_dispatch();                        /* nested: stay on this stack    */
     } else {
@@ -1238,18 +1314,36 @@ static void pit_speech(void)
     _enable();
 }
 
+/* The select (port 70h) and the data access (port 71h) must not be split by
+ * IRQ8: isr70 selects register 0Ch to clear the interrupt and does not put the
+ * old selection back, so a tick landing between our select and read would hand
+ * back register 0Ch instead.  Guard each pair; preserve the caller's interrupt
+ * flag (win_suspend/win_resume call these with interrupts already off). */
 static unsigned char cmos_read(unsigned char reg)
 {
+    unsigned char v; unsigned fl;
+    _asm { pushf
+           pop fl
+           cli }
     outp(0x70, reg);
     outp(0x80, 0);                             /* I/O delay: fast CPU, slow RTC */
-    return (unsigned char)inp(0x71);
+    v = (unsigned char)inp(0x71);
+    _asm { push fl
+           popf }
+    return v;
 }
 static void cmos_write(unsigned char reg, unsigned char v)
 {
+    unsigned fl;
+    _asm { pushf
+           pop fl
+           cli }
     outp(0x70, reg);
     outp(0x80, 0);
     outp(0x71, v);
     outp(0x80, 0);
+    _asm { push fl
+           popf }
 }
 /* Seconds since midnight from the clock chip, for the tick accounting in /S:
  * ticks lost to long interrupts-off stretches are invisible to every counter
@@ -1458,6 +1552,10 @@ static int wait_ready(void)
     }
 }
 
+/* read a resident byte / word back through the found data segment `ds` */
+#define R8(v)  (*(unsigned char far *)MK_FP(ds, (unsigned)&(v)))
+#define R16(v) (*(unsigned      far *)MK_FP(ds, (unsigned)&(v)))
+
 static int selftest(void)
 {
     static const unsigned char settings[2] = {0x20, 0x70};   /* DAC gain 3.5x, as TALKHUN */
@@ -1472,10 +1570,21 @@ static int selftest(void)
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD)
         cport = *(unsigned far *)MK_FP(ds, (unsigned)&card_port);
+    /* R2 wire-path probe: a bare START must clear armed and be decoded.  Read
+     * the resident decoder and counters back through ds. */
+    wire(3); wire(2);
+    sprintf(logbuf, "PA START: armed %u wclk %u wdat %u wact %u; isr61 %u in %u out %u start %u stop %u",
+            R8(armed), R8(w_clock), R8(w_data), R8(w_active),
+            R16(n_isr61), R16(n_wire_in), R16(n_wire_out), R16(n_start), R16(n_stop));
+    lg(logbuf);
     lg("P1 self-test: DAC 70h (or /G), pitch 2Eh, command 00 80");
     i2c_xfer(settings, 2);
     i2c_xfer(pitch, 2);
     i2c_xfer(ctl_go, 3);
+    sprintf(logbuf, "PB init sent: armed %u ncur %u singles %u; ctrls %u pitches %u frames %u; in %u out %u start %u stop %u",
+            R8(armed), R8(w_ncur), R16(singles), R16(n_ctrls), R16(n_pitches), R16(n_frames),
+            R16(n_wire_in), R16(n_wire_out), R16(n_start), R16(n_stop));
+    lg(logbuf);
     lg("P2 four sounds, 1 s each: /a/ voiced, /a/ on noise, low buzz, /i/ voiced");
     {
         volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
@@ -1518,6 +1627,12 @@ static int selftest(void)
         sprintf(logbuf, "P7 status after STOP: at once %02Xh, 0.2 s %02Xh, 1.2 s %02Xh (9Fh = stopped by the user, BFh = bad stop, DFh = still busy)", s1, s2, s3);
         lg(logbuf);
     }
+    sprintf(logbuf, "P9 synth %u out %u push %u overrun %u minSP %04X; n last %d min %u max %u fs %ld SW %04X; ring head %u tail %u",
+            R16(n_synth), R16(n_synth_out), R16(n_push), R16(n_overrun), R16(min_synth_sp),
+            (int)R16(last_synth_n), R16(min_synth_n), R16(max_synth_n),
+            (long)*(double far *)MK_FP(ds, (unsigned)&fs_hz), R16(max_synth_sw),
+            R16(ring_head), R16(ring_tail));
+    lg(logbuf);
     lg("P8 self-test done");
     printf("braispk: self-test played\r\n");
     return 0;
@@ -1657,6 +1772,28 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&armed),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_underrun),
            *(unsigned far *)MK_FP(ds, (unsigned)&n_overrun));
+    printf("         wire: isr61 %u, steps in %u out %u, START %u STOP %u, controls %u pitches %u frames %u\r\n",
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_isr61),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_wire_in),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_wire_out),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_start),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_stop),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_ctrls),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_pitches),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_frames));
+    printf("         synth: calls %u, returns %u, samples pushed %u, min synth SP %04X; ring head %u tail %u\r\n",
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_synth),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_synth_out),
+           *(unsigned far *)MK_FP(ds, (unsigned)&n_push),
+           *(unsigned far *)MK_FP(ds, (unsigned)&min_synth_sp),
+           *(unsigned far *)MK_FP(ds, (unsigned)&ring_head),
+           *(unsigned far *)MK_FP(ds, (unsigned)&ring_tail));
+    printf("         samples/frame n: last %d, min %u, max %u (want 128); fs %ld Hz; x87 SW on entry %04X\r\n",
+           (int)*(unsigned far *)MK_FP(ds, (unsigned)&last_synth_n),
+           *(unsigned far *)MK_FP(ds, (unsigned)&min_synth_n),
+           *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_n),
+           (long)*(double far *)MK_FP(ds, (unsigned)&fs_hz),
+           *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_sw));
     return 0;
 }
 
@@ -1758,7 +1895,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.36: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.41: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1847,6 +1984,7 @@ int main(int argc, char **argv)
             return 1;
         }
         if (v86) lg("2b virtual-8086 mode (a memory manager is loaded): CLTS skipped, x87 fine");
+        _asm { fnstcw fpu_cw }     /* remember the runtime's rounding so fpu_reinit() can restore it */
     }
 
     if (*bda_lpt1 == 0) *bda_lpt1 = 0x378;     /* TALKHUN refuses to bind to LPT 0 */
@@ -2011,9 +2149,11 @@ int main(int argc, char **argv)
     if (logging) {                             /* did the chirp drain: the speaker path ran */
         volatile unsigned long far *bios = (volatile unsigned long far *)MK_FP(0x40, 0x6C);
         unsigned long t0 = *bios, n = 0;
+        unsigned dp0 = dma_mode ? dma_played() : 0, dp1;
         while (queued() && *bios - t0 < 18 && ++n < 2000000L) ;
-        sprintf(logbuf, "6 chirp: %u samples still queued after %lu BIOS ticks, speaker state %u",
-                queued(), *bios - t0, spk_state);
+        dp1 = dma_mode ? dma_played() : 0;
+        sprintf(logbuf, "6 chirp: %u samples still queued after %lu BIOS ticks, speaker state %u; dma_played %u -> %u (want it to move), loops %lu",
+                queued(), *bios - t0, spk_state, dp0, dp1, n);
         lg(logbuf);
     }
     install_sec = cmos_seconds(); install_ticks = tick_count;
