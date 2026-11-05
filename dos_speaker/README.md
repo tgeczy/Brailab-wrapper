@@ -22,6 +22,7 @@ per-harmonic sum, because the sum does not fit a 166 in real time.
 | `pwmtest.c` | plays two tones through the speaker; proves the output stage alone |
 | `build.sh` | builds everything with Open Watcom (portable snapshot in `C:\WATCOM`) |
 | `dosbox_run.py` | runs the whole chain headless under DOSBox-X and captures WAVs |
+| `NOTES.md` | what real machines taught us: TALKHUN's INT 10h path, timers, the x87, sound cards |
 
 ## How TALKHUN is redirected
 
@@ -49,17 +50,15 @@ TALKHUN build is never silently corrupted. The archive copy is not modified.
   (that is what lets the start sequence carrying the pitch go out at all);
   back at rest after a STOP control. This is the pacing the JATEKOK games relied
   on: text does not advance until the utterance has been heard.
-- **Output**: the RTC's periodic interrupt (IRQ8) at 8192 Hz; each tick writes
-  one sample as a PIT channel-2 mode-0 count, 144 levels. Nothing else in the
-  machine is touched: not PIT channel 0, not the BIOS tick, not IO.SYS's or
-  TALKHUN's INT 08 hooks. The synth, the low-pass and the frame lengths are
-  designed for the rate in use, so the chip model is unchanged apart from the
-  4 kHz ceiling. `/I` selects the older route instead: IRQ0 at 1193182/119 =
-  10027 Hz with the old INT 08 chained every 551st tick, the re-hook done inside
-  the timer handler within one tick of anyone hooking above us, and no DOS calls
-  in resident code. That route worked under DOSBox-X and stopped the BIOS clock
-  on a real Pentium 166 running Windows 98's DOS, where IO.SYS sits on INT 08;
-  the RTC route exists because of that log.
+- **Output**: by default IRQ0 at 1193182/60 = 19886 Hz, two ticks a sample; each
+  tick writes a PIT channel-2 mode-0 count, 58 levels. The carrier sits above
+  hearing, and when IO.SYS holds INT 08 the BIOS entry is called directly. `/8`
+  selects the RTC's periodic interrupt (IRQ8) at 8192 Hz instead, 144 levels:
+  nothing else in the machine is touched, but the carrier is an audible whistle,
+  and the synth, the low-pass and the frame lengths are designed for that rate
+  with a 4 kHz ceiling. `/I` is the older IRQ0 route at 1193182/119 = 10027 Hz.
+  There are no DOS calls in resident code. `/B`, `/DMA`, `/E` and `/A` send the
+  samples elsewhere: see [NOTES.md](NOTES.md).
 - **Speaker ownership**: channel 2 and the gate are taken only while there is
   audio to play. The line is eased from the off level to the idle level over
   12 ms at the first sample, and given back (eased out, channel 2 returned to
@@ -151,4 +150,7 @@ kept up.
 - `SAY /T` under DOSBox-X: a plain mode-3 beep, the sentence, and a beep 110 ms
   after the text come out as two clean 1 kHz tones around the speech, the tail
   is silent, and no underruns are counted.
-- Not yet: the Pentium 166's real cone speaker, and a game session.
+- On a real Pentium 166: speech through the cone speaker and, as the daily
+  setup, through the Yamaha DAC with `/B`. DOS output reads aloud.
+- On a real Dell with an SB Live! under SBEMU: clear speech with `/DMA /8`.
+- Not yet: a full game session.
