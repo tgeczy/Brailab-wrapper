@@ -9,8 +9,9 @@ Addresses in TALKHUN are memory offsets in the `.COM` (file offset + 100h), in
 the build BRAISPK patches: `TALKHUN.COM`, 64,941 bytes, 20 June 2000. Nothing
 here applies unchecked to the 1991 `TALKHUN0.COM`.
 
-TALKHUN itself is not in this repository. `patch_talkhun.py` makes `TALKHUNS.COM`
-from your own copy, and refuses any build it doesn't recognise.
+TALKHUN itself is not in this repository. `patch_talkhun.py` fetches it from the
+[BraiLab PC archive](https://archive.org/details/brailab-pc-archive) or takes your
+own copy with `--from`, makes `TALKHUNS.COM`, and refuses any other build.
 
 ## How TALKHUN hears the screen
 

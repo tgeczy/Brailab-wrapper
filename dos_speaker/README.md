@@ -17,7 +17,7 @@ per-harmonic sum, because the sum does not fit a 166 in real time.
 | file | what |
 |---|---|
 | `braispk.c` | the TSR: INT 61h adapter API, wire decoder, synth, 10 kHz PWM timer |
-| `patch_talkhun.py` | makes `TALKHUNS.COM` from the archive's `TALKHUN.COM` |
+| `patch_talkhun.py` | makes `TALKHUNS.COM`: fetches `TALKHUN.COM` from archive.org, or `--from FILE` for your own copy |
 | `say.c` | `SAY.EXE`: feeds text and configuration to TALKHUN over INT 14h |
 | `pwmtest.c` | plays two tones through the speaker; proves the output stage alone |
 | `build.sh` | builds everything with Open Watcom (portable snapshot in `C:\WATCOM`) |
@@ -34,8 +34,9 @@ port access in the 64 KB of v4 goes through two places: the 2-wire primitive at
     5314  mov dx,[base] / inc dx / in al,dx                 ->  mov ah,0FFh / nop / nop / int 61h
     532a  jb 5319                                           ->  jb 5318
 
-It refuses any file whose bytes at those addresses differ, so a different
-TALKHUN build is never silently corrupted. The archive copy is not modified.
+It takes only the exact 64,941-byte file of 20 June 2000, checked by SHA-256,
+so a different TALKHUN build is never silently corrupted. The original is not
+modified. Run it on a modern PC, then copy `TALKHUNS.COM` to the DOS machine.
 
 ## The adapter, as the TSR models it
 
