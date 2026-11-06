@@ -12,52 +12,11 @@ The chip runs a periodic-pulse / noise excitation into five cascaded resonators
 gentle glottal tilt and an output low-pass.  Internal rate is 10 kHz; ask for any
 output rate and it band-limit-resamples.
 """
-import math
 import numpy as np
 
-RATE = 10000                 # the chip's internal speech rate (fixed by silicon)
-TILT_HZ = 600.0              # glottal source rolloff (tames the bright buzz)
-LOWPASS_HZ = 2600.0         # output low-pass
-
-#: Output high-pass, in hertz, and how many one-pole stages of it.
-#:
-#: A PCF8200 device drives an AC-coupled amplifier, which rolls off the bottom
-#: of the band -- but only the bottom.  An earlier version cut at 600 Hz, tuned
-#: against a recording of real hardware; that recording is a small speaker in a
-#: room, passing almost nothing below 250 Hz, so matching it removed the low end
-#: altogether.  Measured instead against the vendor's own TTS.dll, which reaches
-#: a sound card rather than a small cone, the target is 23.6% of the energy
-#: below 250 Hz; an unfiltered render puts 36.5% there.  The fault was never
-#: that the low end existed, only that there was half again too much of it,
-#: taking headroom the rest of the voice needed.
-#:
-#: This models a *device*.  Pass highpass=0 for the chip's own output.
-HIGHPASS_HZ = 90.0
-HIGHPASS_POLES = 3
-
-#: What fits back under the peaks once the deepest rumble is gone.  Cutting
-#: higher would free more headroom, at the price of the bass.
-HIGHPASS_MAKEUP = 0.9315
-
-#: Soft knee on the output stage, as a fraction of full scale.
-#:
-#: A real device's amplifier runs out of swing gradually; a fixed-point buffer
-#: stops dead, which is audible as static on the loudest points of speech.  Above
-#: this threshold the response bends, asymptotically approaching 1.0, so a device
-#: render can never reach full scale however it is later scaled.
-#:
-#: Part of the *device* model, like HIGHPASS_HZ: pass highpass=0 for the bare
-#: chip and no output stage is applied.
-SOFTKNEE = 0.75
-
-# butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
-# a0=1), hardcoded so no scipy is needed.  Regenerate with
-# scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if LOWPASS_HZ moves.
-_LP_SOS = (
-    (0.10631234573760745, 0.2126246914752149, 0.10631234573760745,
-     0.06533681044002995, 0.04055215548149342),
-    (1.0, 2.0, 1.0, 0.09087377369825426, 0.4472530945667702),
-)
+from .pcf8200_core import (Core, RATE, TILT_HZ, LOWPASS_HZ, HIGHPASS_HZ, HIGHPASS_POLES,
+                           HIGHPASS_MAKEUP, SOFTKNEE, NOISE_GAIN, SEED,
+                           soft_knee as _soft_knee)
 
 
 def _resample(x, src, dst):
@@ -77,19 +36,6 @@ def _resample(x, src, dst):
         Y[-1] = Y[-1].real
     return np.fft.irfft(Y, m) * (float(m) / n)
 
-
-
-def _soft_knee(sig, knee):
-    """Bend the top of the swing so a device render cannot reach full scale."""
-    if not knee or knee >= 1.0:
-        return sig
-    a = np.abs(sig)
-    if not (a > knee).any():
-        return sig
-    room = 1.0 - knee
-    return np.where(a > knee,
-                    np.sign(sig) * (knee + room * np.tanh((a - knee) / room)),
-                    sig)
 
 
 def _apply_highpass(sig, fc, rate):
@@ -113,8 +59,8 @@ def _apply_highpass(sig, fc, rate):
     return _soft_knee(sig * HIGHPASS_MAKEUP, SOFTKNEE)
 
 def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
-           lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=0.5,
-           seed=12345):
+           lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=NOISE_GAIN,
+           seed=SEED):
     """Render formant tracks to a float waveform (roughly -1..1).
 
     Parameters
@@ -134,97 +80,30 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     amp = np.broadcast_to(np.asarray(amp, dtype=float), (N,)).astype(float)
     pitch = np.broadcast_to(np.asarray(pitch, dtype=float), (N,)).astype(float)
     voiced = np.ones(N, bool) if voiced is None else np.asarray(voiced, bool)
-    FS = RATE
-    rng = np.random.default_rng(seed)
-
-    # ---- excitation: band-limited sawtooth (voiced) / noise (unvoiced) ----
-    p = np.clip(pitch, 40.0, 400.0)
-    phase = np.cumsum(p / FS)
-    phase = phase - np.floor(phase)
-    edge = FS * 0.5
-    KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
-    # One harmonic at a time, accumulated in order.  The same sum as a
-    # (samples x harmonics) matrix reduced along the harmonics -- but that
-    # reduction is pairwise, so its rounding depends on how many harmonics the
-    # matrix has, which depends on the lowest pitch in *this* call.  Summing
-    # sequentially, a harmonic beyond a sample's own cutoff adds an exact zero
-    # and the result no longer depends on KMAX: rendering any prefix of a track
-    # set gives the prefix of the full render, bit for bit, which is what lets
-    # a caller stream a growing utterance by re-rendering it and passing on
-    # only the new samples.  It also never materialises the matrix (30 MB for
-    # three seconds of speech).
-    vsrc = np.zeros(N)
-    for k in range(1, KMAX + 1):
-        w = np.clip((edge - p * k) / (edge * 0.16), 0.0, 1.0)
-        w = w * w * (3.0 - 2.0 * w)
-        vsrc += np.sin(2.0 * np.pi * phase * k) * (w / k)
-    vsrc *= -(2.0 / np.pi)
-    if source_tilt:                              # one-pole glottal tilt (voiced only)
-        ta = math.exp(-2.0 * math.pi * source_tilt / FS)
-        c0 = 1.0 - ta
-        vl = vsrc.tolist(); yp = 0.0
-        for i in range(N):
-            yp = c0 * vl[i] + ta * yp
-            vl[i] = yp
-        vsrc = np.asarray(vl)
-    exc = np.where(voiced, vsrc, rng.uniform(-noise_gain, noise_gain, N)) * amp
-
-    # ---- five-formant cascade (+ fused low-pass), manual per-sample loop ----
-    B1 = [(np.exp(-np.pi * bw[i] / FS) * (2.0 * np.cos(2.0 * np.pi * fc[i] / FS))).tolist()
-          for i in range(nf)]
-    B2 = [(-(np.exp(-np.pi * bw[i] / FS) ** 2)).tolist() for i in range(nf)]
-    xl = exc.tolist()
-    y1 = [0.0] * nf; y2 = [0.0] * nf
-    # Only the default cutoff is the fused, scipy-free pair of sections below.
-    # Any other cutoff is applied after the cascade instead -- running both
-    # would filter twice at two different frequencies.
+    # Only the default cutoff is the fused, scipy-free pair of sections.  Any
+    # other cutoff is applied after the cascade instead -- running both would
+    # filter twice at two different frequencies.
     lp = bool(lowpass) and abs(lowpass - LOWPASS_HZ) < 1e-6
-    if lp:
-        (lb0, lb1, lb2, la1, la2) = _LP_SOS[0]
-        (mb0, mb1, mb2, ma1, ma2) = _LP_SOS[1]
-        lz0 = lz1 = mz0 = mz1 = 0.0
-    # The device's three output high-pass poles ride in this same loop when
+    # The device's three output high-pass poles ride in the same loop when
     # nothing sits between the cascade and them (no resampling, no scipy
     # low-pass): three one-poles applied one after another per sample perform
     # exactly the operations _apply_highpass performs in three passes, in the
-    # same order, so the result is bit-identical -- minus two array
-    # allocations and three more Python traversals of every sample.
-    hp = bool(highpass) and rate == FS and (lp or not lowpass)
-    if hp:
-        ha = math.exp(-2.0 * math.pi * float(highpass) / rate)
-        hx1 = hy1 = hx2 = hy2 = hx3 = hy3 = 0.0
-    rng_nf = range(nf)
-    for k in range(N):
-        v = xl[k]
-        for i in rng_nf:
-            yn = v + B1[i][k] * y1[i] + B2[i][k] * y2[i]
-            y2[i] = y1[i]; y1[i] = yn; v = yn
-        if lp:
-            o = lb0 * v + lz0
-            lz0 = lb1 * v - la1 * o + lz1
-            lz1 = lb2 * v - la2 * o
-            v = mb0 * o + mz0
-            mz0 = mb1 * o - ma1 * v + mz1
-            mz1 = mb2 * o - ma2 * v
-        if hp:
-            hy1 = ha * (hy1 + v - hx1); hx1 = v
-            hy2 = ha * (hy2 + hy1 - hx2); hx2 = hy1
-            hy3 = ha * (hy3 + hy2 - hx3); hx3 = hy2
-            v = hy3
-        xl[k] = v
-    sig = np.asarray(xl)
+    # same order, so the result is bit-identical.
+    hp = bool(highpass) and rate == RATE and (lp or not lowpass)
+    core = Core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed, lowpass=lp,
+                highpass=highpass if hp else 0, gain=HIGHPASS_MAKEUP if hp else 1.0,
+                knee=SOFTKNEE if hp else 0.0)
+    sig = core.run(amp, pitch, voiced, fc, bw)
     if lowpass and not lp:
         # Non-default cutoff: needs scipy (optional); the default path above is
         # scipy-free.  This filters the cascade OUTPUT.  It used to be handed
         # `exc` -- the raw excitation -- which silently discarded every formant
         # and returned a lowpassed buzz for any cutoff but the default.
         from scipy.signal import butter, sosfilt
-        sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
-    if rate != FS:
-        sig = _resample(sig, FS, rate)
-    if hp:
-        sig = _soft_knee(sig * HIGHPASS_MAKEUP, SOFTKNEE)   # _apply_highpass's tail
-    else:
+        sig = sosfilt(butter(4, lowpass, 'low', fs=RATE, output='sos'), sig)
+    if rate != RATE:
+        sig = _resample(sig, RATE, rate)
+    if not hp:
         sig = _apply_highpass(sig, highpass, rate)
     return sig
 

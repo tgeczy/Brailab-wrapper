@@ -83,6 +83,8 @@ def main():
     open(os.path.join(eng, "__init__.py"), "w").close()
     for m in ENGINE_PY:
         shutil.copy2(os.path.join(EMU, m), os.path.join(eng, m))
+    shutil.copy2(os.path.join(ROOT, "pcf8200", "pcf8200_core.py"),
+                 os.path.join(eng, "pcf8200_core.py"))
     for pkg in DEPS:
         s = os.path.join(SITE, pkg)
         if not os.path.isdir(s):

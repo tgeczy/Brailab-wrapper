@@ -31,6 +31,8 @@ APP_PY = ["braipc.py", "brailab_device.py", "dos_host.py", "brai_synth.py",
           "chip_synth.py", "pcf8200.py", "pcf8200_tables.py", "talkhun.py"]
 for m in APP_PY:
     shutil.copy2(os.path.join(EMU, m), os.path.join(app, m))
+shutil.copy2(os.path.join(os.path.dirname(EMU), "pcf8200", "pcf8200_core.py"),
+             os.path.join(app, "pcf8200_core.py"))
 
 # Every app module is copied fresh above, so staleness can only come from not
 # running this script -- which is exactly what happened for v3.2: the bundle

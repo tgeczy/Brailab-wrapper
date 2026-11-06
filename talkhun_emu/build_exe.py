@@ -27,7 +27,7 @@ ENTRY = os.path.join(HERE, 'braipc.py')
 #: told; both are loaded at runtime rather than imported normally.
 COLLECT = ['unicorn', 'sounddevice', '_sounddevice_data']
 HIDDEN = ['scipy.signal', 'scipy.special', 'numpy',
-          'brailab_device', 'pcf8200', 'synth', 'talkhun']
+          'brailab_device', 'pcf8200', 'pcf8200_core', 'synth', 'talkhun']
 
 
 def main():
@@ -41,7 +41,8 @@ def main():
             '--distpath', DIST,
             '--workpath', os.path.join(HERE, 'build'),
             '--specpath', HERE,
-            '--paths', HERE]
+            '--paths', HERE,
+            '--paths', os.path.join(os.path.dirname(HERE), 'pcf8200')]
     for m in COLLECT:
         args += ['--collect-all', m]
     for m in HIDDEN:
