@@ -77,12 +77,58 @@ def load():
         lib.pcf8200_phase.restype = ctypes.c_double
         lib.pcf8200_noise_state.argtypes = [ctypes.c_void_p]
         lib.pcf8200_noise_state.restype = ctypes.c_uint32
+        lib.pcf8200_tracker_init.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Params), ctypes.c_int,
+                                             ctypes.c_int, ctypes.c_int, ctypes.c_double,
+                                             ctypes.c_int]
+        lib.pcf8200_tracker_init.restype = None
+        lib.pcf8200_tracker_pitch.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.pcf8200_tracker_pitch.restype = None
+        lib.pcf8200_tracker_speed.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        lib.pcf8200_tracker_speed.restype = None
+        lib.pcf8200_tracker_length.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        lib.pcf8200_tracker_frame.argtypes = [ctypes.c_void_p, ctypes.c_char_p, _c_double_p,
+                                              _c_double_p, _c_ubyte_p, _c_double_p, _c_double_p,
+                                              ctypes.c_int]
         _lib = lib
     return _lib
 
 
 def _doubles(a):
     return a.ctypes.data_as(_c_double_p)
+
+
+class NativeTracker:
+    """Frames to per-sample parameters, in C.  honour_fs=True is what the library's
+    PCF8200 does; honour_fs=False is the add-on's voice, which ignores the FS bits."""
+
+    def __init__(self, female=False, honour_fs=True, flat_pitch=False, time_scale=1.0,
+                 pitch_byte=46):
+        self.lib = load()
+        self.nf = 4 if female else 5
+        self._state = ctypes.create_string_buffer(self.lib.pcf8200_tracker_size())
+        self._params = params()
+        self.lib.pcf8200_tracker_init(self._state, ctypes.byref(self._params), int(female),
+                                      int(honour_fs), int(flat_pitch), time_scale, pitch_byte)
+
+    def pitch(self, byte):
+        self.lib.pcf8200_tracker_pitch(self._state, byte)
+
+    def speed(self, fs):
+        self.lib.pcf8200_tracker_speed(self._state, fs)
+
+    def frame(self, data):
+        """(amp, pitch, voiced, fc, bw) for one 5-byte frame."""
+        data = bytes(data)
+        n = self.lib.pcf8200_tracker_length(self._state, data)
+        amp = np.empty(n)
+        pitch = np.empty(n)
+        voiced = np.empty(n, np.uint8)
+        fc = np.empty((self.nf, n))
+        bw = np.empty((self.nf, n))
+        self.lib.pcf8200_tracker_frame(self._state, data, _doubles(amp), _doubles(pitch),
+                                       voiced.ctypes.data_as(_c_ubyte_p), _doubles(fc),
+                                       _doubles(bw), n)
+        return amp, pitch, voiced.astype(bool), fc, bw
 
 
 class NativeCore:

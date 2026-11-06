@@ -48,11 +48,44 @@ typedef struct {
     uint32_t noise;
 } pcf8200_core;
 
+/* Turns the chip's 5-byte frames into the per-sample parameters pcf8200_run takes:
+ * each frame glides from the one before it. */
+typedef struct {
+    double rate, pitch_min_hz, pitch_max_hz;
+    int female;             /* the four-formant table */
+    int nf;
+    int honour_fs;          /* 0: every standard frame is 12.8 ms, whatever the FS bits say */
+    int flat_pitch;         /* hold the start pitch: no intonation */
+    int fs;
+    double time_scale;
+    double anchor, pitch;
+    int have_prev;
+    double prev_amp, prev_fc[PCF8200_MAX_FORMANTS], prev_bw[PCF8200_MAX_FORMANTS];
+} pcf8200_tracker;
+
+/* The largest frame: 17.6 ms at FD x5, in samples at 1:1 time scale. */
+#define PCF8200_MAX_FRAME_SAMPLES 880
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 PCF8200_API int pcf8200_core_size(void);
+PCF8200_API int pcf8200_tracker_size(void);
+
+PCF8200_API void pcf8200_tracker_init(pcf8200_tracker *t, const pcf8200_params *p, int female,
+                                      int honour_fs, int flat_pitch, double time_scale,
+                                      int pitch_byte);
+/* The chip's start-pitch command, and the FS bits of a control write. */
+PCF8200_API void pcf8200_tracker_pitch(pcf8200_tracker *t, int pitch_byte);
+PCF8200_API void pcf8200_tracker_speed(pcf8200_tracker *t, int fs);
+/* How many samples this frame will give. */
+PCF8200_API int pcf8200_tracker_length(const pcf8200_tracker *t, const uint8_t *frame);
+/* Write the frame's parameters and return their length.  amp, pitch, voiced: one value
+ * per sample.  fc, bw: nf rows, each `stride` values apart. */
+PCF8200_API int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *frame, double *amp,
+                                      double *pitch, uint8_t *voiced, double *fc, double *bw,
+                                      int stride);
 
 /* Returns 0, or -1 if nf is out of range. */
 PCF8200_API int pcf8200_init(pcf8200_core *c, int nf, const pcf8200_params *p);

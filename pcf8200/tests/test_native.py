@@ -9,11 +9,15 @@ audio can differ in the last bits; nothing else may.
 
 Skipped if the library hasn't been built (python csrc/build_native.py).
 """
+import os
 import random
+import subprocess
+import sys
 
 import numpy as np
 import pytest
 
+from pcf8200 import PCF8200
 from pcf8200 import pcf8200_core as core
 from pcf8200 import pcf8200_native as native
 
@@ -76,3 +80,56 @@ def test_c_matches_the_reference(kw, nf):
 def test_too_many_formants_is_refused():
     with pytest.raises(ValueError):
         native.NativeCore(6)
+
+
+def _commands(r, n):
+    """A random command stream: frames, pitch commands and speed changes.  It opens
+    with one of each command: PCF8200.tracks() starts from the last pitch and speed
+    given, not the first, so frames ahead of those would differ."""
+    out = [("pitch", r.randint(1, 255)), ("speed", r.randint(0, 3))]
+    for _ in range(n):
+        x = r.random()
+        if x < 0.08:
+            out.append(("pitch", r.randint(1, 255)))
+        elif x < 0.15:
+            out.append(("speed", r.randint(0, 3)))
+        else:
+            out.append(("frame", bytes(r.randrange(256) for _ in range(5))))
+    return out
+
+
+@pytest.mark.parametrize("female", [False, True])
+@pytest.mark.parametrize("time_scale", [1.0, 0.6, 1.37])
+def test_frames_match_the_library_exactly(female, time_scale):
+    """No maths library is involved here, so nothing may differ by even a bit."""
+    for seed in range(30):
+        r = random.Random(seed)
+        chip = PCF8200(voice="female" if female else "male")
+        chip.time_scale = time_scale
+        t = native.NativeTracker(female=female, honour_fs=True, time_scale=time_scale)
+        got = []
+        for kind, val in _commands(r, 60):
+            if kind == "pitch":
+                chip.pitch(val)
+                t.pitch(val)
+            elif kind == "speed":
+                chip.control(fs=val)
+                t.speed(val)
+            else:
+                chip.frame(val)
+                got.append(t.frame(val))
+        fc, bw, amp, p, voiced = chip.tracks()
+        if fc is None:
+            continue
+        assert np.array_equal(np.concatenate([g[0] for g in got]), amp)
+        assert np.array_equal(np.concatenate([g[1] for g in got]), p)
+        assert np.array_equal(np.concatenate([g[2] for g in got]), voiced)
+        for i in range(t.nf):
+            assert np.array_equal(np.concatenate([g[3][i] for g in got]), fc[i])
+            assert np.array_equal(np.concatenate([g[4][i] for g in got]), bw[i])
+
+
+def test_tables_header_is_current():
+    gen = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "csrc", "gen_tables.py")
+    subprocess.run([sys.executable, gen, "--check"], check=True)

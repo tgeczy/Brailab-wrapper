@@ -43,8 +43,9 @@ class PCF8200:
         self._seq = []                   # ('pitch',b) / ('frame',bytes5) / ('ctrl',bytes2)
 
     def _std_samples(self, fs):
-        """Samples in one standard frame at speed code `fs` (FS_TAB, ms)."""
-        return max(1, int(round(P.FS_TAB[fs & 3][1] * 0.001 * self.rate
+        """Samples in one standard frame at speed code `fs` (FS_TAB, ms).  Tracks are
+        always at the chip's own rate; `rate` only resamples the output."""
+        return max(1, int(round(P.FS_TAB[fs & 3][1] * 0.001 * RATE
                                 * self.time_scale)))
 
     # ---- the chip's commands ----

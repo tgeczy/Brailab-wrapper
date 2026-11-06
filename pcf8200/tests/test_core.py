@@ -78,3 +78,16 @@ def test_an_empty_block_changes_nothing():
     e = np.zeros(0)
     assert len(a.run(e, e, e.astype(bool), [e] * len(fc), [e] * len(fc))) == 0
     assert np.array_equal(a.run(amp, p, voiced, fc, bw), b.run(amp, p, voiced, fc, bw))
+
+
+def test_output_rate_does_not_change_the_length_in_seconds():
+    from pcf8200 import PCF8200
+    secs = []
+    for rate in (10000, 22050):
+        chip = PCF8200(rate=rate)
+        chip.pitch_hz(110)
+        for _ in range(40):
+            chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+        chip.stop()
+        secs.append(len(chip.render()) / rate)
+    assert abs(secs[0] - secs[1]) < 0.001

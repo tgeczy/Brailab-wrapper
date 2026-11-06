@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "pcf8200.h"
+#include "pcf8200_tables.h"
 
 #define PI 3.141592653589793
 
@@ -133,6 +134,126 @@ void pcf8200_run(pcf8200_core *c, const double *amp, const double *pitch,
 
         out[s] = soft_knee(v * q->gain, q->knee);
     }
+}
+
+/* ---- frames ------------------------------------------------------------ */
+
+#define STD_SAMPLES 128     /* the 12.8 ms standard frame at 10 kHz */
+#define MIN_SAMPLES 16      /* the shortest frame with the FS bits ignored */
+
+int pcf8200_tracker_size(void)
+{
+    return (int)sizeof(pcf8200_tracker);
+}
+
+void pcf8200_tracker_init(pcf8200_tracker *t, const pcf8200_params *p, int female,
+                          int honour_fs, int flat_pitch, double time_scale, int pitch_byte)
+{
+    memset(t, 0, sizeof *t);
+    t->rate = p->rate;
+    t->pitch_min_hz = p->pitch_min_hz;
+    t->pitch_max_hz = p->pitch_max_hz;
+    t->female = female;
+    t->nf = female ? 4 : 5;
+    t->honour_fs = honour_fs;
+    t->flat_pitch = flat_pitch;
+    t->time_scale = time_scale;
+    pcf8200_tracker_pitch(t, pitch_byte);
+}
+
+void pcf8200_tracker_pitch(pcf8200_tracker *t, int pitch_byte)
+{
+    t->anchor = pitch_byte * PCF8200_PITCH_HZ_PER_UNIT;
+    t->pitch = t->anchor;
+}
+
+void pcf8200_tracker_speed(pcf8200_tracker *t, int fs)
+{
+    t->fs = fs & 3;
+}
+
+static int field_fd(const uint8_t *f)
+{
+    return (((f[2] >> 7) & 1) << 1) | ((f[3] >> 7) & 1);
+}
+
+int pcf8200_tracker_length(const pcf8200_tracker *t, const uint8_t *f)
+{
+    const int mult = PCF8200_FD_MULT[field_fd(f)];
+    int n;
+    if (t->honour_fs) {
+        int std = (int)rint(PCF8200_FS_MS[t->fs] * 0.001 * t->rate * t->time_scale);
+        if (std < 1)
+            std = 1;
+        n = (int)rint((double)(std * mult));
+        return n < 1 ? 1 : n;
+    }
+    n = (int)rint(STD_SAMPLES * mult * t->time_scale);
+    return n < MIN_SAMPLES ? MIN_SAMPLES : n;
+}
+
+int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, double *pitch,
+                          uint8_t *voiced, double *fc, double *bw, int stride)
+{
+    const int f1 = f[0] & 0x1F, b1 = (f[0] >> 5) & 7;
+    const int pi = f[1] & 0x1F, b5 = (f[1] >> 5) & 3, f5 = (f[1] >> 7) & 1;
+    const int am = f[2] & 0x0F, f3 = (f[2] >> 4) & 7;
+    const int f2 = f[3] & 0x1F, b3 = (f[3] >> 5) & 3;
+    const int b2 = f[4] & 7, f4 = (f[4] >> 3) & 7, b4 = (f[4] >> 6) & 3;
+    const int nf = t->nf, n = pcf8200_tracker_length(t, f);
+    const double cur_amp = PCF8200_AMPL[am];
+    double cur_fc[PCF8200_MAX_FORMANTS], cur_bw[PCF8200_MAX_FORMANTS], target;
+    int i, s;
+
+    if (t->female) {
+        cur_fc[0] = PCF8200_FEMALE_F[0][f1];  cur_bw[0] = PCF8200_FEMALE_B[0][b1];
+        cur_fc[1] = PCF8200_FEMALE_F[1][f2];  cur_bw[1] = PCF8200_FEMALE_B[1][b2];
+        cur_fc[2] = PCF8200_FEMALE_F[2][f3];  cur_bw[2] = PCF8200_FEMALE_B[2][b3];
+        cur_fc[3] = PCF8200_FEMALE_F[3][f4];  cur_bw[3] = PCF8200_FEMALE_B[3][b4];
+    } else {
+        cur_fc[0] = PCF8200_MALE_F[0][f1];  cur_bw[0] = PCF8200_MALE_B[0][b1];
+        cur_fc[1] = PCF8200_MALE_F[1][f2];  cur_bw[1] = PCF8200_MALE_B[1][b2];
+        cur_fc[2] = PCF8200_MALE_F[2][f3];  cur_bw[2] = PCF8200_MALE_B[2][b3];
+        cur_fc[3] = PCF8200_MALE_F[3][f4];  cur_bw[3] = PCF8200_MALE_B[3][b4];
+        cur_fc[4] = PCF8200_MALE_F[4][f5];  cur_bw[4] = PCF8200_MALE_B[4][b5];
+    }
+    if (!t->have_prev) {
+        t->prev_amp = cur_amp;
+        for (i = 0; i < nf; i++) {
+            t->prev_fc[i] = cur_fc[i];
+            t->prev_bw[i] = cur_bw[i];
+        }
+        t->have_prev = 1;
+    }
+
+    if (t->flat_pitch) {
+        target = t->anchor;
+    } else {
+        target = t->pitch + PCF8200_PI[pi] * PCF8200_FD_MULT[field_fd(f)];
+        if (target < t->pitch_min_hz)
+            target = t->pitch_min_hz;
+        if (target > t->pitch_max_hz)
+            target = t->pitch_max_hz;
+    }
+
+    for (s = 0; s < n; s++) {
+        const double frac = (s + 0.5) / n;
+        amp[s] = t->prev_amp + (cur_amp - t->prev_amp) * frac;
+        pitch[s] = t->pitch + (target - t->pitch) * frac;
+        voiced[s] = pi != PCF8200_PI_NOISE;
+        for (i = 0; i < nf; i++) {
+            fc[i * stride + s] = t->prev_fc[i] + (cur_fc[i] - t->prev_fc[i]) * frac;
+            bw[i * stride + s] = t->prev_bw[i] + (cur_bw[i] - t->prev_bw[i]) * frac;
+        }
+    }
+
+    t->pitch = target;
+    t->prev_amp = cur_amp;
+    for (i = 0; i < nf; i++) {
+        t->prev_fc[i] = cur_fc[i];
+        t->prev_bw[i] = cur_bw[i];
+    }
+    return n;
 }
 
 double pcf8200_phase(const pcf8200_core *c)
