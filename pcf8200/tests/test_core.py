@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """The audio core is the same however its samples are split into blocks: that is
 what the add-on streams on, and what the C port will be held to."""
+import os
+
 import numpy as np
 import pytest
 
@@ -91,3 +93,11 @@ def test_output_rate_does_not_change_the_length_in_seconds():
         chip.stop()
         secs.append(len(chip.render()) / rate)
     assert abs(secs[0] - secs[1]) < 0.001
+
+
+def test_the_two_version_numbers_agree():
+    # They drifted apart once: 1.0.0 in the package, 1.1.3 in pyproject.toml.
+    import pcf8200
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")
+    with open(path, encoding="utf-8") as f:
+        assert 'version = "%s"' % pcf8200.__version__ in f.read()

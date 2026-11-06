@@ -22,8 +22,10 @@ TOOLCHAINS = {"x64": ("W64DEVKIT", [], "pei-x86-64"),
               "x86": ("W64DEVKIT_X86", ["-msse2", "-mfpmath=sse"], "pei-i386")}
 
 
-def build_windows():
+def build_windows(only=None):
     for arch, (key, extra, fmt) in TOOLCHAINS.items():
+        if only and arch != only:
+            continue
         bindir = os.environ.get(key)
         if not bindir:
             found = shutil.which("gcc") if arch == "x64" else None
@@ -58,4 +60,5 @@ def build_linux():
 
 
 if __name__ == "__main__":
-    build_windows() if os.name == "nt" else build_linux()
+    # an argument, x64 or x86, builds just that one
+    build_windows(*sys.argv[1:2]) if os.name == "nt" else build_linux()

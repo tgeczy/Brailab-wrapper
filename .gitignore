@@ -42,4 +42,5 @@ nvda_driver/brailabEmulated/_stage/
 
 # The C core, built by pcf8200/csrc/build_native.py
 pcf8200/_bin/
+pcf8200/dist/
 talkhun_emu/_bin/
