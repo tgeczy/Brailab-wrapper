@@ -41,6 +41,25 @@ def test_any_block_split_is_bit_identical(block, kw):
     assert np.array_equal(_run(block, **kw), whole)
 
 
+def test_noise_is_the_written_out_generator():
+    """Pinned: C has to produce exactly these, and a render depends on them."""
+    n = core.Noise(12345)
+    states = []
+    for _ in range(4):
+        n.block(1, 0.5)
+        states.append(n.x)
+    assert states == [3438011225, 2694051897, 755124627, 3795020523]
+    v = core.Noise(12345).block(1, 0.5)[0]
+    assert v == 3438011225 * (2.0 * 0.5 / 4294967296.0) - 0.5
+
+
+def test_noise_is_uniform_at_the_asked_level():
+    v = core.Noise().block(200000, 0.5)
+    assert v.min() >= -0.5 and v.max() < 0.5
+    assert abs(v.mean()) < 0.005
+    assert abs(v.std() - 0.5 / 3 ** 0.5) < 0.002
+
+
 def test_pitch_outside_the_range_is_held_to_it():
     n = 2000
     fc = [np.full(n, 700.0)]

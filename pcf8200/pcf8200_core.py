@@ -84,6 +84,38 @@ def soft_knee(sig, knee):
                     sig)
 
 
+class Noise:
+    """The noise source: xorshift32, one value per sample, voiced or not.
+
+    Written out so that C repeats it exactly.  The state starts as
+
+        x = (seed * 2654435761 + 1) mod 2**32, or 1 if that is 0
+
+    and each sample does, in 32-bit unsigned arithmetic,
+
+        x ^= x << 13;  x ^= x >> 17;  x ^= x << 5;
+        value = x * (2 * gain / 2**32) - gain;
+
+    which is uniform on [-gain, gain).  The chip's own noise generator is not
+    documented, so this models only its effect.  [model]
+    """
+
+    def __init__(self, seed=SEED):
+        self.x = ((seed * 2654435761 + 1) & 0xFFFFFFFF) or 1
+
+    def block(self, n, gain):
+        scale = 2.0 * gain / 4294967296.0
+        x = self.x
+        out = [0.0] * n
+        for i in range(n):
+            x ^= (x << 13) & 0xFFFFFFFF
+            x ^= x >> 17
+            x ^= (x << 5) & 0xFFFFFFFF
+            out[i] = x * scale - gain
+        self.x = x
+        return np.asarray(out)
+
+
 class Core:
     """One running chip.  run() takes the next block of per-sample parameters and
     returns its audio; every filter, the phase and the noise carry across calls,
@@ -98,7 +130,7 @@ class Core:
                  lowpass=True, highpass=HIGHPASS_HZ, gain=1.0, knee=0.0):
         self.nf = nf
         self.noise_gain = noise_gain
-        self.rng = np.random.default_rng(seed)
+        self.noise = Noise(seed)
         self.tilt = math.exp(-2.0 * math.pi * source_tilt / RATE) if source_tilt else None
         self.lowpass = bool(lowpass)
         self.ha = math.exp(-2.0 * math.pi * float(highpass) / RATE) if highpass else None
@@ -155,7 +187,7 @@ class Core:
         nf = self.nf
         p = np.clip(pitch, PITCH_MIN_HZ, PITCH_MAX_HZ)
         vsrc = self._voiced(p)
-        noise = self.rng.uniform(-self.noise_gain, self.noise_gain, n)
+        noise = self.noise.block(n, self.noise_gain)
         xl = (np.where(voiced, vsrc, noise) * amp).tolist()
 
         # ---- five-formant cascade (+ low-pass, high-pass), per-sample loop ----
