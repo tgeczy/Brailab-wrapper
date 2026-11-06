@@ -39,3 +39,6 @@ talkhun_emu/*.spec
 # emulated-addon build output (bundled deps + Arato's TALKHUN0.COM -- release only)
 /release/
 nvda_driver/brailabEmulated/_stage/
+
+# The C core, built by pcf8200/csrc/build_native.py
+pcf8200/_bin/

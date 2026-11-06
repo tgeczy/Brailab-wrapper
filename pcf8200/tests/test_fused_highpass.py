@@ -19,7 +19,10 @@ def _tracks():
     return v.tracks()
 
 
-def test_fused_highpass_is_bit_identical_to_three_passes():
+def test_fused_highpass_is_bit_identical_to_three_passes(monkeypatch):
+    # The three passes are Python, so this holds on the reference: C's exp() can
+    # differ from Python's in the last bit, which test_native.py allows for.
+    monkeypatch.setenv("PCF8200_BACKEND", "python")
     fc, bw, amp, p, voiced = _tracks()
     fused = render(fc, bw, amp, p, voiced)                 # default path: fused
     bare = render(fc, bw, amp, p, voiced, highpass=0)      # cascade + low-pass only

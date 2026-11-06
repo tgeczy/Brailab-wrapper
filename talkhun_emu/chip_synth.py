@@ -286,10 +286,10 @@ def _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt, seed,
     afterwards, so here lp_default False means cascade only."""
     # Makeup and knee are both the *amplifier*, so they arrive together: with
     # highpass=0 the caller asked for the bare chip and gets no output stage.
-    c = core.Core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
-                  lowpass=lp_default, highpass=highpass,
-                  gain=scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0),
-                  knee=CHIP_SOFTKNEE if highpass else 0.0)
+    c = core.make_core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
+                       lowpass=lp_default, highpass=highpass,
+                       gain=scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0),
+                       knee=CHIP_SOFTKNEE if highpass else 0.0)
     voiced = ~noise
     step = block if (block and block > 0) else N
     a = 0

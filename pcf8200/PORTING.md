@@ -92,8 +92,10 @@ profile of the same chip, sharing what it can:
 1. **One reference.** `pcf8200_core.py` is the audio core for both the library and the
    add-on, with the constants tagged by source. The track builders stay separate for now:
    the add-on ignores FS on purpose. Then the new noise generator, with one A/B for Tomi's ear.
-2. **The C core and its gate.** `pcf8200.c` with seeded random frame streams against the
-   reference, x64 and x86, every option. Tracks and frames in, PCM out.
+2. **The C core and its gate.** `csrc/pcf8200.c`, tested by `tests/test_native.py` on seeded
+   random sessions, x64 and x86, every option: phase and noise state exact, audio within
+   1e-9, PCM identical. `make_core` chooses C when the library is there; `PCF8200_BACKEND`
+   forces either. Still to come in C: frames in, with the tables and the track builder.
 3. **The wheel.** Backend switch, CI builds, the library's tests run on both backends.
 4. **TALKHUN without Unicorn.** Run TALKHUN0 on MAME's 8086 through `pc86`. Unicorn is the
    oracle: for a large text corpus, the frame bytes must match exactly.
@@ -112,6 +114,9 @@ hold-out that nothing is tuned on, as ssi263-speech does with its hold-out set.
 - `talkhun_emu/pcf8200.py` has the package's name, which is why the two suites can't run in
   one pytest and why `chip_synth` takes only `pcf8200_core`. Rename it when the track builders
   merge.
+- Speed on small devices: the C core spends its time in `sin`, about 40 calls a sample at a
+  low pitch. It runs some 80 times real time here. A recurrence would be far cheaper but
+  rounds differently, so it needs the gate's tolerance checked first.
 - Versions disagree: `__init__.py` says 1.0.0 and `pyproject.toml` 1.1.3. Fix both at the 2.0.
 - `TALKHUN0.COM` in the repository waits on Arató's answer. The add-on bundles it already.
 - The TTS.dll voice is 32-bit, so a 64-bit SAPI host needs a plan for it.

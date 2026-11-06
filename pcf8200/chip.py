@@ -14,7 +14,7 @@ output rate and it band-limit-resamples.
 """
 import numpy as np
 
-from .pcf8200_core import (Core, RATE, TILT_HZ, LOWPASS_HZ, HIGHPASS_HZ, HIGHPASS_POLES,
+from .pcf8200_core import (make_core, RATE, TILT_HZ, LOWPASS_HZ, HIGHPASS_HZ, HIGHPASS_POLES,
                            HIGHPASS_MAKEUP, SOFTKNEE, NOISE_GAIN, SEED,
                            soft_knee as _soft_knee)
 
@@ -90,9 +90,9 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     # exactly the operations _apply_highpass performs in three passes, in the
     # same order, so the result is bit-identical.
     hp = bool(highpass) and rate == RATE and (lp or not lowpass)
-    core = Core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed, lowpass=lp,
-                highpass=highpass if hp else 0, gain=HIGHPASS_MAKEUP if hp else 1.0,
-                knee=SOFTKNEE if hp else 0.0)
+    core = make_core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
+                     lowpass=lp, highpass=highpass if hp else 0,
+                     gain=HIGHPASS_MAKEUP if hp else 1.0, knee=SOFTKNEE if hp else 0.0)
     sig = core.run(amp, pitch, voiced, fc, bw)
     if lowpass and not lp:
         # Non-default cutoff: needs scipy (optional); the default path above is

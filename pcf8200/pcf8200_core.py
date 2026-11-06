@@ -18,6 +18,8 @@ Every uncertain constant is here, marked with where it came from:
     [model]   a modelling choice
 """
 import math
+import os
+
 import numpy as np
 
 RATE = 10000                 # [chip] internal speech rate
@@ -82,6 +84,25 @@ def soft_knee(sig, knee):
     return np.where(a > knee,
                     np.sign(sig) * (knee + room * np.tanh((a - knee) / room)),
                     sig)
+
+
+def make_core(nf, **kw):
+    """A Core: in C if the native library is here, otherwise this module's.  The
+    PCF8200_BACKEND environment variable forces one: python, or native."""
+    backend = os.environ.get('PCF8200_BACKEND', 'auto')
+    if backend != 'python':
+        try:
+            from . import pcf8200_native as native
+        except ImportError:
+            try:
+                import pcf8200_native as native
+            except ImportError:
+                native = None
+        if native is not None and native.load() is not None and nf <= native.MAX_FORMANTS:
+            return native.NativeCore(nf, **kw)
+        if backend == 'native':
+            raise OSError('PCF8200_BACKEND=native, but the C core is not available')
+    return Core(nf, **kw)
 
 
 class Noise:
