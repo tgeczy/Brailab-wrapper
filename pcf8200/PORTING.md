@@ -109,5 +109,9 @@ hold-out that nothing is tuned on, as ssi263-speech does with its hold-out set.
   more forgiving CPU than an 8086.
 - MAME's core: copy the extraction from ssi263-speech with its pin, or share it? Copying
   keeps this repository standing alone.
+- `talkhun_emu/pcf8200.py` has the package's name, which is why the two suites can't run in
+  one pytest and why `chip_synth` takes only `pcf8200_core`. Rename it when the track builders
+  merge.
+- Versions disagree: `__init__.py` says 1.0.0 and `pyproject.toml` 1.1.3. Fix both at the 2.0.
 - `TALKHUN0.COM` in the repository waits on Arató's answer. The add-on bundles it already.
 - The TTS.dll voice is 32-bit, so a 64-bit SAPI host needs a plan for it.

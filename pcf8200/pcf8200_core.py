@@ -180,7 +180,10 @@ class Core:
 
     def run(self, amp, pitch, voiced, fc, bw):
         """Audio for the next block.  amp, pitch (Hz) and voiced (bool) are arrays
-        of one length; fc and bw hold one such array per formant, in hertz."""
+        of one length; fc and bw hold one such array per formant, in hertz.
+
+        Both sources run on every sample, whichever one is heard: the phase and
+        the tilt advance through noise, and the noise through voicing."""
         n = len(amp)
         if n == 0:
             return np.zeros(0)
