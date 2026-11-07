@@ -1,8 +1,8 @@
 # Moving the PCF8200 to portable C
 
 The plan for taking the chip from Python to C, the way ssi263-speech did, without
-losing what the Python library gives people. Steps 1 to 4 below are done; the add-on
-and SAPI are not.
+losing what the Python library gives people. Steps 1 to 4 below are done, the add-on
+waits to be heard, and SAPI isn't started.
 
 ## What ssi263-speech does
 
@@ -106,7 +106,12 @@ profile of the same chip, sharing what it can:
    `talkhun_emu/csrc/talkhun_host.c` runs TALKHUN0 on MAME's 8086, 13 times faster. Against
    Unicorn, over 720 lines of the archive's own text, every byte value and random ESC
    settings: 395,958 frames, none different.
-5. **The NVDA add-on on C.** Drops numpy, scipy and Unicorn. Ships only after Tomi has heard it.
+5. **The NVDA add-on on C.** `talkhun_emu/csrc/brailab_voice.c` is the whole voice, text in and
+   PCM out, and `brailab_voice.py` is all the add-on carries of Python. The add-on drops numpy and
+   Unicorn, goes from 14.6 MB to 0.2 MB, and has both widths of the library, so it runs in 32-bit
+   NVDA too. Against the Python pipeline, over 663 texts with random settings: 17.4 million samples,
+   none different. `build.py --test` installs beside the released add-on, to compare by ear.
+   Ships only after Tomi has heard it.
 6. **SAPI, Linux, and BRAISPK's shared header.** SAPI: an emulated voice and a TTS.dll voice.
 
 Real-box findings are table changes at any step. Keep a set of real-box recordings as a

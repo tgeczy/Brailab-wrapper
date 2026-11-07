@@ -1,5 +1,6 @@
-"""Build talkhun.dll (or libtalkhun.so on Linux): TALKHUN0's host on MAME's 8086, into
-../_bin/.  Set W64DEVKIT and W64DEVKIT_X86 to the bin folders, as for pcf8200.
+"""Build talkhun.dll (or libtalkhun.so on Linux): TALKHUN0's host on MAME's 8086, the
+PCF8200 core, and the voice that joins them, into ../_bin/.  Set W64DEVKIT and
+W64DEVKIT_X86 to the bin folders, as for pcf8200.
 
 C++17 without exceptions or RTTI for the core; libstdc++ and libgcc are linked in, so
 the DLLs import only KERNEL32 and msvcrt.
@@ -14,25 +15,30 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BIN = os.path.join(os.path.dirname(HERE), "_bin")
 CPU = os.path.join(HERE, "cpu")
 CXX = ["-O2", "-std=c++17", "-fno-exceptions", "-fno-rtti", "-Wall", "-Wno-sign-compare"]
-CC = ["-O2", "-std=c99", "-Wall", "-Wextra"]
-INC = ["-I" + CPU, "-I" + HERE]
+CC = ["-O2", "-std=c99", "-ffp-contract=off", "-Wall", "-Wextra"]
+CHIP = os.path.join(os.path.dirname(os.path.dirname(HERE)), "pcf8200", "csrc")
+INC = ["-I" + CPU, "-I" + HERE, "-I" + CHIP]
 ALLOWED = {"KERNEL32.dll", "msvcrt.dll"}
-TOOLCHAINS = {"x64": ("W64DEVKIT", "pei-x86-64"), "x86": ("W64DEVKIT_X86", "pei-i386")}
+TOOLCHAINS = {"x64": ("W64DEVKIT", "pei-x86-64", []),
+              "x86": ("W64DEVKIT_X86", "pei-i386", ["-msse2", "-mfpmath=sse"])}
 
 
-def compile_and_link(gcc, gxx, out, obj_dir, env, link):
+def compile_and_link(gcc, gxx, out, obj_dir, env, link, extra=()):
     os.makedirs(obj_dir, exist_ok=True)
-    o1 = os.path.join(obj_dir, "i86_mame.o")
-    o2 = os.path.join(obj_dir, "talkhun_host.o")
-    subprocess.run([gxx] + CXX + INC + ["-fPIC", "-c", "-o", o1, os.path.join(CPU, "i86_mame.cpp")],
-                   check=True, env=env)
-    subprocess.run([gcc] + CC + INC + ["-fPIC", "-c", "-o", o2, os.path.join(HERE, "talkhun_host.c")],
-                   check=True, env=env)
-    subprocess.run([gxx, "-shared", "-o", out, o1, o2] + link, check=True, env=env)
+    objs = [os.path.join(obj_dir, "i86_mame.o")]
+    subprocess.run([gxx] + CXX + INC + ["-fPIC", "-c", "-o", objs[0],
+                                        os.path.join(CPU, "i86_mame.cpp")], check=True, env=env)
+    for source in (os.path.join(HERE, "talkhun_host.c"), os.path.join(HERE, "brailab_voice.c"),
+                   os.path.join(CHIP, "pcf8200.c")):
+        obj = os.path.join(obj_dir, os.path.basename(source)[:-2] + ".o")
+        subprocess.run([gcc] + CC + list(extra) + INC + ["-fPIC", "-c", "-o", obj, source],
+                       check=True, env=env)
+        objs.append(obj)
+    subprocess.run([gxx, "-shared", "-o", out] + objs + link, check=True, env=env)
 
 
 def build_windows():
-    for arch, (key, fmt) in TOOLCHAINS.items():
+    for arch, (key, fmt, extra) in TOOLCHAINS.items():
         bindir = os.environ.get(key)
         if not bindir:
             found = shutil.which("g++") if arch == "x64" else None
@@ -46,7 +52,7 @@ def build_windows():
         env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
         compile_and_link(os.path.join(bindir, "gcc.exe"), os.path.join(bindir, "g++.exe"), out,
                          os.path.join(out_dir, "obj"), env,
-                         ["-static", "-static-libstdc++", "-static-libgcc", "-s"])
+                         ["-static", "-static-libstdc++", "-static-libgcc", "-s"], extra)
         dump = subprocess.run([os.path.join(bindir, "objdump.exe"), "-p", out], env=env,
                               capture_output=True, text=True, check=True).stdout
         dlls = {ln.split(":", 1)[1].strip() for ln in dump.splitlines() if "DLL Name:" in ln}

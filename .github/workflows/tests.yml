@@ -52,6 +52,10 @@ jobs:
         env:
           PCF8200_BACKEND: native
 
+      # The voice's tests need TALKHUN0, so they skip here, but it must still build.
+      - name: Build the voice
+        run: python talkhun_emu/csrc/build_native.py
+
       # chip_synth's pitch control, which NVDA's capital pitch change rides on.
       # Needs numpy only -- the sequences are built in the tests rather than
       # captured, so no Unicorn and no TALKHUN.
