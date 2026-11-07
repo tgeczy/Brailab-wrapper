@@ -57,6 +57,27 @@ def main():
             raise SystemExit("the test build's renames no longer match")
 
     stage = os.path.join(HERE, "_stage")
+    lay_out(stage, name, engine, manifest, driver)
+
+    out_dir = os.path.join(ROOT, "release")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, "%s-%s.nvda-addon" % (name, version))
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
+        for dp, dns, fns in os.walk(stage):
+            dns[:] = [d for d in dns if d != "__pycache__"]
+            for f in fns:
+                full = os.path.join(dp, f)
+                z.write(full, os.path.relpath(full, stage))
+    shutil.rmtree(stage)
+    print("-> %s (%.2f MB)" % (out, os.path.getsize(out) / 1e6))
+
+
+def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=None):
+    """The add-on's files, unzipped, in `stage`: what the tests load, and what gets zipped."""
+    if manifest is None:
+        manifest = read(os.path.join(HERE, "manifest.ini"))
+    if driver is None:
+        driver = read(os.path.join(HERE, "synthDrivers", "brailabEmulated.py"))
     if os.path.isdir(stage):
         shutil.rmtree(stage)
     sd = os.path.join(stage, "synthDrivers")
@@ -79,18 +100,6 @@ def main():
     if not os.path.isfile(talkhun):
         raise SystemExit("TALKHUN0.COM not found in %s (Arato's file, release only)" % ARCHIVE_SRC)
     shutil.copy2(talkhun, os.path.join(stage, "archive", "TALKHUN0.COM"))
-
-    out_dir = os.path.join(ROOT, "release")
-    os.makedirs(out_dir, exist_ok=True)
-    out = os.path.join(out_dir, "%s-%s.nvda-addon" % (name, version))
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
-        for dp, dns, fns in os.walk(stage):
-            dns[:] = [d for d in dns if d != "__pycache__"]
-            for f in fns:
-                full = os.path.join(dp, f)
-                z.write(full, os.path.relpath(full, stage))
-    shutil.rmtree(stage)
-    print("-> %s (%.2f MB)" % (out, os.path.getsize(out) / 1e6))
 
 
 if __name__ == "__main__":

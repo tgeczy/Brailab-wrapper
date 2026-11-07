@@ -227,7 +227,8 @@ class SynthDriver(SynthDriver):
             self._bgThread.join(timeout=2)
         except Exception:
             pass
-        if not self._bgThread.is_alive():
+        # never under a render still running; and NVDA may terminate twice
+        if self._voice is not None and not self._bgThread.is_alive():
             self._voice.close()
         try:
             if self._player:
