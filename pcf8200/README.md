@@ -1,6 +1,6 @@
 # pcf8200 — a software Philips PCF8200 in Python
 
-A from-scratch, pure-**numpy** software model of the **Philips PCF8200** formant
+A from-scratch software model of the **Philips PCF8200** formant
 speech chip — the synthesiser behind the Hungarian **BraiLab** and the Spanish
 **Ciber232** talkers for the blind (early 1990s). Matched by ear and by
 measurement to real silicon.
@@ -14,10 +14,17 @@ Only dependency: **numpy**. (scipy is used *only* if you ask for a non-default
 output low-pass; the default path is scipy-free.)
 
 ```
-pip install numpy
-# then drop the pcf8200/ folder next to your script, or add it to sys.path
+pip install pcf8200-2.0.0-py3-none-<your platform>.whl
 import pcf8200
 ```
+
+The platform wheels (Windows 64- and 32-bit, Linux x86-64 and arm64) carry the core
+in C. The `any` wheel has no C and runs the numpy reference, on anything with numpy,
+and so does dropping this folder next to your script. Both give the same 16-bit PCM.
+Set `PCF8200_BACKEND=python` to force the reference, or `native` to insist on C.
+
+Version 2.0 changes the noise generator, so a given seed gives different noise samples
+than 1.x did. It is the same kind of noise.
 
 ---
 

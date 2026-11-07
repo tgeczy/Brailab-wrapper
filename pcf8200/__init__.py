@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""pcf8200 -- a software Philips PCF8200 formant speech synthesiser in pure numpy.
+"""pcf8200 -- a software Philips PCF8200 formant speech synthesiser.
 
 The PCF8200 is the formant chip behind the Hungarian BraiLab and the Spanish
 Ciber232 talkers for the blind (early 1990s).  This package is a from-scratch
@@ -37,7 +37,7 @@ from .protocol import (decode_frame, encode_frame, decode_control, control_byte,
 from .phonemes import VOWELS, POLISH, FRICATIVES
 from . import tables
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __all__ = ["PCF8200", "Chip", "Voice", "render", "write_wav",
            "decode_frame", "encode_frame", "decode_control", "control_byte",
            "frame_params", "nearest_code", "VOWELS", "POLISH", "FRICATIVES",
