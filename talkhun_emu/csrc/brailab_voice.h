@@ -16,7 +16,7 @@
 /* The most samples brailab_voice_read gives at a time. */
 #define BRAILAB_VOICE_BLOCK 4000
 
-/* In the text, a character CP852 hasn't got, such as a dash or a curly quote.  The engine
+/* In the text, a character CWI-2 hasn't got, such as a dash or a curly quote.  The engine
  * hears '?' for it, as it always has, but it doesn't end a clause as a real '?' does. */
 #define BRAILAB_VOICE_UNKNOWN 0x1A
 
@@ -30,7 +30,7 @@ extern "C" {
 TALKHUN_API brailab_voice *brailab_voice_create(const uint8_t *com, int len);
 TALKHUN_API void brailab_voice_destroy(brailab_voice *v);
 
-/* Start an utterance, dropping any unfinished one.  The text is in CP852.
+/* Start an utterance, dropping any unfinished one.  The text is in CWI-2 (see brailab_voice.encode).
  * pitch: a factor on the engine's own pitch, 1 leaves it.
  * time_scale: on the length of each frame, above 0 and at most 2; 1 leaves it.
  * furcsa: the weird voice.  intonation: 0 holds each clause at its start pitch.

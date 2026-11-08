@@ -49,7 +49,7 @@ static int is_delimiter(uint8_t c)
     return c != 0 && strchr(".,;:?!", c) != NULL;
 }
 
-/* What Python's str.strip() drops, as CP852: 0xFF is the no-break space. */
+/* What Python's str.strip() drops, as CWI-2 (CP437): 0xFF is the no-break space. */
 static int is_blank(uint8_t c)
 {
     return c == ' ' || (c >= 9 && c <= 13) || (c >= 0x1C && c <= 0x1F) || c == 0xFF;

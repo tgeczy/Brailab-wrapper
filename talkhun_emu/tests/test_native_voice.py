@@ -29,7 +29,9 @@ DELIMS = ".,;:?!"
 TEXTS = ["Jó napot kívánok.", "BraiLab PC", "Mennyi az idő? Fél öt.", "szász, cica, fecske, és",
          "1234, 56.", "A", "I", "kérem", "Ez egy mondat; és ez egy másik: vége!", "...", " , ",
          "a,b,c", "Ez – mondta – „idézet”… tovább.", "Egy hosszabb mondat, amely több tagmondatból áll, és elég hosszú ahhoz, hogy "
-         "egy blokknál is tovább tartson, mert sok szót kell kimondani benne egymás után."]
+         "egy blokknál is tovább tartson, mert sok szót kell kimondani benne egymás után.",
+         "segítőszoftverek, élő, ÁRVÍZTŰRŐ TÜKÖRFÚRÓGÉP."]
+HUNGARIAN = "áéíóöőúüűÁÉÍÓÖŐÚÜŰ"
 SETTINGS = [dict(),
             dict(pitch=2.0 ** 0.25, time_scale=0.625, gain=0.7),
             dict(pitch=2.0 ** -0.5, time_scale=0.35, gain=1.25),
@@ -105,6 +107,24 @@ def test_the_same_pcm_as_the_python_pipeline(old, voice, settings):
         got = list(voice.stream(text, **settings))
         assert [len(b) for b in got] == [len(b) for b in want], text
         assert got == want, text
+
+
+def test_the_engine_reads_cwi2():
+    """TALKHUN0 is from 1991: o and u double acute sit where CP437 has o and u circumflex."""
+    assert brailab_voice.encode("őűŐŰ") == b"\x93\x96\x93\x96"
+    assert brailab_voice.encode("áíóúÁÍÓÚ") == b"\xa0\xa1\xa2\xa3" * 2
+    assert brailab_voice.encode("éöüÉÖÜ") == b"\x82\x94\x81\x90\x99\x9a"
+    assert brailab_voice.encode("–") == b"\x1a"
+
+
+@pytest.mark.parametrize("letter", HUNGARIAN)
+def test_every_hungarian_letter_is_spoken_not_spelled(voice, letter):
+    """A byte the engine doesn't know, it spells out as a code ("kód 8b"): four times as long as a vowel.
+
+    Fed CP852, that is what o and u double acute and five capitals did, from 3.0 to 4.0.0."""
+    plain = len(b"".join(voice.stream("aa.")))
+    got = len(b"".join(voice.stream("a" + letter + "a.")))
+    assert got < 2.5 * plain, (letter, got, plain)
 
 
 def test_an_utterance_can_be_dropped_halfway(voice):

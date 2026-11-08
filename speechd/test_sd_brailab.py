@@ -5,7 +5,7 @@ The harness plays the server: it starts the module, speaks the protocol on its s
 driver would give it, so the module must be the add-on's voice:
 
   init     INIT loads, LIST VOICES has both voices, in Hungarian
-  speak    messages whole, including every Hungarian letter, typographic punctuation (UTF-8 to CP852 in C,
+  speak    messages whole, including every Hungarian letter, typographic punctuation (UTF-8 to CWI-2 in C,
            against Python's codec) and a lone capital
   set      rate, pitch and volume from SET (SSIP -100..100 to the driver's 0..100)
   furcsa   SET synthesis_voice picks the weird voice, and back

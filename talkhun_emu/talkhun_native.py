@@ -9,6 +9,9 @@ import platform
 import struct
 
 DELIMITERS = '.,;:?!'
+# TALKHUN0 reads CWI-2: CP437 with o and u double acute in the circumflex slots, capitals folded
+# (see brailab_voice.CWI2_FOLD).
+_CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
 _KINDS = ('frame', 'ctrl', 'pitch')
 _LENGTHS = (5, 2, 1)
 
@@ -65,7 +68,7 @@ class Talkhun:
 
     def feed(self, text):
         if isinstance(text, str):
-            text = text.encode('cp852', 'replace')
+            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
         if self.lib.talkhun_feed(self._t, text, len(text)):
             raise RuntimeError("feed did not return")
 
@@ -74,7 +77,7 @@ class Talkhun:
         if not text:
             return []
         if isinstance(text, str):
-            text = text.encode('cp852', 'replace')
+            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
         items = ctypes.POINTER(_Item)()
         n = self.lib.talkhun_capture(self._t, text, len(text), ctypes.byref(items))
         if n < 0:

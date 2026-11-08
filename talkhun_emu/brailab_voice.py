@@ -14,8 +14,18 @@ BLOCK = 4000
 RATE = 10000
 _short_p = ctypes.POINTER(ctypes.c_short)
 
-# BRAILAB_VOICE_UNKNOWN, for each character CP852 hasn't got
+# BRAILAB_VOICE_UNKNOWN, for each character CWI-2 hasn't got
 codecs.register_error("brailab_voice", lambda e: (b"\x1a" * (e.end - e.start), e.end))
+
+# TALKHUN0 (1991) reads CWI-2, the Hungarian DOS page from before CP852: CP437 with o and u double acute in the
+# slots of o and u circumflex.  The capitals CP437 hasn't got fold to the lowercase byte; the engine speaks words,
+# not case.  Fed as CP852, every one of these was spelled out as a code ("kód 8b").
+CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
+
+
+def encode(text):
+    """Text as the engine reads it."""
+    return text.translate(CWI2_FOLD).encode("cp437", "brailab_voice")
 
 
 def _lib_path():
@@ -65,7 +75,7 @@ class Voice:
 
     def begin(self, text, pitch=1.0, time_scale=1.0, furcsa=False, intonation=True, gain=1.0):
         if isinstance(text, str):
-            text = text.encode("cp852", "brailab_voice")
+            text = encode(text)
         if self.lib.brailab_voice_begin(self._v, text, len(text), pitch, time_scale,
                                         int(furcsa), int(intonation), gain):
             raise ValueError("a setting is out of range")
