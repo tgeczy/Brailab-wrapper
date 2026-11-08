@@ -24,7 +24,7 @@ import numpy as np
 
 RATE = 10000                 # [chip] internal speech rate
 TILT_HZ = 600.0              # [ear] glottal source rolloff (tames the bright buzz)
-LOWPASS_HZ = 2600.0          # [ear] output low-pass
+LOWPASS_HZ = 4200.0          # [ear] output low-pass (was 2600 to 2.0.0; see LP_SOS)
 NOISE_GAIN = 0.5             # [ear] level of the noise source
 SEED = 12345                 # [model] where the noise source starts
 PITCH_MIN_HZ = 40.0          # [model] floor of the pitch the source will follow
@@ -63,13 +63,21 @@ HIGHPASS_MAKEUP = 0.9315
 #: commutes with the block split.
 SOFTKNEE = 0.75
 
-# butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
+# butter(4, 4200, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so no scipy is needed.  Regenerate with
 # scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if LOWPASS_HZ moves.
+#
+# 2600 Hz was tuned against TTS.dll, where it hid an F5 buzz.  But the chip's own
+# frames put F4 near 3.25 kHz and F5 at 3.9 or 4.6 kHz, and Arato places his
+# vowels' microintonation in F4/F5 movement; 2600 cut all of it, which is the
+# muffled, "low sample rate" sound listeners heard.  4200 keeps F4 and F5 and
+# still rolls off before 5 kHz.  Chosen by ear in an A/B against 2600, 3400 and
+# TTS.dll's bandwidths; the source tilt stays at 600, since lowering it brings
+# back the buzz.
 LP_SOS = (
-    (0.10631234573760745, 0.2126246914752149, 0.10631234573760745,
-     0.06533681044002995, 0.04055215548149342),
-    (1.0, 2.0, 1.0, 0.09087377369825426, 0.4472530945667702),
+    (0.5142468489962791, 1.0284936979925583, 0.5142468489962791,
+     1.2128120926202175, 0.38400416228655304),
+    (1.0, 2.0, 1.0, 1.4797988943972162, 0.6886769530538613),
 )
 
 
