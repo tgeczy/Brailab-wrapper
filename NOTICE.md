@@ -55,7 +55,8 @@ those builds are likewise distributed in binary form only.
 ### Permissions
 
 - **2009 and 2010.** Permission to use the software BraiLab with NVDA, as
-  described publicly on nvda.hu in November 2010.
+  described publicly on nvda.hu in November 2010:
+  <https://www.nvda.hu/2010/11/04/tts-allapotjelentes/>
 - **August 2026.** Arató András and Vaspöri Teréz agreed to the BraiLab PC disk
   material being archived on the Internet Archive:
   <https://archive.org/details/brailab-pc-archive>
@@ -79,9 +80,11 @@ the questions asked are given.
 
 If you are a rights holder, including an institution where this software was
 developed, such as BME-TT or any other, and you disagree with this notice or
-would like to see the details of the permission, please open an issue:
-<https://github.com/tgeczy/Brailab-wrapper/issues>. We will answer promptly, and
-remove anything you ask us to.
+would like to see the details of the permission, please open an issue at
+<https://github.com/tgeczy/Brailab-wrapper/issues>, or, if you would rather not
+raise it in public, write to Géczy Tamás at the e-mail address on his GitHub
+profile, <https://github.com/tgeczy>. We will answer promptly, and remove anything
+you ask us to.
 
 ---
 
@@ -135,7 +138,8 @@ változatokat is csak lefordított formában terjesztjük.
 ### Engedélyek
 
 - **2009 és 2010.** Engedély a szoftveres BraiLab NVDA-val való használatára,
-  ahogyan az nvda.hu 2010. novemberi bejegyzése nyilvánosan leírja.
+  ahogyan az nvda.hu 2010. novemberi bejegyzése nyilvánosan leírja:
+  <https://www.nvda.hu/2010/11/04/tts-allapotjelentes/>
 - **2026. augusztus.** Arató András és Vaspöri Teréz hozzájárult, hogy a
   BraiLab PC lemezanyaga az Internet Archive-ra kerüljön:
   <https://archive.org/details/brailab-pc-archive>
@@ -160,5 +164,7 @@ kérdéseket adjuk meg.
 Ha Ön jogtulajdonos, ideértve azt az intézményt is, ahol ez a szoftver készült,
 például a BME-TT vagy bármely más intézmény, és nem ért egyet ezzel a
 közleménnyel, vagy szeretné látni az engedély részleteit, kérjük, nyisson egy
-bejelentést (issue-t): <https://github.com/tgeczy/Brailab-wrapper/issues>.
-Gyorsan válaszolunk, és amit kér, eltávolítjuk.
+bejelentést (issue-t): <https://github.com/tgeczy/Brailab-wrapper/issues>, vagy
+ha nem szeretné nyilvánosan felvetni, írjon Géczy Tamásnak a GitHub-profilján
+megadott e-mail-címre: <https://github.com/tgeczy>. Gyorsan válaszolunk, és amit
+kér, eltávolítjuk.
