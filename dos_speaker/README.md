@@ -1,5 +1,9 @@
 # BRAISPK — a BraiLab on the PC speaker
 
+[English](#english) · [Magyarul](#magyarul)
+
+## English
+
 A 16-bit DOS TSR that stands in for the BraiLab PC speech adapter. TALKHUN, the
 1991–2003 BraiLab screen reader, thinks it is clocking frames into a PCF8200 on
 the printer port; in fact it is talking to a few kilobytes of resident code that
@@ -17,7 +21,7 @@ per-harmonic sum, because the sum does not fit a 166 in real time.
 | file | what |
 |---|---|
 | `braispk.c` | the TSR: INT 61h adapter API, wire decoder, synth, 10 kHz PWM timer |
-| `patch_talkhun.py` | makes `TALKHUNS.COM`: fetches `TALKHUN.COM` from archive.org, or `--from FILE` for your own copy |
+| `patch_talkhun.py` | makes `TALKHUNS.COM` from `TALKHUN.COM`: the copy in `third_party/brailab/` by default, `--download` for archive.org, `--from FILE` for your own |
 | `say.c` | `SAY.EXE`: feeds text and configuration to TALKHUN over INT 14h |
 | `pwmtest.c` | plays two tones through the speaker; proves the output stage alone |
 | `build.sh` | builds everything with Open Watcom (portable snapshot in `C:\WATCOM`) |
@@ -37,6 +41,11 @@ port access in the 64 KB of v4 goes through two places: the 2-wire primitive at
 It takes only the exact 64,941-byte file of 20 June 2000, checked by SHA-256,
 so a different TALKHUN build is never silently corrupted. The original is not
 modified. Run it on a modern PC, then copy `TALKHUNS.COM` to the DOS machine.
+
+A ready-made `TALKHUNS.COM`, made by this script, sits in `third_party/brailab/`
+next to the original `TALKHUN.COM`. TALKHUN is Vaspöri Teréz and Arató András's
+work, included with their permission; the patched copy is clearly a modified
+version of it. See [`NOTICE.md`](../NOTICE.md).
 
 ## The adapter, as the TSR models it
 
@@ -155,3 +164,63 @@ kept up.
   setup, through the Yamaha DAC with `/B`. DOS output reads aloud.
 - On a real Dell with an SB Live! under SBEMU: clear speech with `/DMA /8`.
 - Not yet: a full game session.
+
+## Magyarul
+
+A BRAISPK egy 16 bites, rezidens DOS-program, amely a BraiLab PC beszédadapterét
+helyettesíti. A TALKHUN, a BraiLab 1991 és 2003 között használt képernyőolvasója,
+azt hiszi, hogy a nyomtatóporton egy PCF8200 chipnek küldi a beszédkereteket;
+valójában néhány kilobájtnyi rezidens kódnak beszél, amely szoftverben megvalósítja
+a chipet, és a PC saját hangszóróján szólaltatja meg az eredményt. Nem kell hozzá
+adapter, hangkártya vagy memóriakezelő; egy Pentium 166-nak bőven elég.
+
+A szintézis ugyanaz a modell, mint az NVDA-bővítményé: a PCF8200 öt formánsa a
+chip belső, 10 kHz-es ütemén, a chip saját kvantálási táblázataival.
+
+### Fájlok
+
+| fájl | mi ez |
+|---|---|
+| `braispk.c` | a rezidens program: az INT 61h adapter-felület, a vonali dekóder, a szintézis, a 10 kHz-es időzítő |
+| `patch_talkhun.py` | a `TALKHUN.COM`-ból elkészíti a `TALKHUNS.COM`-ot: alapból a `third_party/brailab/` példányból, `--download` kapcsolóval az archive.org-ról, `--from FÁJL` kapcsolóval a saját példányból |
+| `say.c` | `SAY.EXE`: szöveget és beállításokat küld a TALKHUN-nak az INT 14h-n át |
+| `pwmtest.c` | két hangot játszik a hangszórón; csak a kimeneti fokozatot ellenőrzi |
+| `build.sh` | mindent lefordít az Open Watcommal |
+| `dosbox_run.py` | a teljes láncot DOSBox-X alatt, képernyő nélkül futtatja, és WAV-fájlokat ment |
+| `NOTES.md` | amit a valódi gépek megtanítottak (angolul) |
+
+### A TALKHUN átirányítása
+
+A `patch_talkhun.py` a TALKHUN.COM 4. változatában (a 2000. június 20-i, 64 941
+bájtos fájlban, SHA-256-tal ellenőrizve) három helyen összesen 11 bájtot
+változtat meg: a nyomtatóportra küldött jelek így nem a BraiLab adapterhez,
+hanem a BRAISPK-hoz kerülnek (INT 61h). A beszéd szabályaihoz, a kiejtéshez és a
+hanglejtéshez nem nyúl. Az eredeti fájl változatlan marad.
+
+Egy kész `TALKHUNS.COM`, amelyet ez a program készített, a `third_party/brailab/`
+mappában található, az eredeti `TALKHUN.COM` mellett. A TALKHUN Vaspöri Teréz és
+Arató András munkája, az ő engedélyükkel szerepel itt; a módosított példány
+egyértelműen ennek módosított változata. Lásd: [`NOTICE.md`](../NOTICE.md).
+
+### Használat
+
+    BRAISPK              telepítés (BRAISPK /C: a chip saját keretidőzítésével)
+    TALKHUNS 1           a módosított képernyőolvasó, az „LPT1”-en
+    SAY /C               a beállítás, amelyet régen a HUN.BAT küldött COPY ... COM4-gyel
+    SAY Jó napot.        beszéd
+    SAY /F FÁJL.TXT      egy fájl felolvasása soronként
+    SAY /T               önteszt: sípszó, egy mondat, majd újabb sípszó
+    BRAISPK /P           önteszt: egy magánhangzó a szintézisen át, TALKHUN nélkül
+    BRAISPK /B           hang a Sound Blaster-kompatibilis DAC-on (220h)
+    BRAISPK /S           számlálók: keretek, vezérlések, alul- és túlcsordulások
+    BRAISPK /U           eltávolítás (amíg a TALKHUNS be van töltve, nem lehet: indítsa újra a gépet)
+
+Monitor nélküli gépen: a BRAISPK telepítéskor kéthangú csippanást ad (440, majd
+660 Hz); két rövid sípszó azt jelenti, hogy már be volt töltve, három pedig azt,
+hogy az INT 61h-t más program foglalja, ezért nem települt. Ezután betöltődik a
+TALKHUNS, a SAY /C kimondja, hogy „configured”, a `SAY Kesz.` pedig azt, hogy
+„Kész”. Nincs csippanás: a BRAISPK a hibás. Van csippanás, de nincs beszéd: a
+TALKHUNS vagy a SAY. Van beszéd, de rosszul szól: a szintézis.
+
+A többi kapcsoló (`/I`, `/8`, `/DMA`, `/E`, `/A`, `/L`, `/D`) és a részletek a
+fenti angol részben és a `NOTES.md` fájlban olvashatók.

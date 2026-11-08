@@ -12,8 +12,8 @@ JATEKOK/
 mode_sweep/
 
 # NVDA add-on: build output and the packaged bundle.  The bundle contains
-# TTS.dll and the ROM images, which are the BraiLab authors' and not cleared
-# for redistribution -- it is built for release, never committed.
+# TTS.dll and its data files, the BraiLab authors' work: they go out in
+# release packages only, never into the repository (see NOTICE.md).
 nvda_driver/**/build/
 nvda_driver/**/dist/
 *.nvda-addon
