@@ -20,11 +20,15 @@ The TSR answers INT 61h: AH=0FFh -> AL=status (0x30 busy / 0x20 ready, bit 5
 always set or TALKHUN reads a broken adapter and goes mute); any other AH ->
 port write with bits AH&3.  The original file is never modified.
 
-TALKHUN.COM is not distributed here.  By default it is fetched from the Internet
-Archive item its authors approved; --from uses your own copy instead.  Either way
-it has to be the exact file below.
+TALKHUN.COM is Vaspöri Teréz and Arató András's work.  It ships, with their
+permission, in third_party/brailab/ beside a ready-made TALKHUNS.COM (see
+NOTICE.md); this script is how that copy was made, and makes it again.  By default
+it reads the copy in third_party/brailab/; --download fetches it from the Internet
+Archive item its authors approved, and --from uses your own copy.  Either way it
+has to be the exact file below.
 
-    python patch_talkhun.py                      download, write TALKHUNS.COM here
+    python patch_talkhun.py                      third_party copy, write TALKHUNS.COM here
+    python patch_talkhun.py --download           fetch from archive.org instead
     python patch_talkhun.py --from TALKHUN.COM   use a local copy
     python patch_talkhun.py --out D:\\BRAILAB\\TALKHUNS.COM
 """
@@ -79,11 +83,17 @@ def patch(data, src, dst):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='Make TALKHUNS.COM for BRAISPK.')
+    here = os.path.dirname(os.path.abspath(__file__))
+    bundled = os.path.join(os.path.dirname(here), 'third_party', 'brailab', 'TALKHUN.COM')
     ap.add_argument('--from', dest='src', metavar='FILE',
-                    help='your own TALKHUN.COM instead of the archive.org copy')
+                    help='your own TALKHUN.COM instead of the one in third_party/brailab')
+    ap.add_argument('--download', action='store_true',
+                    help='fetch TALKHUN.COM from archive.org instead')
     ap.add_argument('--out', metavar='FILE', help='where to write (default: TALKHUNS.COM here)',
-                    default=os.path.join(os.path.dirname(os.path.abspath(__file__)), 'TALKHUNS.COM'))
+                    default=os.path.join(here, 'TALKHUNS.COM'))
     args = ap.parse_args()
+    if not args.src and not args.download and os.path.exists(bundled):
+        args.src = bundled
     if args.src:
         try:
             with open(args.src, 'rb') as f:
