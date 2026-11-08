@@ -2,7 +2,7 @@
 """TALKHUN0 on MAME's 8086 sends the adapter the same bytes as on Unicorn.
 
 Needs what is not in the repository, so it skips without it: the program itself
-(BRAILAB_ARCHIVE or ../BRAILAB-archive), Unicorn, and the built library.
+(BRAILAB_ARCHIVE, else ../third_party/brailab), Unicorn, and the built library.
 """
 import os
 import sys
@@ -13,7 +13,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import talkhun_native as native                          # noqa: E402
 
-ARCHIVE = os.environ.get('BRAILAB_ARCHIVE', os.path.join(os.path.dirname(HERE), 'BRAILAB-archive'))
+ARCHIVE = os.environ.get('BRAILAB_ARCHIVE', os.path.join(os.path.dirname(HERE), 'third_party', 'brailab'))
 COM = os.path.join(ARCHIVE, 'TALKHUN0.COM')
 
 pytestmark = pytest.mark.skipif(native.load_library() is None or not os.path.exists(COM),

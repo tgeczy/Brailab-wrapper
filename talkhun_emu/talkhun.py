@@ -335,8 +335,8 @@ class Talkhun:
 def load(com_path=None):
     """Build an installed engine ready to synthesize.
 
-    Looks where BRAILAB_ARCHIVE points before falling back to the checkout
-    layout, and accepts either TALKHUN0.COM or TALKHUN.COM -- a packaged copy
+    Looks where BRAILAB_ARCHIVE points before falling back to the checkout's
+    third_party/brailab (then BRAILAB-archive), and accepts either TALKHUN0.COM or TALKHUN.COM -- a packaged copy
     will usually carry only the one its owner had.
     """
     if com_path is None:
@@ -344,8 +344,9 @@ def load(com_path=None):
         env = os.environ.get('BRAILAB_ARCHIVE')
         if env:
             roots.append(env)
-        roots.append(os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), 'BRAILAB-archive'))
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        roots.append(os.path.join(repo, 'third_party', 'brailab'))
+        roots.append(os.path.join(repo, 'BRAILAB-archive'))
         for root in roots:
             for name in ('TALKHUN0.COM', 'TALKHUN.COM'):
                 p = os.path.join(root, name)

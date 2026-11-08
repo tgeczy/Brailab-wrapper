@@ -74,11 +74,11 @@ for extra in ("cffi", "_cffi_backend", "pycparser"):
         for pyd in glob.glob(os.path.join(SITE, extra + "*.pyd")):
             shutil.copy2(pyd, os.path.join(lib, os.path.basename(pyd)))
 
-# 4) archive: Arato's TALKHUN (release only).  boot() loads TALKHUN.COM (v4);
+# 4) archive: Arato and Vaspori's TALKHUN, from third_party/brailab (NOTICE.md).  boot() loads TALKHUN.COM (v4);
 # talkhun.load() accepts either.  Ship both -- they're ~110 KB together.
 arch = os.path.join(OUT, "archive"); os.makedirs(arch)
 for tk in ("TALKHUN.COM", "TALKHUN0.COM"):
-    shutil.copy2(os.path.join(ROOT, "BRAILAB-archive", tk), os.path.join(arch, tk))
+    shutil.copy2(os.path.join(ROOT, "third_party", "brailab", tk), os.path.join(arch, tk))
 
 # 5) launcher
 cmd = (

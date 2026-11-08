@@ -7,9 +7,9 @@ Console application on purpose.  Keyboard input goes through msvcrt and the
 program's own screen is the console, so a windowed build would have nowhere to
 type and nothing to show.
 
-TALKHUN.COM is deliberately NOT bundled.  It is the BraiLab authors' work, not
-ours to redistribute; the emulator looks for it via the BRAILAB_ARCHIVE
-environment variable and says so when it cannot find it.
+TALKHUN.COM is not bundled into the exe.  It is Vaspori Terez and Arato
+Andras's work, kept in third_party/brailab with their permission (NOTICE.md);
+the emulator finds it there, or via the BRAILAB_ARCHIVE environment variable.
 """
 import os
 import shutil

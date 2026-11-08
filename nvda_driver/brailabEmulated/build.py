@@ -23,7 +23,7 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))                 # repo root
 EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
-ARCHIVE_SRC = os.path.join(ROOT, "BRAILAB-archive")           # TALKHUN0.COM (not in git)
+ARCHIVE_SRC = os.path.join(ROOT, "third_party", "brailab")    # TALKHUN0.COM (NOTICE.md)
 ENGINE = "_brailab_native"
 MAME_LICENSE = os.path.join(EMU, "csrc", "cpu", "mame_i86", "LICENSE-BSD-3-Clause.txt")
 
@@ -98,7 +98,7 @@ def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=
         shutil.copy2(dll, os.path.join(eng, "_bin", arch))
     talkhun = os.path.join(ARCHIVE_SRC, "TALKHUN0.COM")
     if not os.path.isfile(talkhun):
-        raise SystemExit("TALKHUN0.COM not found in %s (Arato's file, release only)" % ARCHIVE_SRC)
+        raise SystemExit("TALKHUN0.COM not found in %s (Arato and Vaspori's file, see NOTICE.md)" % ARCHIVE_SRC)
     shutil.copy2(talkhun, os.path.join(stage, "archive", "TALKHUN0.COM"))
 
 
