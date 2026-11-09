@@ -53,6 +53,7 @@ CHIP_HIGHPASS_HZ = core.HIGHPASS_HZ
 CHIP_HIGHPASS_POLES = core.HIGHPASS_POLES
 CHIP_HIGHPASS_MAKEUP = core.HIGHPASS_MAKEUP
 CHIP_SOFTKNEE = core.SOFTKNEE
+CHIP_NOISE_GAIN = core.NOISE_GAIN
 
 
 def _interp_formants(prev, cur, frac, nf):
@@ -307,7 +308,7 @@ def _blsaw_only(source):
 
 def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                      ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
-                     pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                     pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                      source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                      highpass=CHIP_HIGHPASS_HZ,
                      flat_pitch=False, furcsa_override=None, **_ignored):
@@ -339,7 +340,7 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
 
 def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                        ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
-                       pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                       pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                        source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                        highpass=CHIP_HIGHPASS_HZ,
                        flat_pitch=False, furcsa_override=None, block=4000, **_ignored):

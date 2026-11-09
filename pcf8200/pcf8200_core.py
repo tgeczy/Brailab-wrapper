@@ -25,7 +25,8 @@ import numpy as np
 RATE = 10000                 # [chip] internal speech rate
 TILT_HZ = 600.0              # [ear] glottal source rolloff (tames the bright buzz)
 LOWPASS_HZ = 4200.0          # [ear] output low-pass (was 2600 to 2.0.0; see LP_SOS)
-NOISE_GAIN = 0.5             # [ear] level of the noise source
+NOISE_GAIN = 0.35            # [ear] level of the noise source (0.5 to 4.0.0; two listeners
+                             # preferred 0.35 at the 4200 Hz low-pass: clearer s/sz, not sharp)
 SEED = 12345                 # [model] where the noise source starts
 PITCH_MIN_HZ = 40.0          # [model] floor of the pitch the source will follow
 PITCH_MAX_HZ = 400.0         # [model] ceiling of the same
