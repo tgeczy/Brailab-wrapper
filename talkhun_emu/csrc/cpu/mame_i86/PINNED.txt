@@ -1,0 +1,28 @@
+MAME's 8086 core: where it comes from.
+
+Upstream:  https://github.com/mamedev/mame
+Revision:  c0d3677674339a489efbad881047012ce8c2cc96
+Path:      src/devices/cpu/i86/
+Licence:   BSD-3-Clause, per file (LICENSE-BSD-3-Clause.txt beside this file)
+Author:    Carl (the files' copyright-holders line)
+
+sha256 of the files as upstream stores them (LF line ends; the script normalises a Windows checkout's CRLF first):
+  i86.cpp      22138681b88981a49721944952f1eba4f060d0e0c924c194994847a46e062a7a
+               https://raw.githubusercontent.com/mamedev/mame/c0d3677674339a489efbad881047012ce8c2cc96/src/devices/cpu/i86/i86.cpp
+  i86inline.h  8c060f5f465811da6c9a8640c2ca9181d30fc386060f3521859245bb476187ec
+               https://raw.githubusercontent.com/mamedev/mame/c0d3677674339a489efbad881047012ce8c2cc96/src/devices/cpu/i86/i86inline.h
+  i86.h        274ebbde7817417c3add1534dce94d1ecaea8ddbc1c5f09a7c091828fb26c81a
+               https://raw.githubusercontent.com/mamedev/mame/c0d3677674339a489efbad881047012ce8c2cc96/src/devices/cpu/i86/i86.h
+
+Nothing is copied unchanged.  ../extract_i86_machine.py copies exact line ranges of i86.cpp and i86inline.h into
+../i86_mame_machine.cpp (generated: the inline helpers, the cycle tables, the constructor's tables, reset, an
+interrupt's entry, the input lines, calc_addr, execute_run's own opcodes and common_op), refusing to run unless each
+source's sha256 is the one above and every anchor line is in place; every change is named in the script and marked
+CHANGED in the output.  i86.h is restated, without the framework, in ../i86_mame.hpp (one class; the 8086 only).
+
+NOT taken: the constructors' framework parts, the address spaces, the state table and save states, the disassembler,
+execute_run's loop (our step driver in ../i86_mame.cpp follows it), and the 80186/80286 (i186.cpp, i286.cpp): the
+Accent-mini's driver is 8086 code (../README.md).
+
+To update: fetch the newer files, change REVISION and SHA256 in the script, move any anchors, re-run it and the tests
+(test_i86_contract.c, i86_controls.py, compare_i86_accent.py), and record the new revision here.

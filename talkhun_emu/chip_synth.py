@@ -20,87 +20,40 @@ Everything the theory disputes is switchable for A/B: `source` (pulse|saw),
 `a0` (chip vs normalised), `ampl_compress` (chip ~3 dB/code vs TTS.dll ~0.75).
 """
 import math
+import os
+import sys
+
 import numpy as np
 
 import pcf8200
 from pcf8200 import decode_frame, decode_control, FD_MULT
 from brai_synth import frame_params, active_tables  # renamed from 'synth' (too generic -> NVDA addon module clash)
 
-CHIP_RATE = 10000                      # internal speech rate (fixed by silicon)
+# The audio core is the library's.  The add-on carries the one file beside this
+# one; in the repository it sits in ../pcf8200.  Only that file, not the package:
+# this folder's own pcf8200.py has the package's name.
+try:
+    import pcf8200_core as core
+except ImportError:
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 'pcf8200'))
+    import pcf8200_core as core
+
+CHIP_RATE = core.RATE                  # internal speech rate (fixed by silicon)
 STD = int(round(0.0128 * CHIP_RATE))   # standard frame = 128 samples
 STEP = STD // 8                        # 16 samples = one of the 8 interp steps
 
 # Winning config, ear-matched to TTS.dll on Hungarian material 2026-08-28
 # (golyó + reggelt both judged "perfect to tts.dll").  See
-# memory/pcf8200-wobble-diagnosis.md for the full derivation.
-CHIP_TILT_HZ = 600.0                   # glottal source rolloff (tames the bright "rattle")
-CHIP_LOWPASS_HZ = 2600.0               # output low-pass (finishes the rattle removal)
-
-#: Output high-pass.  A PCF8200 device drives an AC-coupled amplifier, which
-#: rolls off the very bottom of the band -- but only the very bottom.  An
-#: earlier version of this cut at 600 Hz, tuned against a recording of real
-#: hardware; that recording is a small speaker in a room and passes almost
-#: nothing below 250 Hz, so matching it removed the low end altogether and the
-#: voice lost the weight TTS.dll still has around 75 Hz.
-#:
-#: TTS.dll is the better reference here, since it reaches a sound card rather
-#: than a two-inch cone: across four recordings it puts 23.6% of its energy
-#: below 250 Hz.  Our unfiltered render puts 36.5% there.  So the fault was
-#: never that the low end existed, only that there was half again too much of
-#: it, taking headroom the rest of the voice needed.  90 Hz trims the excess
-#: and keeps the bass -- 24.2% below 250 Hz, and the spectral distance from
-#: TTS.dll falls from 0.763 to 0.312.
-CHIP_HIGHPASS_HZ = 90.0
-CHIP_HIGHPASS_POLES = 3
-#: Cutting at 600 Hz freed a lot of headroom and could take x4.5 of makeup gain
-#: back.  Trimming only the deepest rumble frees almost none, so this is what
-#: fits under the peaks: slightly quieter, which is the cost of keeping the
-#: bass.  The rest is NVDA's volume slider.
-CHIP_HIGHPASS_MAKEUP = 0.9315
-
-#: Soft knee on the output stage, as a fraction of full scale.
-#:
-#: An amplifier runs out of swing gradually; int16 stops dead.  Every emulated
-#: build through 3.1.x hit that wall -- a say-all sentence clipped 120 samples,
-#: peaking 50% past the ceiling -- and it was audible as static on exactly the
-#: loud points of an intonation slide.  Above this threshold the response bends
-#: instead, asymptotically approaching 1.0, so the output can never reach the
-#: ceiling at any volume.  That is arithmetic, not a lucky test corpus.
-#:
-#: Measured against TTS.dll, our average level already matches it (RMS 0.103 vs
-#: 0.107); what differs is crest, 7.70 against 6.16.  TTS.dll is not limiting --
-#: it never exceeds 0.81 of full scale and has no flattened tops -- it simply has
-#: a less spiky waveform, and therefore headroom we lack.  The knee closes part
-#: of that gap, which is what makes room for the makeup gain above.
-#:
-#: At 0.75 it engages on 0.04% of samples (0.49% THD) and buys +1.2 dB.  Lower
-#: is louder and dirtier: 0.62 gives +2.25 dB at 1.42% THD.
-#: Memoryless, so it commutes with the block split and the streaming and
-#: whole-utterance paths stay bit-identical.
-CHIP_SOFTKNEE = 0.75
-
-
-def _soft_knee(x, knee):
-    """Bend the top of the swing instead of letting it hit the ceiling."""
-    if not knee or knee >= 1.0:
-        return x
-    a = np.abs(x)
-    over = a > knee
-    if not over.any():
-        return x
-    room = 1.0 - knee
-    bent = np.sign(x) * (knee + room * np.tanh((a - knee) / room))
-    return np.where(over, bent, x)
-
-# butter(4, 2600, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
-# a0=1), hardcoded so the default output low-pass needs no scipy at all.  A
-# non-default `lowpass` value falls back to a lazy scipy import.  Regenerate with
-# scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if CHIP_LOWPASS_HZ moves.
-_LP2600_SOS = (
-    (0.10631234573760745, 0.2126246914752149, 0.10631234573760745,
-     0.06533681044002995, 0.04055215548149342),
-    (1.0, 2.0, 1.0, 0.09087377369825426, 0.4472530945667702),
-)
+# memory/pcf8200-wobble-diagnosis.md for the full derivation, and pcf8200_core for
+# the reasoning behind each value.
+CHIP_TILT_HZ = core.TILT_HZ
+CHIP_LOWPASS_HZ = core.LOWPASS_HZ
+CHIP_HIGHPASS_HZ = core.HIGHPASS_HZ
+CHIP_HIGHPASS_POLES = core.HIGHPASS_POLES
+CHIP_HIGHPASS_MAKEUP = core.HIGHPASS_MAKEUP
+CHIP_SOFTKNEE = core.SOFTKNEE
+CHIP_NOISE_GAIN = core.NOISE_GAIN
 
 
 def _interp_formants(prev, cur, frac, nf):
@@ -264,10 +217,10 @@ def transpose_seq(seq, factor):
 
 def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
                  pitch_mode='cumulative', flat_pitch=False, furcsa_override=None):
-    """Shared cheap front half: per-sample parameter trajectories (pass 1) plus the
-    wrapped phase.  The expensive per-harmonic excitation is NOT built here -- it is
-    streamed per block in _render_blocks, so first-audio stays ~one block even for a
-    long paragraph.  Returns (amp, p, phase, noise, fc, bw, nf, N); N == 0 => empty."""
+    """Shared cheap front half: per-sample parameter trajectories (pass 1).  The
+    expensive per-harmonic excitation is NOT built here -- it is streamed per block
+    in _render_blocks, so first-audio stays ~one block even for a long paragraph.
+    Returns (amp, p, noise, fc, bw, nf, N); N == 0 => empty."""
     FS = CHIP_RATE
     r = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(r)
@@ -315,136 +268,47 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
         pitch = pt
         prev = cur
     if not a_amp:
-        return None, None, None, None, None, None, nf, 0
+        return None, None, None, None, None, nf, 0
     amp = np.concatenate(a_amp)
     p = np.concatenate(a_p)
     noise = np.concatenate(a_noise)
     fc = [np.concatenate(a_fc[i]) for i in range(nf)]
     bw = [np.concatenate(a_bw[i]) for i in range(nf)]
-    N = len(amp)
-    phase = np.cumsum(p / FS)
-    phase = phase - np.floor(phase)
-    return amp, p, phase, noise, fc, bw, nf, N
+    return amp, p, noise, fc, bw, nf, len(amp)
 
 
-def _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source, noise_gain,
-                   source_tilt, seed, scale, lp_default, block,
-                   highpass=CHIP_HIGHPASS_HZ):
-    """Band-limited excitation + one-pole source tilt + the five-formant cascade
-    (+ fused default low-pass), computed and YIELDED in ~`block`-sample float
-    arrays as it goes (block <= 0 => a single array).  EVERY state -- the tilt
-    one-pole, the cascade biquads, the low-pass biquads, and the noise RNG --
-    carries across blocks, so concatenating the yields is bit-identical to a single
-    pass.  Streaming the *excitation* (the per-harmonic sum, the render's biggest
-    cost) as well as the cascade is what keeps first-audio ~one block long even for
-    an 18 s paragraph.  Non-default lowpass is added by the caller afterwards, so
-    here lp_default False means cascade only.  Pulse source (A/B only) is cheap and
-    built whole up front."""
-    FS = CHIP_RATE
-    rng = np.random.default_rng(seed)
-    edge = FS * 0.5
-    blsaw = source in ('blsaw', 'saw')
-    if source_tilt:
-        ta = math.exp(-2.0 * math.pi * source_tilt / FS)
-        c0 = 1.0 - ta
-    if blsaw:
-        KMAX = max(1, int(edge / max(float(p.min()), 1e-6)))
-        kk = np.arange(1, KMAX + 1)
-    else:  # pulse: build + tilt the whole (cheap) source once
-        voiced_all = np.zeros(N)
-        pc = np.cumsum(p / FS)
-        idx = np.where(np.floor(pc[1:]) > np.floor(pc[:-1]))[0] + 1
-        voiced_all[idx] = 1.0
-        if source_tilt:
-            vl = voiced_all.tolist(); yp = 0.0
-            for k in range(N):
-                yp = c0 * vl[k] + ta * yp
-                vl[k] = yp
-            voiced_all = np.asarray(vl)
-    typrev = 0.0
-
-    # cascade + low-pass coefficients (whole; cheap)
-    B1 = []
-    B2 = []
-    for i in range(nf):
-        Bc = np.exp(-np.pi * bw[i] / FS)
-        Fc = 2.0 * np.cos(2.0 * np.pi * fc[i] / FS)
-        B1.append((Bc * Fc).tolist())
-        B2.append((-(Bc * Bc)).tolist())
-    y1 = [0.0] * nf
-    y2 = [0.0] * nf
-    rng_nf = range(nf)
-    if lp_default:
-        (lb0, lb1, lb2, la1, la2) = _LP2600_SOS[0]
-        (mb0, mb1, mb2, ma1, ma2) = _LP2600_SOS[1]
-        lz0 = lz1 = mz0 = mz1 = 0.0
-    # Output high-pass: three one-poles, state carried like everything else.
-    # A real PCF8200 device drives an AC-coupled amplifier into a small
-    # speaker, so the bottom of the band never reaches a listener; rendering
-    # without it leaves a third of the energy below 250 Hz, eating the
-    # headroom and making the voice boxy.  See CHIP_HIGHPASS_HZ.
-    hpa = math.exp(-2.0 * math.pi * float(highpass) / FS) if highpass else None
-    hx0 = hy0 = hx1 = hy1 = hx2 = hy2 = 0.0
+def _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt, seed,
+                   scale, lp_default, block, highpass=CHIP_HIGHPASS_HZ):
+    """The chip's audio, YIELDED in ~`block`-sample float arrays as it goes (block
+    <= 0 => a single array).  core.Core carries every state across blocks, so
+    concatenating the yields is bit-identical to a single pass.  Streaming the
+    excitation as well as the cascade is what keeps first-audio ~one block long
+    even for an 18 s paragraph.  Non-default lowpass is added by the caller
+    afterwards, so here lp_default False means cascade only."""
     # Makeup and knee are both the *amplifier*, so they arrive together: with
     # highpass=0 the caller asked for the bare chip and gets no output stage.
-    gain = scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0)
-    knee = CHIP_SOFTKNEE if highpass else 0.0
-
+    c = core.make_core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
+                       lowpass=lp_default, highpass=highpass,
+                       gain=scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0),
+                       knee=CHIP_SOFTKNEE if highpass else 0.0)
+    voiced = ~noise
     step = block if (block and block > 0) else N
-    if step <= 0:
-        step = max(1, N)
     a = 0
     while a < N:
         b = min(a + step, N)
-        # ---- excitation for [a:b] ----
-        if blsaw:
-            W = np.clip((edge - np.outer(p[a:b], kk)) / (edge * 0.16), 0.0, 1.0)
-            W = W * W * (3.0 - 2.0 * W)
-            Smat = np.sin(2.0 * np.pi * np.outer(phase[a:b], kk))
-            voiced = -(2.0 / np.pi) * (Smat * (W / kk)).sum(1)
-            if source_tilt:
-                vl = voiced.tolist(); yp = typrev
-                for k in range(len(vl)):
-                    yp = c0 * vl[k] + ta * yp
-                    vl[k] = yp
-                typrev = yp
-                voiced = np.asarray(vl)
-        else:
-            voiced = voiced_all[a:b]
-        exc = np.where(noise[a:b], rng.uniform(-noise_gain, noise_gain, b - a), voiced) * amp[a:b]
-        # ---- five-formant cascade (+ fused default low-pass) for [a:b] ----
-        xl = exc.tolist()
-        outb = [0.0] * (b - a)
-        for k in range(b - a):
-            j = a + k
-            v = xl[k]
-            for i in rng_nf:
-                yn = v + B1[i][j] * y1[i] + B2[i][j] * y2[i]
-                y2[i] = y1[i]
-                y1[i] = yn
-                v = yn
-            if lp_default:
-                o = lb0 * v + lz0                   # low-pass section 1
-                lz0 = lb1 * v - la1 * o + lz1
-                lz1 = lb2 * v - la2 * o
-                v = mb0 * o + mz0                    # low-pass section 2
-                mz0 = mb1 * o - ma1 * v + mz1
-                mz1 = mb2 * o - ma2 * v
-            if hpa is not None:
-                hy0 = hpa * (hy0 + v - hx0); hx0 = v; v = hy0
-                hy1 = hpa * (hy1 + v - hx1); hx1 = v; v = hy1
-                hy2 = hpa * (hy2 + v - hx2); hx2 = v; v = hy2
-            outb[k] = v
-        # The knee is memoryless, so applying it per block is identical to
-        # applying it to the whole utterance -- fast == stream by construction.
-        yield _soft_knee(np.array(outb) * gain, knee)
+        yield c.run(amp[a:b], p[a:b], voiced[a:b],
+                    [t[a:b] for t in fc], [t[a:b] for t in bw])
         a = b
 
+
+def _blsaw_only(source):
+    if source not in ('blsaw', 'saw'):
+        raise ValueError("source %r: the A/B sources are in render_chip" % (source,))
 
 
 def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                      ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
-                     pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                     pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                      source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                      highpass=CHIP_HIGHPASS_HZ,
                      flat_pitch=False, furcsa_override=None, **_ignored):
@@ -453,16 +317,17 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     loop (no scipy.lfilter per-call overhead).  Thin wrapper over _render_prep +
     _render_blocks so it shares exactly one code path with render_chip_stream."""
     FS = CHIP_RATE
-    amp, p, phase, noise, fc, bw, nf, N = _render_prep(
+    _blsaw_only(source)
+    amp, p, noise, fc, bw, nf, N = _render_prep(
         seq, ampl_compress=ampl_compress, time_scale=time_scale, real=real,
         pitch_byte=pitch_byte, pitch_mode=pitch_mode, flat_pitch=flat_pitch,
         furcsa_override=furcsa_override)
     if N == 0:
         return np.zeros(0)
     lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
-    sig = np.concatenate(list(_render_blocks(amp, p, phase, noise, fc, bw, nf, N,
-                                             source, noise_gain, source_tilt, seed,
-                                             scale, lp_default, 0, highpass)))
+    sig = np.concatenate(list(_render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain,
+                                             source_tilt, seed, scale, lp_default, 0,
+                                             highpass)))
     if lowpass and not lp_default:
         from scipy.signal import butter, sosfilt
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
@@ -475,7 +340,7 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
 
 def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                        ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=46,
-                       pitch_mode='cumulative', seed=12345, noise_gain=0.5, scale=1.0,
+                       pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                        source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                        highpass=CHIP_HIGHPASS_HZ,
                        flat_pitch=False, furcsa_override=None, block=4000, **_ignored):
@@ -499,12 +364,12 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         if len(x):
             yield x
         return
-    amp, p, phase, noise, fc, bw, nf, N = _render_prep(
+    _blsaw_only(source)
+    amp, p, noise, fc, bw, nf, N = _render_prep(
         seq, ampl_compress=ampl_compress, time_scale=time_scale, real=real,
         pitch_byte=pitch_byte, pitch_mode=pitch_mode, flat_pitch=flat_pitch,
         furcsa_override=furcsa_override)
     if N == 0:
         return
-    yield from _render_blocks(amp, p, phase, noise, fc, bw, nf, N, source,
-                              noise_gain, source_tilt, seed, scale, lp_default, block,
-                              highpass)
+    yield from _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt,
+                              seed, scale, lp_default, block, highpass)

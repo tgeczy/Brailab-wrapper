@@ -52,6 +52,10 @@ from unicorn.x86_const import (
     UC_X86_REG_SS, UC_X86_REG_IP, UC_X86_REG_EFLAGS,
 )
 
+#: TALKHUN0 reads CWI-2: CP437 with o and u double acute in the circumflex
+#: slots, capitals folded (see brailab_voice.CWI2_FOLD).
+_CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
+
 MEM_SIZE = 0x110000
 #: The installer's already-resident check walks every segment below CS, so a
 #: modest load segment keeps that scan short.
@@ -266,7 +270,7 @@ class Talkhun:
     def feed(self, text):
         """Push characters through the ESC parser without forcing a flush."""
         if isinstance(text, str):
-            text = text.encode('cp852', 'replace')
+            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
         for ch in text:
             self._call_int14(1, ch)
 
@@ -331,8 +335,8 @@ class Talkhun:
 def load(com_path=None):
     """Build an installed engine ready to synthesize.
 
-    Looks where BRAILAB_ARCHIVE points before falling back to the checkout
-    layout, and accepts either TALKHUN0.COM or TALKHUN.COM -- a packaged copy
+    Looks where BRAILAB_ARCHIVE points before falling back to the checkout's
+    third_party/brailab (then BRAILAB-archive), and accepts either TALKHUN0.COM or TALKHUN.COM -- a packaged copy
     will usually carry only the one its owner had.
     """
     if com_path is None:
@@ -340,8 +344,9 @@ def load(com_path=None):
         env = os.environ.get('BRAILAB_ARCHIVE')
         if env:
             roots.append(env)
-        roots.append(os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), 'BRAILAB-archive'))
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        roots.append(os.path.join(repo, 'third_party', 'brailab'))
+        roots.append(os.path.join(repo, 'BRAILAB-archive'))
         for root in roots:
             for name in ('TALKHUN0.COM', 'TALKHUN.COM'):
                 p = os.path.join(root, name)

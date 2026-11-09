@@ -21,7 +21,7 @@ OUT_DIR = os.path.join(ROOT, "release")
 
 #: What a user of the library needs. Tests and the build script itself stay out.
 FILES = [
-    "__init__.py", "chip.py", "device.py", "protocol.py", "tables.py",
+    "__init__.py", "chip.py", "pcf8200_core.py", "device.py", "protocol.py", "tables.py",
     "voice.py", "phonemes.py", "README.md", "LICENSE", "pyproject.toml",
 ]
 EXAMPLES = ["vowels.py", "frames.py", "polish.py"]
@@ -33,9 +33,9 @@ REQUIRED = [
     ("device.py", "time_scale", "v3.2: continuous rate control"),
     # The *value*, not just the name: v3.2 shipped this constant set to 600,
     # which was tuned against a speaker recording and gutted the low end.
-    ("chip.py", "HIGHPASS_HZ = 90.0", "v3.2.1: high-pass, corrected cutoff"),
-    ("chip.py", "HIGHPASS_MAKEUP = 0.9315", "v3.2.2: makeup, raised behind the knee"),
-    ("chip.py", "SOFTKNEE = 0.75", "v3.2.2: output stage cannot reach full scale"),
+    ("pcf8200_core.py", "HIGHPASS_HZ = 90.0", "v3.2.1: high-pass, corrected cutoff"),
+    ("pcf8200_core.py", "HIGHPASS_MAKEUP = 0.9315", "v3.2.2: makeup, raised behind the knee"),
+    ("pcf8200_core.py", "SOFTKNEE = 0.75", "v3.2.2: output stage cannot reach full scale"),
 ]
 
 

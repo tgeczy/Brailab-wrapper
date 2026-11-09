@@ -30,4 +30,4 @@ takes the bundle from ~158 MB to ~65 MB on disk / ~25 MB zipped.
 3. `python assemble.py`  ->  `BraiLabPC-portable/`
 
 `assemble.py` sets `python313._pth` so the bundle's Python finds `../app` and
-`../lib`, and copies Arato's TALKHUN from `../../BRAILAB-archive` (not in git).
+`../lib`, and copies Arató and Vaspöri's TALKHUN from `../../third_party/brailab` (see `NOTICE.md`).

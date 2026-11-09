@@ -225,8 +225,8 @@ class Session:
                b'P' + PITCHES[self.pitch][1].encode()]
         if self.furcsa:
             cfg.append(brailab_device.ESC_FURCSA_ON)
-        # The driver is not ours to ship, so it is looked up rather than
-        # bundled; point BRAILAB_ARCHIVE at wherever TALKHUN.COM lives.
+        # TALKHUN is Vaspori Terez and Arato Andras's work, in third_party/brailab
+        # with their permission (NOTICE.md); BRAILAB_ARCHIVE points elsewhere.
         self.host, self.dev = brailab_device.boot(
             os.path.dirname(self.path),
             archive_dir=os.environ.get('BRAILAB_ARCHIVE'), config=cfg)
@@ -543,8 +543,8 @@ def main():
         pass
     except (RuntimeError, IOError, OSError) as e:
         print('\ncould not start the speech driver: %s' % e)
-        print('TALKHUN.COM is not distributed with this emulator.  Put it in')
-        print('a folder and point BRAILAB_ARCHIVE at it, e.g.')
+        print('TALKHUN.COM was not found.  It ships in third_party\\brailab;')
+        print('to use another copy, point BRAILAB_ARCHIVE at its folder, e.g.')
         print('   set BRAILAB_ARCHIVE=C:\\path\\to\\brailab')
     finally:
         speaker.close()

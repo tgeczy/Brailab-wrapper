@@ -283,7 +283,7 @@ python speak.py "mama." f.wav --furcsa
 python speak.py "szia." s.wav --speed=4 --pitch=70
 ```
 
-Needs `TALKHUN0.COM` in `../BRAILAB-archive/`.
+Uses `TALKHUN0.COM` from `../third_party/brailab/` (see `../NOTICE.md`).
 
 ## Not done yet
 
@@ -335,5 +335,7 @@ same phrase, for direct comparison.
 - Rate control currently comes from `ESC S`, which has only four hardware
   speeds; 5–8 were software acceleration in the 2000 build.
 
-Rights: `BRAILAB-archive` is uncleared and must not be committed or
-redistributed. This directory contains only our own code.
+Rights: TALKHUN is Vaspöri Teréz and Arató András's work, in `../third_party/brailab/`
+with their permission (see `../NOTICE.md`). The rest of `BRAILAB-archive` (the 1996 CD,
+the games) is not cleared and must not be committed. This directory contains only our
+own code.

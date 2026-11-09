@@ -1,0 +1,208 @@
+# The pcf8200 wheels: Windows 64- and 32-bit, Linux x86-64 and arm64, and a pure wheel for
+# everything else.  Each platform runs the whole suite on the C core before its wheel is
+# built, then installs the wheel into a clean environment (pcf8200/test_wheel.py).
+#
+# The wheels go to an untagged draft release.  Nothing here publishes one, and a release
+# that is already published is left alone: this job fails instead.
+#
+# Windows uses the same w64devkit as local builds.  Linux builds in Debian 11 for a low
+# glibc floor; build_wheel.py reads the real floor from the library for the wheel's tag.
+name: Wheels
+
+on:
+  pull_request:
+    paths:
+      - "pcf8200/**"
+      - ".github/workflows/wheels.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # numpy may stop shipping some platform's wheel; never fall back to compiling it
+  PIP_ONLY_BINARY: numpy
+  W64DEVKIT_VERSION: "2.9.1"
+
+jobs:
+  windows:
+    name: Windows ${{ matrix.arch }}
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            plat: win_amd64
+            kit: x64
+            kit_var: W64DEVKIT
+            kit_sha256: 9208c19755cd4964b7915b9afcf02c66d493a4c870c4b3e83f6c538d9c1237a5
+          - arch: x86
+            plat: win32
+            kit: x86
+            kit_var: W64DEVKIT_X86
+            kit_sha256: 91017cbbb8766cb9b3094a9a461213ed809e9f06aa678257bf9bec32fed6b157
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: ${{ matrix.arch }}
+
+      - name: w64devkit
+        run: |
+          name="w64devkit-${{ matrix.kit }}-$W64DEVKIT_VERSION.7z.exe"
+          curl -fsSL -o "$RUNNER_TEMP/$name" \
+            "https://github.com/skeeto/w64devkit/releases/download/v$W64DEVKIT_VERSION/$name"
+          echo "${{ matrix.kit_sha256 }}  $RUNNER_TEMP/$name" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP/kit" "$RUNNER_TEMP/$name" > /dev/null
+          echo "${{ matrix.kit_var }}=$(cygpath -w "$RUNNER_TEMP/kit/w64devkit/bin")" >> "$GITHUB_ENV"
+
+      - name: Build the C core
+        run: python pcf8200/csrc/build_native.py ${{ matrix.arch }}
+
+      - name: The suite on the C core
+        run: |
+          pip install pytest numpy
+          python -m pytest pcf8200/tests -q
+        env:
+          PCF8200_BACKEND: native
+
+      - name: Build and test the wheel
+        run: |
+          python pcf8200/build_wheel.py --plat ${{ matrix.plat }}
+          python pcf8200/test_wheel.py pcf8200/dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.plat }}
+          path: pcf8200/dist/*.whl
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }} (Debian 11)
+    runs-on: ${{ matrix.runner }}
+    container: debian:bullseye
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    env:
+      LANG: C.UTF-8
+    steps:
+      # bullseye's security pool is gone though its index isn't, so the image's few
+      # security updates go back to bullseye's own versions, which the -dev packages match
+      - name: Debian 11's build packages
+        run: |
+          for s in bullseye bullseye-updates; do echo "deb http://deb.debian.org/debian $s main"; done \
+            > /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+          for s in bullseye bullseye-updates; do printf 'Package: *\nPin: release n=%s\nPin-Priority: 1001\n\n' "$s"; done \
+            > /etc/apt/preferences.d/bullseye
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y -q --allow-downgrades > apt-downgrade.log 2>&1 \
+            || { tail -n 20 apt-downgrade.log; exit 1; }
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends git ca-certificates \
+            gcc libc6-dev binutils python3 python3-venv
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Build the C core
+        run: python3 pcf8200/csrc/build_native.py
+
+      - name: The suite on the C core
+        run: |
+          python3 -m venv /tmp/env
+          /tmp/env/bin/pip install -q pytest numpy
+          /tmp/env/bin/python -m pytest pcf8200/tests -q
+        env:
+          PCF8200_BACKEND: native
+
+      - name: Build and test the wheel
+        run: |
+          /tmp/env/bin/python pcf8200/build_wheel.py --plat linux
+          /tmp/env/bin/python pcf8200/test_wheel.py pcf8200/dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-linux-${{ matrix.arch }}
+          path: pcf8200/dist/*.whl
+          if-no-files-found: error
+
+  pure:
+    name: Pure wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build and test the wheel
+        run: |
+          python pcf8200/build_wheel.py --plat any
+          python pcf8200/test_wheel.py pcf8200/dist/*.whl
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-any
+          path: pcf8200/dist/*.whl
+          if-no-files-found: error
+
+  draft:
+    name: Post to the draft release
+    needs: [windows, linux, pure]
+    # a pull request from a fork gets no write token
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          merge-multiple: true
+          path: dist
+
+      - name: Post the wheels
+        run: |
+          ls -l dist
+          [ "$(ls dist/*.whl | wc -l)" = 5 ] || { echo "expected five wheels"; exit 1; }
+          version=$(ls dist/*-none-any.whl | sed 's/.*pcf8200-\([^-]*\)-.*/\1/')
+          tag="pcf8200-v$version"
+          state=$(gh api "repos/$GH_REPO/releases?per_page=100" \
+                  --jq "[.[] | select(.tag_name == \"$tag\")][0].draft")
+          if [ "$state" = false ]; then
+            echo "$tag is already published; not touching it"
+            exit 1
+          elif [ "$state" = true ]; then
+            gh release edit "$tag" --target "$SHA"
+          else
+            printf 'Untagged draft from CI, built from %s. Not released.\n' "$SHA" > notes.md
+            gh release create "$tag" --draft --target "$SHA" \
+              --title "pcf8200 $version wheels" --notes-file notes.md
+          fi
+          gh release upload "$tag" dist/*.whl --clobber
