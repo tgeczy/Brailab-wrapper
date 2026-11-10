@@ -136,6 +136,37 @@ def _brailabSafeText(s: str) -> str:
 	return s.strip()
 
 
+# TTS.dll takes at most 512 characters in one call and stays silent on more, so
+# longer text goes to it in pieces.  A piece ends where a pause belongs: at the
+# end of a sentence if there is one in reach, otherwise after a comma, otherwise
+# between two words.  Only a single "word" longer than the limit is cut inside.
+_SENTENCE_BREAK_RE = re.compile(r"[.!?]+[)\]\"']*\s+")
+_CLAUSE_BREAK_RE = re.compile(r"[,;:]\s+")
+_WORD_BREAK_RE = re.compile(r"\s+")
+
+
+def _splitForEngine(text: str, limit: int = MAX_STRING_LENGTH) -> list:
+	pieces = []
+	text = text.strip()
+	while len(text) > limit:
+		window = text[:limit + 1]
+		cut = 0
+		for pattern in (_SENTENCE_BREAK_RE, _CLAUSE_BREAK_RE, _WORD_BREAK_RE):
+			ends = [m.end() for m in pattern.finditer(window) if m.end() <= limit]
+			if ends:
+				cut = ends[-1]
+				break
+		if not cut:
+			cut = limit
+		piece = text[:cut].strip()
+		if piece:
+			pieces.append(piece)
+		text = text[cut:].strip()
+	if text:
+		pieces.append(text)
+	return pieces
+
+
 # --- Background work queue ---
 
 class BgThread(threading.Thread):
@@ -462,7 +493,7 @@ class SynthDriver(SynthDriver):
 				self._applyBlockPitch(pitchAdj)
 
 			if text:
-				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
+				segments = _splitForEngine(text)
 				for seg in segments:
 					if not self.speaking:
 						break
@@ -529,7 +560,7 @@ class SynthDriver(SynthDriver):
 				self._applyBlockPitch(pitchAdj)
 
 			if text:
-				segments = [text[i:i + MAX_STRING_LENGTH] for i in range(0, len(text), MAX_STRING_LENGTH)]
+				segments = _splitForEngine(text)
 				for seg in segments:
 					if not self.speaking:
 						break
