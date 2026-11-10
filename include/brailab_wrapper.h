@@ -29,7 +29,11 @@ typedef struct BL_STATE BL_STATE;
 // - initValue: wrapper/engine-specific init parameter (kept for backward compatibility).
 BL_API BL_STATE* __cdecl bl_initW(const wchar_t* ttsDllPath, int initValue);
 
-// Free wrapper state.
+// Stop speaking and release the wrapper: its worker thread ends and its queues
+// are emptied.  TTS.dll itself stays loaded, because it starts threads it has no
+// way to end; a later bl_initW with the same DLL takes the engine up again
+// without initialising it twice.  So a host may switch away from this
+// synthesizer and back within one process.
 BL_API void __cdecl bl_free(BL_STATE* s);
 
 // Stop the current speech stream and clear pending output.

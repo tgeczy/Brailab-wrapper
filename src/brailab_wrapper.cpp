@@ -998,12 +998,64 @@ static void workerLoop(BL_STATE* s) {
 // ------------------------------------------------------------
 // Exports
 // ------------------------------------------------------------
+// The engine's own settings, as the starting point for ours.
+static void readSettingsFromEngine(BL_STATE* s) {
+	std::lock_guard<std::mutex> tg(s->ttsMtx);
+	int v = 0;
+	if (seh_ttsGetInt(s->ttsGetTempo, &v)) s->desiredTempo.store(v, std::memory_order_relaxed);
+	if (seh_ttsGetInt(s->ttsGetPitch, &v)) s->desiredPitch.store(v, std::memory_order_relaxed);
+	if (seh_ttsGetInt(s->ttsGetVolume, &v)) s->desiredVolume.store(v, std::memory_order_relaxed);
+}
+
+// TTS.dll cannot be shut down.  TTS_Init starts two threads inside it that run
+// for good, and it exports nothing that ends them.  Unloading it left those
+// threads asleep in code that was no longer mapped, two more with every bl_free,
+// and when TTS.dll had been the only user of winmm.dll that went with it, taking
+// our hooks along: after a bl_free, the next bl_initW in the same process gave a
+// voice that "spoke" into the real sound device and returned no audio at all.
+//
+// So bl_free does not unload it.  It stops everything of ours and parks the
+// state here, and a later bl_initW for the same TTS.dll takes it up again
+// without initialising the engine a second time.
+static BL_STATE* g_parked = nullptr;
+
+static BL_STATE* reviveParked(HMODULE mod) {
+	BL_STATE* s = g_parked;
+	if (!s || s->ttsModule != mod) return nullptr;
+	g_parked = nullptr;
+	FreeLibrary(mod);  // LoadLibraryW counted it again; the parked state already holds it
+
+	{
+		std::lock_guard<std::mutex> lk(s->cmdMtx);
+		s->quitting = false;
+		s->cmdQ.clear();
+		s->buildParts.clear();
+		s->buildActive = false;
+	}
+	{
+		std::lock_guard<std::mutex> g(s->outMtx);
+		clearOutputQueueLocked(s);
+	}
+	ResetEvent(s->stopEvent);
+	ResetEvent(s->doneEvent);
+	s->activeGen.store(0, std::memory_order_relaxed);
+	s->currentGen.store(0, std::memory_order_relaxed);
+	s->lastAudioTick.store(0, std::memory_order_relaxed);
+	readSettingsFromEngine(s);
+
+	g_state = s;
+	s->worker = std::thread(workerLoop, s);
+	return s;
+}
+
 extern "C" BL_API BL_STATE* __cdecl bl_initW(const wchar_t* ttsDllPath, int initValue) {
 	if (!ttsDllPath) return nullptr;
 	if (g_state) return nullptr;
 
 	HMODULE mod = LoadLibraryW(ttsDllPath);
 	if (!mod) return nullptr;
+
+	if (BL_STATE* revived = reviveParked(mod)) return revived;
 
 	auto* s = new BL_STATE();
 	s->ttsModule = mod;
@@ -1049,13 +1101,7 @@ extern "C" BL_API BL_STATE* __cdecl bl_initW(const wchar_t* ttsDllPath, int init
 	}
 
 	// Initialize desired settings from DLL if possible (defaults otherwise)
-	{
-		std::lock_guard<std::mutex> tg(s->ttsMtx);
-		int v = 0;
-		if (seh_ttsGetInt(s->ttsGetTempo, &v)) s->desiredTempo.store(v, std::memory_order_relaxed);
-		if (seh_ttsGetInt(s->ttsGetPitch, &v)) s->desiredPitch.store(v, std::memory_order_relaxed);
-		if (seh_ttsGetInt(s->ttsGetVolume, &v)) s->desiredVolume.store(v, std::memory_order_relaxed);
-	}
+	readSettingsFromEngine(s);
 
 	// Defaults for pacing if format unknown initially
 	s->bytesPerSec.store(22050, std::memory_order_relaxed);
@@ -1097,12 +1143,15 @@ extern "C" BL_API void __cdecl bl_free(BL_STATE* s) {
 		clearOutputQueueLocked(s);
 	}
 
-	if (s->doneEvent) CloseHandle(s->doneEvent);
-	if (s->stopEvent) CloseHandle(s->stopEvent);
-	if (s->ttsModule) FreeLibrary(s->ttsModule);
-
+	// Everything of ours has stopped.  TTS.dll stays loaded, with its events and
+	// this state, for the next bl_initW (see g_parked).
+	{
+		std::lock_guard<std::mutex> lk(s->cmdMtx);
+		s->buildParts.clear();
+		s->buildActive = false;
+	}
 	if (g_state == s) g_state = nullptr;
-	delete s;
+	g_parked = s;
 }
 
 extern "C" BL_API void __cdecl bl_stop(BL_STATE* s) {
