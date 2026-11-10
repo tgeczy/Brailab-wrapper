@@ -17,6 +17,34 @@ from autoSettingsUtils.driverSetting import BooleanDriverSetting
 from . import _brailab
 
 
+def _loadTranslation():
+	"""This add-on's own gettext catalog: locale/<language>/LC_MESSAGES/nvda.mo.
+
+	addonHandler.initTranslation() is the usual way, but on 64-bit NVDA this
+	driver runs inside the 32-bit bridge host, which has no add-on registry to
+	look the add-on up in.  It does have languageHandler, set to NVDA's language
+	before any driver loads, so reading the catalog directly works the same in
+	both processes.  The setting labels are built in the host and travel to NVDA
+	as plain strings, so the host is where they must be translated.
+
+	Without a catalog for the language, the English text is used.
+	"""
+	try:
+		import gettext
+		import languageHandler
+		lang = languageHandler.getLanguage() or ""
+		languages = [lang]
+		if "_" in lang:
+			languages.append(lang.split("_")[0])
+		localeDir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "locale")
+		return gettext.translation("nvda", localedir=localeDir, languages=languages, fallback=True).gettext
+	except Exception:
+		return lambda s: s
+
+
+_ = _loadTranslation()
+
+
 minRate = 0
 maxRate = 9
 
@@ -140,7 +168,8 @@ class SynthDriver(SynthDriver):
 			SynthDriver.VolumeSetting(minStep=25),
 			BooleanDriverSetting(
 				"useIntonation",
-				"&Use intonation",
+				# Translators: a checkbox in NVDA's voice settings; unchecked, the voice speaks in a monotone.
+				_("&Use intonation"),
 				defaultVal=True,
 				availableInSettingsRing=True
 			),
@@ -151,7 +180,8 @@ class SynthDriver(SynthDriver):
 		if self._commaSupported:
 			settings.append(BooleanDriverSetting(
 				"softComma",
-				"&Gentler comma intonation",
+				# Translators: a checkbox in NVDA's voice settings; checked, the pitch no longer jumps up before a comma.
+				_("&Gentler comma intonation"),
 				defaultVal=False,
 				availableInSettingsRing=True
 			))
@@ -181,7 +211,8 @@ class SynthDriver(SynthDriver):
 
 	from collections import OrderedDict
 	from synthDriverHandler import VoiceInfo
-	_voices = OrderedDict([("1", VoiceInfo("1", "Hungarian", "hu"))])
+	# Translators: the name of the only voice, in NVDA's voice list.
+	_voices = OrderedDict([("1", VoiceInfo("1", _("Hungarian"), "hu"))])
 
 	def _getAvailableVoices(self):
 		return self._voices
