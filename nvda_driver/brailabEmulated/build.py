@@ -21,6 +21,9 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(HERE))
+from po2mo import compile_mo  # noqa: E402
+
 ROOT = os.path.dirname(os.path.dirname(HERE))                 # repo root
 EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
 ARCHIVE_SRC = os.path.join(ROOT, "third_party", "brailab")    # TALKHUN0.COM (NOTICE.md)
@@ -100,6 +103,35 @@ def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=
     if not os.path.isfile(talkhun):
         raise SystemExit("TALKHUN0.COM not found in %s (Arato and Vaspori's file, see NOTICE.md)" % ARCHIVE_SRC)
     shutil.copy2(talkhun, os.path.join(stage, "archive", "TALKHUN0.COM"))
+    lay_out_locales(stage, test=(name != "brailabEmulated"))
+
+
+def lay_out_locales(stage, test=False):
+    """locale/<language>/: the catalog compiled to nvda.mo, and the translated manifest.
+
+    NVDA reads the summary and description from locale/<language>/manifest.ini when its
+    own language matches, and addonHandler.initTranslation() reads LC_MESSAGES/nvda.mo.
+    """
+    src = os.path.join(HERE, "locale")
+    for lang in sorted(os.listdir(src)) if os.path.isdir(src) else []:
+        po = os.path.join(src, lang, "LC_MESSAGES", "nvda.po")
+        if os.path.isfile(po):
+            messages = os.path.join(stage, "locale", lang, "LC_MESSAGES")
+            os.makedirs(messages)
+            shutil.copy2(po, messages)
+            compile_mo(po, os.path.join(messages, "nvda.mo"))
+        manifest = os.path.join(src, lang, "manifest.ini")
+        if os.path.isfile(manifest):
+            text = read(manifest)
+            if test:
+                # the test build's summary, as in main(): "(emulated, C test)" in every language
+                text, n = re.subn(r"(?m)^(summary = \"BraiLab PC \()([^,]+), PCF8200\)\"",
+                                  lambda m: '%s%s, C %s)"' % (m.group(1), m.group(2),
+                                                             "teszt" if lang == "hu" else "test"), text)
+                if n != 1:
+                    raise SystemExit("locale/%s/manifest.ini: the test build's rename no longer matches" % lang)
+            os.makedirs(os.path.join(stage, "locale", lang), exist_ok=True)
+            write(os.path.join(stage, "locale", lang, "manifest.ini"), text)
 
 
 if __name__ == "__main__":

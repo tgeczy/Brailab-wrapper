@@ -23,21 +23,37 @@ from autoSettingsUtils.driverSetting import BooleanDriverSetting
 
 from ._brailab_native import brailab_voice
 
+# Point `_` at this add-on's own catalog (locale/<language>/LC_MESSAGES/nvda.mo).
+# This driver runs inside NVDA itself, so the standard call applies: it finds the
+# add-on from this file's path and reads the catalog for NVDA's language, with the
+# English text as the fallback.  Outside an installed add-on (the tests, the
+# scratchpad) it raises, and the strings stay English.
+try:
+    import addonHandler
+    addonHandler.initTranslation()
+except Exception:
+    def _(text):
+        return text
+
 _COM = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                     "archive", "TALKHUN0.COM")
 
 
 class SynthDriver(SynthDriver):
     name = "brailabEmulated"
-    description = "Brailab PC (emulated, PCF8200)"
+    # Translators: the synthesizer's name in NVDA's list of synthesizers.
+    description = _("Brailab PC (emulated, PCF8200)")
 
     supportedSettings = (
         SynthDriver.RateSetting(),
         SynthDriver.PitchSetting(),
         SynthDriver.VolumeSetting(),
-        BooleanDriverSetting("furcsa", "&Furcsa (weird voice)", defaultVal=False,
+        # Translators: a checkbox in NVDA's voice settings. "Furcsa" is the BraiLab's own name
+        # for its second, strange-sounding voice.
+        BooleanDriverSetting("furcsa", _("&Furcsa (weird voice)"), defaultVal=False,
                              availableInSettingsRing=True),
-        BooleanDriverSetting("useIntonation", "&Use intonation", defaultVal=True,
+        # Translators: a checkbox in NVDA's voice settings; unchecked, the voice speaks in a monotone.
+        BooleanDriverSetting("useIntonation", _("&Use intonation"), defaultVal=True,
                              availableInSettingsRing=True),
     )
     # PitchCommand is how NVDA marks a capital letter -- "capital pitch change
