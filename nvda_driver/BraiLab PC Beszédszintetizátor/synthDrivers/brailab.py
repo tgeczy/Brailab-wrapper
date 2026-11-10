@@ -104,10 +104,29 @@ def _sanitizeText(s: str) -> str:
 	return s.strip()
 
 
+# Symbols NVDA has already dealt with, which TTS.dll would say aloud again.
+#
+# NVDA speaks a symbol's name when the symbol level asks for it, and for some
+# symbols it ALSO leaves the character in the text ("preserve: always" in
+# symbols.dic; see characterProcessing._regexpRepl), so that a synthesizer can
+# shape its intonation around it.  That suits a synthesizer that stays silent on
+# a lone dash.  TTS.dll names every symbol itself, so "ETI-Eloquence" reached it
+# as "ETI minusz-Eloquence" and came out with "minusz" twice; and below that
+# symbol level, where NVDA means the dash to be silent, TTS.dll said it anyway.
+#
+# These are the always-preserved symbols TTS.dll speaks: dashes, brackets and
+# angle quotes become a space, and an ellipsis becomes one full stop.  The
+# sentence punctuation it uses for intonation (. , ! ? ; :) is left alone.
+_ENGINE_SPOKEN_RE = re.compile("[-‐‑‒–—―()«»]+")
+_ELLIPSIS_RE = re.compile(r"…|\.{2,}")
+
+
 def _brailabSafeText(s: str) -> str:
 	s = _sanitizeText(s)
 	if not s:
 		return ""
+	s = _ELLIPSIS_RE.sub(".", s)
+	s = _ENGINE_SPOKEN_RE.sub(" ", s)
 	try:
 		s = s.encode("cp1250", errors="replace").decode("cp1250", errors="replace")
 	except Exception:
