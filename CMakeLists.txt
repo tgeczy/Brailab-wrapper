@@ -4,6 +4,10 @@ project(brailab_wrapper LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Static C runtime: NVDA does not ship the 32-bit VC++ redistributable, so a
+# wrapper that imports MSVCP140/VCRUNTIME140 fails to load on a clean machine.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # --- MinHook static lib (all under src/) ---
 add_library(minhook STATIC
   src/minhook/src/buffer.c

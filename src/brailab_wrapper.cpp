@@ -2,7 +2,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 
+#ifndef BRAILAB_WRAPPER_EXPORTS
 #define BRAILAB_WRAPPER_EXPORTS
+#endif
 #include "brailab_wrapper.h"
 
 #ifndef BL_ITEM_INDEX
@@ -80,6 +82,95 @@ static __declspec(noinline) int seh_ttsSetInt(TTS_SetIntFunc fn, int v) {
 	if (!fn) return 0;
 	__try { fn(v); return 1; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+// ------------------------------------------------------------
+// Comma intonation (API version 2)
+//
+// TTS.dll's comma rule passes each of its pitch steps as `mov ecx, imm32`
+// (opcode B9) right before a call.  These are the eight sites in the one build
+// we know, as offsets from the module base, with the value each holds and the
+// value BL_COMMA_SOFT gives it.  All eight must hold their original bytes or the
+// feature stays off: that is how another build of TTS.dll is told apart.
+// ------------------------------------------------------------
+struct CommaSite {
+	uint32_t rva;      // of the B9 opcode; the imm32 follows it
+	int32_t original;
+	int32_t soft;
+};
+
+static const CommaSite kCommaSites[] = {
+	{ 0x37AA,  480,    0 },  // one-vowel clause: the final rise
+	{ 0x3820, -240, -120 },  // two-word clause: start
+	{ 0x3830,   60,   60 },  // long clause: start
+	{ 0x386E, -300, -150 },  // long clause: last word
+	{ 0x3898,  480,    0 },  // two-word and long clauses: the final rise
+	{ 0x38AD,  -90,  -45 },  // clause starting with a/az: start
+	{ 0x38EB, -160,  -80 },  // clause starting with a/az: last word
+	{ 0x392F,  480,    0 },  // clause starting with a/az: the final rise
+};
+static const size_t kCommaSiteCount = sizeof(kCommaSites) / sizeof(kCommaSites[0]);
+
+static __declspec(noinline) int seh_readBytes(const uint8_t* p, uint8_t* out, size_t n) {
+	__try { std::memcpy(out, p, n); return 1; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+static __declspec(noinline) int seh_writeImm32(uint8_t* p, int32_t v) {
+	DWORD oldProtect = 0;
+	if (!VirtualProtect(p, sizeof v, PAGE_EXECUTE_READWRITE, &oldProtect)) return 0;
+	int ok = 0;
+	__try { std::memcpy(p, &v, sizeof v); ok = 1; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { ok = 0; }
+	DWORD ignored = 0;
+	VirtualProtect(p, sizeof v, oldProtect, &ignored);
+	FlushInstructionCache(GetCurrentProcess(), p, sizeof v);
+	return ok;
+}
+
+static __declspec(noinline) uint32_t seh_imageSize(HMODULE mod) {
+	__try {
+		const uint8_t* base = reinterpret_cast<const uint8_t*>(mod);
+		const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+		if (dos->e_magic != IMAGE_DOS_SIGNATURE) return 0;
+		const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+		if (nt->Signature != IMAGE_NT_SIGNATURE) return 0;
+		return nt->OptionalHeader.SizeOfImage;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+// Is the loaded TTS.dll the build whose comma rule we know?
+static bool commaSitesMatch(HMODULE mod) {
+#if defined(_M_IX86)
+	if (!mod) return false;
+	const uint32_t size = seh_imageSize(mod);
+	const uint8_t* base = reinterpret_cast<const uint8_t*>(mod);
+	for (size_t i = 0; i < kCommaSiteCount; ++i) {
+		const CommaSite& site = kCommaSites[i];
+		if (site.rva + 5 > size) return false;
+		uint8_t have[5] = {};
+		if (!seh_readBytes(base + site.rva, have, sizeof have)) return false;
+		uint8_t want[5] = { 0xB9 };
+		std::memcpy(want + 1, &site.original, 4);
+		if (std::memcmp(have, want, sizeof want) != 0) return false;
+	}
+	return true;
+#else
+	(void)mod;
+	return false;
+#endif
+}
+
+static bool writeCommaStyle(HMODULE mod, int style) {
+	uint8_t* base = reinterpret_cast<uint8_t*>(mod);
+	bool ok = true;
+	for (size_t i = 0; i < kCommaSiteCount; ++i) {
+		const CommaSite& site = kCommaSites[i];
+		const int32_t v = (style == BL_COMMA_SOFT) ? site.soft : site.original;
+		if (!seh_writeImm32(base + site.rva + 1, v)) ok = false;
+	}
+	return ok;
 }
 
 // ------------------------------------------------------------
@@ -194,6 +285,12 @@ struct BL_STATE {
 	std::atomic<int> desiredTempo{ 0 };
 	std::atomic<int> desiredPitch{ 0 };
 	std::atomic<int> desiredVolume{ 0 };
+
+	// Comma intonation: set at init, wanted by the caller, written by the worker
+	// (appliedComma is touched only under ttsMtx).
+	bool commaSupported = false;
+	std::atomic<int> desiredComma{ BL_COMMA_ORIGINAL };
+	int appliedComma = BL_COMMA_ORIGINAL;
 
 	// Worker
 	std::mutex cmdMtx;
@@ -410,6 +507,15 @@ static void pushMarker(BL_STATE* s, int type, int value, uint32_t gen) {
 	const uint32_t curGen = s->currentGen.load(std::memory_order_relaxed);
 	if (curGen == 0 || gen != curGen) return;
 	s->outQ.push_back(StreamItem(type, value, gen));
+}
+
+// Bring TTS.dll's comma rule to the wanted style.  Call with ttsMtx held and no
+// utterance running: the engine reads these values while it speaks.
+static void applyCommaStyleLocked(BL_STATE* s) {
+	if (!s || !s->commaSupported) return;
+	const int want = s->desiredComma.load(std::memory_order_relaxed);
+	if (want == s->appliedComma) return;
+	if (writeCommaStyle(s->ttsModule, want)) s->appliedComma = want;
 }
 
 static void __stdcall brailabDoneCallback() {
@@ -633,6 +739,7 @@ static void workerLoop(BL_STATE* s) {
 				seh_ttsSetInt(s->ttsSetTempo, s->desiredTempo.load(std::memory_order_relaxed));
 				seh_ttsSetInt(s->ttsSetPitch, s->desiredPitch.load(std::memory_order_relaxed));
 				seh_ttsSetInt(s->ttsSetVolume, s->desiredVolume.load(std::memory_order_relaxed));
+				applyCommaStyleLocked(s);
 			}
 
 			bool anyWork = false;
@@ -754,6 +861,7 @@ static void workerLoop(BL_STATE* s) {
 			seh_ttsSetInt(s->ttsSetTempo, s->desiredTempo.load(std::memory_order_relaxed));
 			seh_ttsSetInt(s->ttsSetPitch, s->desiredPitch.load(std::memory_order_relaxed));
 			seh_ttsSetInt(s->ttsSetVolume, s->desiredVolume.load(std::memory_order_relaxed));
+			applyCommaStyleLocked(s);
 		}
 
 		// Start speech (SEH safe)
@@ -873,6 +981,8 @@ extern "C" BL_API BL_STATE* __cdecl bl_initW(const wchar_t* ttsDllPath, int init
 		return nullptr;
 	}
 
+	s->commaSupported = commaSitesMatch(mod);
+
 	g_state = s;
 	ensureHooksInstalled();
 
@@ -927,6 +1037,9 @@ extern "C" BL_API void __cdecl bl_free(BL_STATE* s) {
 	{
 		std::lock_guard<std::mutex> tg(s->ttsMtx);
 		seh_ttsStop(s->ttsStop);
+		// Leave TTS.dll as we found it, in case something else still holds it.
+		s->desiredComma.store(BL_COMMA_ORIGINAL, std::memory_order_relaxed);
+		applyCommaStyleLocked(s);
 	}
 
 	{
@@ -1116,6 +1229,27 @@ extern "C" BL_API int __cdecl bl_getFormat(BL_STATE* s, int* sampleRate, int* ch
 	if (channels) *channels = (int)s->lastFormat.nChannels;
 	if (bitsPerSample) *bitsPerSample = (int)s->lastFormat.wBitsPerSample;
 	return 1;
+}
+
+// API version 2
+extern "C" BL_API int __cdecl bl_getApiVersion(void) {
+	return BL_API_VERSION;
+}
+
+extern "C" BL_API int __cdecl bl_commaStyleSupported(BL_STATE* s) {
+	return (s && s->commaSupported) ? 1 : 0;
+}
+
+extern "C" BL_API int __cdecl bl_getCommaStyle(BL_STATE* s) {
+	if (!s) return BL_COMMA_ORIGINAL;
+	return s->desiredComma.load(std::memory_order_relaxed);
+}
+
+extern "C" BL_API int __cdecl bl_setCommaStyle(BL_STATE* s, int style) {
+	if (!s || (style != BL_COMMA_ORIGINAL && style != BL_COMMA_SOFT)) return 1;
+	if (!s->commaSupported) return 2;
+	s->desiredComma.store(style, std::memory_order_relaxed);
+	return 0;
 }
 
 BOOL APIENTRY DllMain(HMODULE, DWORD, LPVOID) {

@@ -55,6 +55,9 @@ The wrapper also:
 - Paces output to prevent "fast synthesis / skipping" behavior.
 - Applies tempo/pitch/volume on the same worker thread that calls `StartSay` (some engines behave like this internally).
 - Supports an option to disable intonation using `TTS_StartSayWithNoIntonation` when available.
+- Offers a gentler comma intonation ("Gentler comma intonation" in NVDA's voice settings, off by default). TTS.dll ends the clause before a comma with a steep rise; the option removes the rise and halves the fall before it. The values change only in the loaded copy of TTS.dll, never in the file, and only for the one TTS.dll build the wrapper recognises.
+
+The wrapper's exports carry a version (`bl_getApiVersion`, 2 as of this option). Older exports never change meaning, so an older driver works with a newer wrapper; a newer driver asks what the wrapper can do and leaves out what it cannot, so it works with an older wrapper too.
 
 ### Requirements
 
@@ -164,7 +167,10 @@ terjesztjük őket.
 A burkoló ezenkívül:
 - ütemezi a kimenetet, hogy a beszéd ne rohanjon és ne ugráljon;
 - a tempót, a hangmagasságot és a hangerőt ugyanazon a szálon állítja be, amelyik a `StartSay`-t hívja (egyes motorok belül így működnek);
-- kérésre kikapcsolja a hanglejtést a `TTS_StartSayWithNoIntonation` hívással, ha elérhető.
+- kérésre kikapcsolja a hanglejtést a `TTS_StartSayWithNoIntonation` hívással, ha elérhető;
+- szelídebb vesszős hanglejtést kínál (az NVDA hangbeállításai között „Gentler comma intonation”, alapból kikapcsolva). A TTS.dll a vessző előtti tagmondat végén meredeken felviszi a hangot; a beállítás ezt az emelést elhagyja, az előtte lévő süllyedést pedig megfelezi. Az értékek csak a TTS.dll betöltött példányában változnak, a fájlban soha, és csak annál a TTS.dll-változatnál, amelyet a burkoló felismer.
+
+A burkoló függvényeinek verziója van (`bl_getApiVersion`, ezzel a beállítással 2). A régebbi függvények jelentése nem változik, ezért egy régebbi illesztő az újabb burkolóval is működik; az újabb illesztő pedig megkérdezi, mit tud a burkoló, és amit az nem tud, azt nem kínálja fel, így régebbi burkolóval is működik.
 
 ### Követelmények
 

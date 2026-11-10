@@ -28,11 +28,20 @@ class FakeBrailab(object):
     def __init__(self):
         self.calls = []
         self.pitch = 0
+        # None = a _brailab from before the comma setting: no key in the result.
+        self.commaSupported = None
 
     # -- what the driver calls --
     def initialize(self, index_callback=None):
         self.calls.append(("initialize",))
-        return {"tempo": 4, "pitch": 0, "volume": 8}
+        result = {"tempo": 4, "pitch": 0, "volume": 8}
+        if self.commaSupported is not None:
+            result["commaSupported"] = self.commaSupported
+        return result
+
+    def set_comma_style(self, style):
+        self.calls.append(("set_comma_style", style))
+        return bool(self.commaSupported)
 
     def has_composite(self):
         return True
@@ -258,8 +267,21 @@ def _stub_nvda():
         builtins._ = lambda s: s
 
 
+_LOADED = []
+
+
 @pytest.fixture(scope="module")
 def driverModule():
+    # Other test files borrow this fixture, and pytest then runs it once per
+    # file.  The driver module can only be imported once -- a second import
+    # returns the first, still bound to the first fake -- so hand out that pair.
+    if _LOADED:
+        return _LOADED[0]
+    _LOADED.append(_load_driver())
+    return _LOADED[0]
+
+
+def _load_driver():
     _stub_nvda()
     if ADDON not in sys.path:
         sys.path.insert(0, ADDON)

@@ -83,6 +83,36 @@ BL_API void __cdecl bl_setVolume(BL_STATE* s, int volume);
 // Returns 1 if known, else 0.
 BL_API int __cdecl bl_getFormat(BL_STATE* s, int* sampleRate, int* channels, int* bitsPerSample);
 
+// ---------------------------------------------------------------------------
+// API version 2.
+//
+// Every export above is version 1 and keeps its meaning for good, so a driver
+// written against an older wrapper works unchanged with a newer one.  Going the
+// other way, a newer driver finds out what it has by asking: a wrapper without
+// bl_getApiVersion is version 1, and each newer feature also says for itself
+// whether it can work (see bl_commaStyleSupported).  A feature that is missing
+// or unsupported is simply not offered; nothing else changes.
+// ---------------------------------------------------------------------------
+#define BL_API_VERSION 2
+BL_API int __cdecl bl_getApiVersion(void);
+
+// Comma intonation.  TTS.dll ends every clause before a comma with a steep rise
+// on its last sound, which many listeners hear as a jerk.  BL_COMMA_SOFT takes
+// the rise away and halves the fall before it.  The values are changed in the
+// loaded copy of TTS.dll only; the file is never touched, and the original
+// values come back with BL_COMMA_ORIGINAL or when the wrapper is freed.
+//
+// This works on one known build of TTS.dll.  bl_commaStyleSupported returns 1
+// only if the loaded TTS.dll is that build; with any other, bl_setCommaStyle
+// does nothing and returns 2.
+#define BL_COMMA_ORIGINAL 0
+#define BL_COMMA_SOFT     1
+BL_API int __cdecl bl_commaStyleSupported(BL_STATE* s);
+BL_API int __cdecl bl_getCommaStyle(BL_STATE* s);
+// Takes effect from the next utterance.  Returns 0 on success, 1 for a bad
+// argument, 2 if this TTS.dll is not supported.
+BL_API int __cdecl bl_setCommaStyle(BL_STATE* s, int style);
+
 #ifdef __cplusplus
 }
 #endif

@@ -123,18 +123,40 @@ class SynthDriver(SynthDriver):
 	name = "brailab"
 	description = "Brailab PC"
 
-	supportedSettings = (
-		SynthDriver.VoiceSetting(),
-		SynthDriver.RateSetting(minStep=10),
-		SynthDriver.PitchSetting(minStep=50),
-		SynthDriver.VolumeSetting(minStep=25),
-		BooleanDriverSetting(
-			"useIntonation",
-			"&Use intonation",
-			defaultVal=True,
-			availableInSettingsRing=True
-		),
-	)
+	# The settings are built per instance, not declared on the class, because one
+	# of them depends on what was loaded.  "Gentler comma intonation" needs a
+	# wrapper with API version 2 and the one TTS.dll build that wrapper knows.
+	# With an older wrapper, or another TTS.dll, the checkbox is not offered at
+	# all, rather than shown and doing nothing.  The bridge proxy asks the 32-bit
+	# host for this list, so 64-bit NVDA follows along.
+	def _get_supportedSettings(self):
+		cached = getattr(self, "_settingsCache", None)
+		if cached is not None:
+			return cached
+		settings = [
+			SynthDriver.VoiceSetting(),
+			SynthDriver.RateSetting(minStep=10),
+			SynthDriver.PitchSetting(minStep=50),
+			SynthDriver.VolumeSetting(minStep=25),
+			BooleanDriverSetting(
+				"useIntonation",
+				"&Use intonation",
+				defaultVal=True,
+				availableInSettingsRing=True
+			),
+		]
+		if getattr(self, "_commaSupported", None) is None:
+			# Asked before the engine is loaded: answer without caching.
+			return settings
+		if self._commaSupported:
+			settings.append(BooleanDriverSetting(
+				"softComma",
+				"&Gentler comma intonation",
+				defaultVal=False,
+				availableInSettingsRing=True
+			))
+		self._settingsCache = settings
+		return settings
 
 	# PitchCommand is how NVDA marks a capital letter: "capital pitch change
 	# percentage" arrives as an offset on its own 0-100 scale.  A driver that
@@ -192,6 +214,9 @@ class SynthDriver(SynthDriver):
 		result = _brailab.initialize(index_callback=_indexCallback)
 
 		self._hasComposite = _brailab.has_composite()
+		# An older _brailab would not have this at all; treat it as "no".
+		self._commaSupported = bool(result.get("commaSupported", False))
+		self._softComma = False
 
 		# Cache initial parameter values from the host
 		self._cachedTempo = result.get("tempo", 4)
@@ -224,6 +249,24 @@ class SynthDriver(SynthDriver):
 
 	def _get_useIntonation(self):
 		return bool(getattr(self, "_useIntonation", True))
+
+	# TTS.dll ends the clause before a comma with a steep rise on its last sound.
+	# Checked, the rise is gone and the fall before it is half as deep; the values
+	# were chosen in a listening test.  Off by default: unchecked, TTS.dll speaks
+	# exactly as its authors left it.  Takes effect from the next utterance.
+	def _set_softComma(self, val):
+		val = bool(val)
+		if not getattr(self, "_commaSupported", False):
+			self._softComma = False
+			return
+		try:
+			if _brailab.set_comma_style(1 if val else 0):
+				self._softComma = val
+		except Exception:
+			log.error("Brailab: set_comma_style failed", exc_info=True)
+
+	def _get_softComma(self):
+		return bool(getattr(self, "_softComma", False))
 
 	def terminate(self):
 		self.cancel()
@@ -566,6 +609,14 @@ if _ctypes.sizeof(_ctypes.c_void_p) == 8:
 
 		def _set_useIntonation(self, value):
 			self._remoteService.setParam("useIntonation", value)
+
+		# Only reached when the host lists softComma among its settings, which
+		# it does only if the wrapper and TTS.dll can do it.
+		def _get_softComma(self):
+			return self._remoteService.getParam("softComma")
+
+		def _set_softComma(self, value):
+			self._remoteService.setParam("softComma", value)
 
 		@classmethod
 		def check(cls):

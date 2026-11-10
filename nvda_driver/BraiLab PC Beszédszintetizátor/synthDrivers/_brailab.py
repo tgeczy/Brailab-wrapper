@@ -134,6 +134,8 @@ class BrailabDirectClient:
 		self._audio_worker: Optional[AudioWorker] = None
 		self._should_stop = False
 		self._has_composite = False
+		self._api_version = 1
+		self._comma_supported = False
 		self._sequence = 0
 		self._current_seq = 0
 		# Audio format
@@ -173,6 +175,18 @@ class BrailabDirectClient:
 		except AttributeError:
 			self._has_composite = False
 
+		# A wrapper from before API version 2 has no bl_getApiVersion, and none
+		# of what came with it.  Each newer feature is then simply not offered.
+		try:
+			self._api_version = int(self._dll.bl_getApiVersion())
+		except AttributeError:
+			self._api_version = 1
+		# The comma setting also needs the one TTS.dll build the wrapper knows.
+		try:
+			self._comma_supported = bool(self._dll.bl_commaStyleSupported(self._handle))
+		except AttributeError:
+			self._comma_supported = False
+
 		# Query audio format
 		sr = ctypes.c_int(0)
 		ch = ctypes.c_int(0)
@@ -193,6 +207,8 @@ class BrailabDirectClient:
 				"bitsPerSample": self._bits_per_sample,
 			},
 			"hasComposite": self._has_composite,
+			"apiVersion": self._api_version,
+			"commaSupported": self._comma_supported,
 			"tempo": self._dll.bl_getTempo(self._handle),
 			"pitch": self._dll.bl_getPitch(self._handle),
 			"volume": self._dll.bl_getVolume(self._handle),
@@ -245,6 +261,18 @@ class BrailabDirectClient:
 			dll.bl_addIndexUtterance.restype = ctypes.c_int
 			dll.bl_commitUtterance.argtypes = (ctypes.c_void_p,)
 			dll.bl_commitUtterance.restype = ctypes.c_int
+		except AttributeError:
+			pass
+		# API version 2 (optional): version, comma intonation
+		try:
+			dll.bl_getApiVersion.argtypes = ()
+			dll.bl_getApiVersion.restype = ctypes.c_int
+			dll.bl_commaStyleSupported.argtypes = (ctypes.c_void_p,)
+			dll.bl_commaStyleSupported.restype = ctypes.c_int
+			dll.bl_getCommaStyle.argtypes = (ctypes.c_void_p,)
+			dll.bl_getCommaStyle.restype = ctypes.c_int
+			dll.bl_setCommaStyle.argtypes = (ctypes.c_void_p, ctypes.c_int)
+			dll.bl_setCommaStyle.restype = ctypes.c_int
 		except AttributeError:
 			pass
 
@@ -364,6 +392,18 @@ class BrailabDirectClient:
 	def set_volume(self, value: int) -> None:
 		self._dll.bl_setVolume(self._handle, value)
 
+	def set_comma_style(self, style: int) -> bool:
+		"""0 = TTS.dll's own comma intonation, 1 = the gentler one.
+
+		False if the wrapper or this TTS.dll cannot do it; nothing changes then.
+		"""
+		if not self._comma_supported:
+			return False
+		return self._dll.bl_setCommaStyle(self._handle, int(style)) == 0
+
+	def comma_supported(self) -> bool:
+		return self._comma_supported
+
 	def has_composite_api(self) -> bool:
 		return self._has_composite
 
@@ -470,6 +510,15 @@ def set_pitch(value: int) -> None:
 
 def set_volume(value: int) -> None:
 	_client.set_volume(value)
+
+
+def comma_supported() -> bool:
+	"""Can this wrapper and this TTS.dll soften the comma intonation?"""
+	return _client.comma_supported()
+
+
+def set_comma_style(style: int) -> bool:
+	return _client.set_comma_style(style)
 
 
 def get_format() -> Dict[str, int]:
