@@ -96,6 +96,13 @@ BL_API int __cdecl bl_getFormat(BL_STATE* s, int* sampleRate, int* channels, int
 #define BL_API_VERSION 2
 BL_API int __cdecl bl_getApiVersion(void);
 
+// How many utterances the wrapper has had to end by itself because TTS.dll
+// never called its completion callback.  TTS.dll loses that callback now and
+// then when its audio is taken faster than a sound card would play it; the
+// wrapper notices the audio has stopped coming and carries on.  For diagnosis
+// and tests: an ordinary caller does not need it.
+BL_API int __cdecl bl_getLostCallbackCount(BL_STATE* s);
+
 // Comma intonation.  TTS.dll ends every clause before a comma with a steep rise
 // on its last sound, which many listeners hear as a jerk.  BL_COMMA_SOFT takes
 // the rise away and halves the fall before it.  The values are changed in the

@@ -281,6 +281,12 @@ struct BL_STATE {
 	// Warmup credit: allow the first N ms of audio to be generated without sleeping.
 	std::atomic<int> throttleCreditMs{ 0 };
 
+	// How many waveOutWrite calls from TTS.dll are inside our hook right now, and
+	// how often an utterance had to be declared finished without TTS.dll's
+	// callback (see utteranceWentQuiet).
+	std::atomic<int> writesInFlight{ 0 };
+	std::atomic<uint32_t> doneFallbacks{ 0 };
+
 	// Desired settings (setters store these; worker applies them before StartSay)
 	std::atomic<int> desiredTempo{ 0 };
 	std::atomic<int> desiredPitch{ 0 };
@@ -518,6 +524,34 @@ static void applyCommaStyleLocked(BL_STATE* s) {
 	if (writeCommaStyle(s->ttsModule, want)) s->appliedComma = want;
 }
 
+// TTS.dll sometimes never calls its completion callback.
+//
+// It calls it from its own thread, on the message for a returned audio buffer,
+// and only if by then every buffer is back AND its generator thread has already
+// noted that it has nothing left to say.  A sound card returns a buffer after
+// playing it, long after the generator has moved on.  We return it at once, so
+// now and then the last buffer's message is handled first, the test fails, and
+// no later message comes: the callback is lost, although all the audio has been
+// delivered and TTS.dll is idle and ready.  The worker then waited out its
+// three-minute watchdog, and to the user the voice simply went silent.
+//
+// So the worker also accepts this as the end of an utterance: audio has arrived,
+// none is being handed over, and nothing more has come for DONE_QUIET_MS.
+// TTS.dll writes its audio in an unbroken run, far faster than it plays, so a
+// gap that long between two buffers does not happen while it is still speaking.
+static const ULONGLONG DONE_QUIET_MS = 500;
+
+static bool utteranceWentQuiet(BL_STATE* s) {
+	if (s->writesInFlight.load(std::memory_order_relaxed) != 0) return false;
+	const ULONGLONG last = s->lastAudioTick.load(std::memory_order_relaxed);
+	if (last == 0) return false;
+	if (GetTickCount64() - last < DONE_QUIET_MS) return false;
+	// a write may have begun between the two looks
+	if (s->writesInFlight.load(std::memory_order_relaxed) != 0) return false;
+	s->doneFallbacks.fetch_add(1, std::memory_order_relaxed);
+	return true;
+}
+
 static void __stdcall brailabDoneCallback() {
 	BL_STATE* s = g_state;
 	if (s && s->doneEvent) SetEvent(s->doneEvent);
@@ -594,15 +628,25 @@ static MMRESULT WINAPI hook_waveOutWrite(HWAVEOUT hwo, LPWAVEHDR pwh, UINT cbwh)
 
 	const bool capturing = (gen != 0 && gen == curGen);
 
-	if (capturing && pwh->lpData && pwh->dwBufferLength > 0) {
-		enqueueAudioFromHook(s, gen, pwh->lpData, (size_t)pwh->dwBufferLength);
-	}
-
 	// If we are not capturing (e.g. canceled), don't throttle; finish immediately.
 	if (!capturing) {
 		pwh->dwFlags |= WHDR_DONE;
 		signalWaveOutMessage(s, WOM_DONE, pwh);
 		return MMSYSERR_NOERROR;
+	}
+
+	// From here to the buffer's return the utterance is plainly still going.
+	struct InFlight {
+		BL_STATE* s;
+		explicit InFlight(BL_STATE* st) : s(st) { s->writesInFlight.fetch_add(1, std::memory_order_relaxed); }
+		~InFlight() {
+			s->lastAudioTick.store(GetTickCount64(), std::memory_order_relaxed);
+			s->writesInFlight.fetch_sub(1, std::memory_order_relaxed);
+		}
+	} inFlight(s);
+
+	if (pwh->lpData && pwh->dwBufferLength > 0) {
+		enqueueAudioFromHook(s, gen, pwh->lpData, (size_t)pwh->dwBufferLength);
 	}
 
 	// Throttle so Brailab can't synthesize miles ahead of real time.
@@ -802,6 +846,9 @@ static void workerLoop(BL_STATE* s) {
 						break;
 					}
 
+					// TTS.dll's callback was lost: the chunk is over all the same.
+					if (utteranceWentQuiet(s)) break;
+
 					if (std::chrono::steady_clock::now() - t0 > maxDur) {
 						pushMarker(s, BL_ITEM_ERROR, 1002, gen);
 						stopped = true;
@@ -905,6 +952,9 @@ static void workerLoop(BL_STATE* s) {
 				stopped = true;
 				break;
 			}
+
+			// TTS.dll's callback was lost: the utterance is over all the same.
+			if (utteranceWentQuiet(s)) break;
 
 			if (std::chrono::steady_clock::now() - t0 > maxDur) {
 				pushMarker(s, BL_ITEM_ERROR, 1002, gen);
@@ -1234,6 +1284,10 @@ extern "C" BL_API int __cdecl bl_getFormat(BL_STATE* s, int* sampleRate, int* ch
 // API version 2
 extern "C" BL_API int __cdecl bl_getApiVersion(void) {
 	return BL_API_VERSION;
+}
+
+extern "C" BL_API int __cdecl bl_getLostCallbackCount(BL_STATE* s) {
+	return s ? (int)s->doneFallbacks.load(std::memory_order_relaxed) : 0;
 }
 
 extern "C" BL_API int __cdecl bl_commaStyleSupported(BL_STATE* s) {

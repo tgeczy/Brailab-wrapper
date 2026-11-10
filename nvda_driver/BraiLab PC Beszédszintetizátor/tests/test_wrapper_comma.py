@@ -117,6 +117,21 @@ def test_soft_takes_effect_from_the_next_utterance_and_changes_the_speech(wrappe
     assert len(again) == len(original)
 
 
+def test_every_utterance_finishes_even_when_tts_dll_loses_its_callback(wrapper):
+    """TTS.dll now and then never reports an utterance finished (see utteranceWentQuiet
+    in the wrapper).  Before the wrapper watched for that itself, about one short
+    utterance in fifty hung until a three-minute watchdog; eleven of twelve runs of 120
+    did.  say() fails if any takes longer than 30 seconds."""
+    wrapper.dll.bl_getLostCallbackCount.argtypes = (ctypes.c_void_p,)
+    before = wrapper.dll.bl_getLostCallbackCount(wrapper.handle)
+    started = time.time()
+    for text in ["Egy.", "Szia.", "a", "Igen, jó."] * 15:
+        assert wrapper.say(text)
+    # 60 short utterances are under 25 s of speech; a single hang alone would add 180 s.
+    assert time.time() - started < 60
+    assert wrapper.dll.bl_getLostCallbackCount(wrapper.handle) >= before
+
+
 def test_a_style_that_does_not_exist_is_refused(wrapper):
     assert wrapper.dll.bl_setCommaStyle(wrapper.handle, 7) == 1
     assert wrapper.dll.bl_getCommaStyle(wrapper.handle) == 0
