@@ -44,7 +44,11 @@ part('Ötös.')                       # statement, question, exclamation, a list
 lines(['Ma szép idő van.', 'Ma szép idő van?', 'Ma szép idő van!', 'Hogy vagy ma?',
        'Egy, kettő, három, négy, öt, hat, hét, nyolc, kilenc, tíz.'])
 
-part('Hatos.')                      # the sounds one at a time, for measuring
+# The sounds one at a time.  NOT fit for measuring as written: TALKHUN takes a letter with a full
+# stop after it for an abbreviation or a Roman numeral and says the word ("l." liter, "m." méter,
+# "i." as a numeral), as Tomi heard on the real box on 2026-11-13.  For single sounds use the
+# chip sweep (make_sweep.py), which writes the frames itself.
+part('Hatos.')
 lines(['a.', 'á.', 'e.', 'é.', 'i.', 'í.', 'o.', 'ó.', 'ö.', 'ő.', 'u.', 'ú.', 'ü.', 'ű.'], gap=300)
 PROGRAM.append(('pause', 600))
 lines(['s.', 'sz.', 'cs.', 'c.', 'zs.', 'z.', 'f.', 'h.', 'ty.', 'gy.', 'ny.', 'r.', 'l.', 'm.', 'n.'], gap=300)

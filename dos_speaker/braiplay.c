@@ -222,8 +222,12 @@ int main(int argc, char **argv)
                 }
                 send(frames + 5 * i, 5);
                 sent++;
+                if ((i & 15) == 15 && escape_pressed()) {   /* a unit may run for half a minute */
+                    stopped_by_key = 1;
+                    break;
+                }
             }
-            if (!bad && (flags & 1)) {
+            if (!bad && !stopped_by_key && (flags & 1)) {
                 if (poll())
                     bad = 1;
                 else {
@@ -241,7 +245,7 @@ int main(int argc, char **argv)
                 if (never)
                     break;
             }
-            if (escape_pressed())
+            if (!stopped_by_key && escape_pressed())
                 stopped_by_key = 1;
         } else {
             printf("BRAIPLAY: bad record %02X.\n", kind);

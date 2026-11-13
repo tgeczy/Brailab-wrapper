@@ -255,27 +255,39 @@ def summary(records):
     return units, frames, furcsa, pause
 
 
-def main():
-    if len(sys.argv) != 3:
-        raise SystemExit(__doc__)
-    program = runpy.run_path(sys.argv[1])['PROGRAM']
-    out = os.path.abspath(sys.argv[2])
+def build(records, out, quiet=False):
+    """Pack `records` after BRAIPLAY.EXE, run the result on the emulated machine, and write it
+    to `out` only if it sends exactly these records.  Records are ('P', milliseconds) and
+    ('U', volume byte, pitch byte, command byte, stopped, [5-byte frames])."""
+    out = os.path.abspath(out)
     work = os.path.join(HERE, '_braiplay_work')
     os.makedirs(work, exist_ok=True)
-    records = capture(program, work)
+    for r in records:
+        if r[0] == 'U' and len(r[5]) > MAX_FRAMES:
+            raise SystemExit('a unit of %d frames: BRAIPLAY takes %d' % (len(r[5]), MAX_FRAMES))
     data = build_stub() + pack(records)
-    name = os.path.basename(out).upper()
-    staged = os.path.join(work, name)
+    staged = os.path.join(work, os.path.basename(out).upper())
     with open(staged, 'wb') as f:
         f.write(data)
     printed = verify(staged, records, work)
     with open(out, 'wb') as f:
         f.write(data)
     units, frames, furcsa, pause = summary(records)
-    print('%s: %d bytes, %d units (%d furcsa), %d frames, %.1f s of pauses' % (
-        out, len(data), len(units), furcsa, frames, pause))
-    print('verified on the emulated machine: every transaction matches the recording')
-    print('the program printed:', printed.strip().replace('\r', '').replace('\n', ' | '))
+    if not quiet:
+        print('%s: %d bytes, %d units (%d furcsa), %d frames, %.1f s of pauses' % (
+            out, len(data), len(units), furcsa, frames, pause))
+        print('verified on the emulated machine: every transaction matches the recording')
+        print('the program printed:', printed.strip().replace('\r', '').replace('\n', ' | '))
+    return data
+
+
+def main():
+    if len(sys.argv) != 3:
+        raise SystemExit(__doc__)
+    program = runpy.run_path(sys.argv[1])['PROGRAM']
+    work = os.path.join(HERE, '_braiplay_work')
+    os.makedirs(work, exist_ok=True)
+    build(capture(program, work), sys.argv[2])
 
 
 if __name__ == '__main__':
