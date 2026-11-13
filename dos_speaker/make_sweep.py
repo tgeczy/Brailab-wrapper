@@ -14,13 +14,15 @@ make_braiplay.py).  The frames are written here, a field at a time:
          both sources through a tract with every formant damped; the start-pitch byte; every
          pitch-increment code, at each frame duration and speed; pitch run past both ends.
   CHIP2  the resonators, one at a time with the other four damped: every frequency code and
-         every bandwidth code, on noise and on a low voice, with the male table and the female.
+         every bandwidth code, on noise and on a low voice, with the male table and the female,
+         and the all-damped tract they are divided by.
   CHIP3  time: the frame durations at the four speeds; one field alternating between two values
          at each duration, to show how the chip gets from one frame to the next; voiced against
          noise; starting and stopping at full level.
 
 Every unit starts with a mark (three loud frames between silences) to find it by, and holds
-are a whole number of frames, so a recording is cut from the manifest, not by ear.
+are a whole number of frames, so a recording is cut from the manifest, not by ear.  Every file
+starts and ends with the same reference vowel, to tie levels together across recordings.
 
 What is sent stays inside what the chip's documents allow: no DAC byte F0h, and no DAC factor
 above the 3.5 that TALKHUN uses all the time.
@@ -206,35 +208,58 @@ def am_for(i, bcode):
     return 12 if bcode * 2 <= last else (10 if bcode < last - 1 or last == 3 and bcode == 2 else 8)
 
 
+def reference(name):
+    u = Unit(name)
+    u.hold('ref', 1.0, REF_F, REF_B)
+    return u
+
+
 def chip2():
-    out = ['Csip kettő.']
+    out = ['Csip kettő.', reference('reference')]
     for table, cmd, nf, word in (('male', MALE, 5, 'Férfi.'), ('female', FEMALE, 4, 'Női.')):
         out.append(word)
+        # what the solo holds are divided by: the same tract with nothing standing out
+        u = Unit('%s-flat' % table, pitch=33, cmd=cmd)
+        u.hold('flat', 2.5, OFF_F, OFF_B, pi=NOISE, am=12, source='noise')
+        u.hold('flat', 1.0, OFF_F, OFF_B, am=11, source='voiced')
+        out.append(u)
         for i in range(nf):
-            u = Unit('%s-F%d-ladder' % (table, i + 1), pitch=33, cmd=cmd)
-            for code in range(WIDTH[1][i]):
-                F, B = solo(i, code, MID_B[i])
-                u.hold('solo', 0.5, F, B, pi=NOISE, am=12, formant=i + 1, fcode=code, bcode=MID_B[i], source='noise')
-            for code in range(WIDTH[1][i]):
+            codes = list(range(WIDTH[1][i]))
+            for part in ([codes[:16], codes[16:]] if len(codes) > 16 else [codes]):
+                u = Unit('%s-F%d-noise-%d' % (table, i + 1, part[0]), pitch=33, cmd=cmd)
+                for code in part:
+                    F, B = solo(i, code, MID_B[i])
+                    u.hold('solo', 0.9, F, B, pi=NOISE, am=12, formant=i + 1, fcode=code, bcode=MID_B[i], source='noise')
+                out.append(u)
+            u = Unit('%s-F%d-voiced' % (table, i + 1), pitch=33, cmd=cmd)
+            for code in codes:
                 F, B = solo(i, code, MID_B[i])
                 u.hold('solo', 0.3, F, B, am=11, formant=i + 1, fcode=code, bcode=MID_B[i], source='voiced')
             out.append(u)
+            if i == 0:
+                # The lowest F1 codes are 100 to 250 Hz, where an 80 Hz voice has three harmonics
+                # and noise needs a long look: a 39 Hz voice puts a harmonic every 39 Hz.
+                u = Unit('%s-F1-low-voiced' % table, pitch=16, cmd=cmd)
+                for code in range(12):
+                    F, B = solo(i, code, MID_B[i])
+                    u.hold('solo', 0.5, F, B, am=11, formant=1, fcode=code, bcode=MID_B[i], source='voiced-39Hz')
+                out.append(u)
         for i in range(nf):
             u = Unit('%s-B%d-ladder' % (table, i + 1), pitch=33, cmd=cmd)
             for fcode in B_AT_F[i]:
                 for bcode in range(WIDTH[0][i]):
                     F, B = solo(i, fcode, bcode)
                     am = am_for(i, bcode)
-                    u.hold('solo', 0.6, F, B, pi=NOISE, am=am, formant=i + 1, fcode=fcode, bcode=bcode, source='noise')
+                    u.hold('solo', 0.9, F, B, pi=NOISE, am=am, formant=i + 1, fcode=fcode, bcode=bcode, source='noise')
                     u.hold('solo', 0.3, F, B, am=am - 1, formant=i + 1, fcode=fcode, bcode=bcode, source='voiced')
             out.append(u)
     # the female table has no fifth formant: do its two fields do anything there?
     u = Unit('female-F5-fields', pitch=33, cmd=FEMALE)
     for f5, b5 in ((0, 0), (1, 0), (0, 3), (1, 3)):
         F, B = (19, 21, 4, 4, f5), (0, 0, 0, 0, b5)
-        u.hold('f5', 0.6, F, B, pi=NOISE, am=12, source='noise')
+        u.hold('f5', 0.9, F, B, pi=NOISE, am=12, source='noise')
         u.hold('f5', 0.3, F, B, am=11, source='voiced')
-    out += [u, 'Vége.']
+    out += [u, reference('reference-end'), 'Vége.']
     return out
 
 
@@ -249,7 +274,7 @@ def alternate(u, a, b, what, reps=3, each=3):
 
 
 def chip3():
-    out = ['Csip három.', 'Időzítés.']
+    out = ['Csip három.', reference('reference'), 'Időzítés.']
     for fs in range(4):
         u = Unit('clicks-fs%d' % fs, cmd=MALE | fs)
         for fd in range(4):
@@ -286,7 +311,7 @@ def chip3():
         u.add(fd=fd, n=n, event='burst', **kw)
         u.record = (lambda u=u: ('U', u.vol, u.pitch, u.cmd, True, list(u.frames)))     # no quiet tail: STOP at full level
         out.append(u)
-    out.append('Vége.')
+    out += [reference('reference-end'), 'Vége.']
     return out
 
 
