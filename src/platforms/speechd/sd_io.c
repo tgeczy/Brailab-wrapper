@@ -64,11 +64,15 @@ char *sd_readline(void)
     }
 }
 
-/* STOP (or CANCEL or PAUSE) waiting on stdin?  Reads what is there, and leaves it for sd_readline. */
+/* What waits on stdin for the message being spoken.  Reads what is there and leaves it for sd_readline.  Whole
+ * lines only: looked for anywhere in the buffer, the words would stop the speech when a "DEBUG ON" file name held
+ * one of them. */
 int sd_poll_stop(void)
 {
     fd_set f;
     struct timeval tv = {0, 0};
+    const char *p, *nl;
+    int paused = 0;
     FD_ZERO(&f);
     FD_SET(STDIN_FILENO, &f);
     if (select(STDIN_FILENO + 1, &f, NULL, NULL, &tv) > 0) {
@@ -76,11 +80,29 @@ int sd_poll_stop(void)
         ssize_t k = read(STDIN_FILENO, buf, sizeof buf);
         if (k <= 0) {
             r_eof = 1;
-            return 1;
+            return SD_STOPPED;
         }
         rappend(buf, (size_t)k);
     }
-    return rbuf && (strstr(rbuf, "STOP") || strstr(rbuf, "CANCEL") || strstr(rbuf, "PAUSE"));
+    if (!rbuf)
+        return SD_GO;
+    for (p = rbuf; (nl = (const char *)memchr(p, '\n', (size_t)(rbuf + rlen - p))) != NULL; p = nl + 1) {
+        size_t n = (size_t)(nl - p);
+        if (n && p[n - 1] == '\r')
+            n--;
+        if ((n == 4 && !memcmp(p, "STOP", 4)) || (n == 6 && !memcmp(p, "CANCEL", 6)))
+            return SD_STOPPED;
+        if (n == 5 && !memcmp(p, "PAUSE", 5))
+            paused = 1;
+    }
+    return paused ? SD_PAUSED : SD_GO;
+}
+
+/* The line that ends a message: 702 when it was said to the end, 703 after a STOP, 704 after a PAUSE.  On 703 the
+ * server gives the message up; on 704 it keeps it, to speak again on RESUME (speech-dispatcher's output.c). */
+void sd_send_end(int stopped)
+{
+    sd_send_line(stopped == SD_PAUSED ? "704 PAUSE" : stopped ? "703 STOP" : "702 END");
 }
 
 void sd_send_line(const char *s)

@@ -78,10 +78,8 @@ static int tts_sink(void *user, const int16_t *pcm, int n)
         if (out.n == SD_AUDIO_BLOCK) {
             sd_send_audio(out.pcm, out.n, tts.rate);
             out.n = 0;
-            if (sd_poll_stop()) {
-                out.stopped = 1;
+            if ((out.stopped = sd_poll_stop()) != SD_GO)
                 return 1;
-            }
         }
     }
     return 0;

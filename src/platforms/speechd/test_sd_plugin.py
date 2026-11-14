@@ -5,7 +5,9 @@ given.  Needs no TALKHUN0.COM and no real plug-in, so it runs anywhere the modul
   speak    the text reaches the plug-in as UTF-8 with SSML taken off, in blocks, at the plug-in's sample rate
   set      SSIP rate to the ten tempos (0 is the voice's own, 4), pitch to the three pitches, volume as a gain
            here, the plug-in's own volume left alone
-  stop     STOP after a block ends the message with 703; the next message is whole
+  stop     STOP after a block ends the message with 703, PAUSE with 704; the next message is whole
+  lines    DEBUG ON and OFF are answered; a command that merely holds the word STOP does not stop the message;
+           an unknown command and QUIT are answered
   absent   no plug-in, another interface version, a file that is no plug-in, missing data: no third voice, and
            the reason in the module's greeting when a file was there
   conf     BrailabTtsPlugin names a plug-in somewhere else
@@ -105,13 +107,24 @@ pcm, end = m.speak(stop_text, stop_after=1)
 check("stop", end == b"703 STOP" and 0 < len(pcm) < len(stub(stop_text)), "%s after %d of %d samples"
       % (end.decode(), len(pcm) // 2, len(stub(stop_text)) // 2))
 same("after", m.speak(TEXT)[0], stub(TEXT))
+pcm, end = m.speak(stop_text, stop_after=1, stop_with="PAUSE")
+check("pause", end == b"704 PAUSE" and 0 < len(pcm) < len(stub(stop_text)), "%s after %d of %d samples"
+      % (end.decode(), len(pcm) // 2, len(stub(stop_text)) // 2))
+same("p_after", m.speak(TEXT)[0], stub(TEXT))
+check("debug", m.command("DEBUG ON /tmp/sd_brailab.log") == b"200 OK DEBUGGING ON"
+      and m.command("DEBUG OFF") == b"200 OK DEBUGGING OFF" and m.command("DEBUG") == b"302 ERROR BAD SYNTAX")
+# a command that only holds the words, arriving while the module speaks: the message is said to the end
+pcm, end = m.speak(long_text, stop_after=1, stop_with="DEBUG ON /tmp/STOP-PAUSE-CANCEL.log")
+same("dbg_mid", pcm, stub(long_text))
+check("dbg_end", end == b"702 END" and m.line() == b"200 OK DEBUGGING ON", end.decode())
+check("unknown", m.command("NO SUCH COMMAND") == b"300 ERR UNKNOWN COMMAND")
 same("char", m.speak("b" * 20, cmd="CHAR")[0], stub("b" * 20))
 same("key", m.speak("shift_a" * 4, cmd="KEY")[0], stub("shift a" * 4))
 pcm, end = m.speak("")
 check("empty", pcm == b"" and end == b"702 END")
 m.set(synthesis_voice="BraiLab PC")                     # a voice this module hasn't got: no change
 same("novoice", m.speak(TEXT)[0], stub(TEXT))
-m.quit()
+check("quit", m.quit() == b"210 OK QUIT" and m.p.returncode == 0)
 
 for label, d, want in (("absent", folder(plugin=None), None),
                        ("version", folder(plugin=STUB_OTHER), b"version"),

@@ -9,7 +9,7 @@ int sd_plugin_loaded(void);
 const char *sd_plugin_why(void);                     /* "" or why a plug-in that was there was not taken */
 
 /* Says UTF-8 text: tempo 0..9, pitch -1..1, the samples multiplied by gain.  Audio goes out through sd_io; the
- * caller sends the lines around it.  1 when a STOP ended it. */
+ * caller sends the lines around it.  Returns sd_poll_stop's answer: SD_GO when it was said to the end. */
 int sd_plugin_say(const char *utf8, int tempo, int pitch, double gain);
 void sd_plugin_close(void);
 

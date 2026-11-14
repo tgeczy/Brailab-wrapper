@@ -63,7 +63,7 @@ class Module:
         assert len(out) == 2 * n, (len(out), n)
         return bytes(out)
 
-    def speak(self, text, cmd="SPEAK", stop_after=None):
+    def speak(self, text, cmd="SPEAK", stop_after=None, stop_with="STOP"):
         self.send(cmd)
         assert self.line() == b"202 OK RECEIVING MESSAGE"
         self.send(*[("." + l if l.startswith(".") else l) for l in text.split("\n")], ".")
@@ -76,7 +76,7 @@ class Module:
                 pcm += self.audio_block(s)
                 blocks += 1
                 if blocks == stop_after:
-                    self.send("STOP")
+                    self.send(stop_with)
             else:
                 return bytes(pcm), s
 
@@ -94,6 +94,13 @@ class Module:
             if not s.startswith(b"200-"):
                 return out
 
+    def command(self, line):
+        """One command on one line, and the one line that answers it."""
+        self.send(line)
+        return self.line()
+
     def quit(self):
-        self.send("QUIT")
+        """Ends the module; returns what it answered."""
+        answer = self.command("QUIT")
         self.p.wait(10)
+        return answer

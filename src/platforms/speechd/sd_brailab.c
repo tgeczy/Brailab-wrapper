@@ -6,7 +6,8 @@
  *
  * The protocol and its audio (705 blocks, HDLC-escaped, played and flushed by the server) follow speech-dispatcher's
  * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on.  Synthesis is synchronous: stdin
- * is polled for STOP between blocks.  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
+ * is polled for STOP and PAUSE between blocks (a STOP is answered 703, a PAUSE 704, which lets the server speak the
+ * message again on RESUME).  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
  * Rate, pitch and volume come from SSIP, mapped as the NVDA driver maps its sliders.
  *
  * A third voice, "BraiLab TTS", is offered when an optional binary plug-in is in the data folder with its two data
@@ -131,13 +132,13 @@ static void speak_tts(char *text)
     sd_strip_ssml(text);
     sd_send_line("200 OK SPEAKING");
     sd_send_line("701 BEGIN");
-    if (sd_poll_stop()) {                               /* already stopped (key repeat): nothing to say */
-        sd_send_line("703 STOP");
+    if ((stopped = sd_poll_stop()) != SD_GO) {          /* already stopped (key repeat): nothing to say */
+        sd_send_end(stopped);
         return;
     }
     stopped = sd_plugin_say(text, (rate * 9 + 49) / 100, pitch <= 25 ? -1 : pitch >= 75 ? 1 : 0,
                             0.25 + to100(ssip_volume) / 100.0);
-    sd_send_line(stopped ? "703 STOP" : "702 END");
+    sd_send_end(stopped);
 }
 
 static void speak(char *text)
@@ -153,10 +154,10 @@ static void speak(char *text)
     }
     sd_strip_ssml(text);
     len = sd_to_cwi2(text);
-    if (sd_poll_stop()) {                               /* already stopped (key repeat): nothing to say */
+    if ((stopped = sd_poll_stop()) != SD_GO) {          /* already stopped (key repeat): nothing to say */
         sd_send_line("200 OK SPEAKING");
         sd_send_line("701 BEGIN");
-        sd_send_line("703 STOP");
+        sd_send_end(stopped);
         return;
     }
     sd_send_line("200 OK SPEAKING");
@@ -166,13 +167,11 @@ static void speak(char *text)
                             0.9 - 0.55 * (rate / 100.0), furcsa, intonation, 0.25 + volume / 100.0) == 0) {
         while ((n = brailab_voice_read(voice, pcm, BRAILAB_VOICE_BLOCK)) > 0) {
             sd_send_audio(pcm, n, RATE);
-            if (sd_poll_stop()) {
-                stopped = 1;
+            if ((stopped = sd_poll_stop()) != SD_GO)
                 break;
-            }
         }
     }
-    sd_send_line(stopped ? "703 STOP" : "702 END");
+    sd_send_end(stopped);
 }
 
 static char *read_text(void)
@@ -302,7 +301,18 @@ int main(int argc, char **argv)
                 free(line);
             }
             sd_send_line("203 OK SETTINGS RECEIVED");
-        } else if (!strcmp(cmd, "AUDIO") || !strcmp(cmd, "LOGLEVEL") || !strcmp(cmd, "DEBUG")) {
+        } else if (!strncmp(cmd, "DEBUG", 5)) {
+            /* "DEBUG ON <file>" or "DEBUG OFF", on one line, answered as speech-dispatcher's own modules answer.
+             * This module keeps no log of its own, so there is nothing to switch. */
+            char word[16] = "", on[8] = "";
+            sscanf(cmd, "%15s %7s", word, on);
+            if (!strcmp(word, "DEBUG") && !strcmp(on, "ON"))
+                sd_send_line("200 OK DEBUGGING ON");
+            else if (!strcmp(word, "DEBUG") && !strcmp(on, "OFF"))
+                sd_send_line("200 OK DEBUGGING OFF");
+            else
+                sd_send_line("302 ERROR BAD SYNTAX");
+        } else if (!strcmp(cmd, "AUDIO") || !strcmp(cmd, "LOGLEVEL")) {
             char *line;
             sd_send_line("202 OK RECEIVING MESSAGE");
             while ((line = sd_readline()) != NULL) {
@@ -319,6 +329,7 @@ int main(int argc, char **argv)
                     printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
             sd_send_line("249 OK VOICES LISTED");
         } else if (!strcmp(cmd, "QUIT")) {
+            sd_send_line("210 OK QUIT");             /* the server waits for it */
             free(cmd);
             break;
         } else {
