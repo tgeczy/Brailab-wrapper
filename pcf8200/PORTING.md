@@ -127,8 +127,8 @@ hold-out that nothing is tuned on, as ssi263-speech does with its hold-out set.
 - `PCF8200.tracks()` starts from the last pitch and speed given, not the first, so frames ahead
   of those commands decode wrongly. The chip would apply them in order. Fix it with the merge.
 - A sample rate setting for the add-on: the C resampler carries it, and the real box shows
-  what, if anything, sits above 5 kHz. Brightness itself is the `[ear]` low-pass, to be set
-  from the box, probably as separate voiced and noise cutoffs as BRAISPK has.
+  what, if anything, sits above 5 kHz. Brightness was set from the box in 2.1: no output
+  low-pass, and the noise source through its own low-passes (`NOISE_LOWPASS_HZ`).
 - Speed on small devices: the C core spends its time in `sin`, about 40 calls a sample at a
   low pitch. It runs some 80 times real time here. A recurrence would be far cheaper but
   rounds differently, so it needs the gate's tolerance checked first.

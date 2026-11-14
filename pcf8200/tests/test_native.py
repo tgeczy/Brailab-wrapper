@@ -31,8 +31,11 @@ OPTIONS = [
     {"gain": core.HIGHPASS_MAKEUP, "knee": core.SOFTKNEE},
     {"gain": 3.0, "knee": core.SOFTKNEE},
     {"highpass": 0},
-    {"lowpass": False},
-    {"lowpass": False, "highpass": 0},
+    {"lowpass": True},
+    {"lowpass": True, "highpass": 0},
+    {"noise_lowpass": ()},
+    {"noise_lowpass": (300.0,)},
+    {"noise_lowpass": (150.0, 0, 1400.0), "noise_gain": 5.5},
     {"source_tilt": 0},
     {"noise_gain": 0.1, "seed": 7},
     {"seed": 0},
@@ -80,6 +83,11 @@ def test_c_matches_the_reference(kw, nf):
 def test_too_many_formants_is_refused():
     with pytest.raises(ValueError):
         native.NativeCore(6)
+
+
+def test_too_many_noise_corners_are_refused():
+    with pytest.raises(ValueError):
+        native.NativeCore(5, noise_lowpass=(900.0,) * (core.NOISE_POLES + 1))
 
 
 def _commands(r, n):

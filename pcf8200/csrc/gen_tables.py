@@ -35,7 +35,7 @@ def device_params():
     fields = []
     for name, _ in p._fields_:
         value = getattr(p, name)
-        fields.append(row(value, len(value)) if name == "lp_sos" else repr(float(value)))
+        fields.append(row(value, len(value)) if hasattr(value, "__len__") else repr(float(value)))
     return "#define PCF8200_DEVICE_PARAMS {%s}\n" % ", ".join(fields)
 
 

@@ -17,6 +17,7 @@
 
 #define PCF8200_MAX_FORMANTS 5
 #define PCF8200_HIGHPASS_POLES 3
+#define PCF8200_NOISE_POLES 3
 
 /* All doubles, in this order: the Python side and pcf8200_defaults.h both write
  * this as one flat array. */
@@ -24,6 +25,7 @@ typedef struct {
     double rate;            /* internal speech rate, Hz */
     double source_tilt_hz;  /* 0 = no glottal tilt */
     double noise_gain;
+    double noise_lowpass_hz[PCF8200_NOISE_POLES];   /* one-pole low-passes on the noise; 0 = unused */
     double pitch_min_hz;
     double pitch_max_hz;
     double harmonic_fade;
@@ -45,6 +47,8 @@ typedef struct {
     double y1[PCF8200_MAX_FORMANTS], y2[PCF8200_MAX_FORMANTS];
     double lz[4];
     double hx[PCF8200_HIGHPASS_POLES], hy[PCF8200_HIGHPASS_POLES];
+    double na[PCF8200_NOISE_POLES], nz[PCF8200_NOISE_POLES];   /* the noise low-passes in use */
+    int nn;                 /* how many of them */
     uint32_t noise;
 } pcf8200_core;
 

@@ -25,7 +25,9 @@ _c_ubyte_p = ctypes.POINTER(ctypes.c_ubyte)
 class _Params(ctypes.Structure):
     """Mirror of pcf8200_params (csrc/pcf8200.h): all doubles, in the header's order."""
     _fields_ = [("rate", ctypes.c_double), ("source_tilt_hz", ctypes.c_double),
-                ("noise_gain", ctypes.c_double), ("pitch_min_hz", ctypes.c_double),
+                ("noise_gain", ctypes.c_double),
+                ("noise_lowpass_hz", ctypes.c_double * core.NOISE_POLES),
+                ("pitch_min_hz", ctypes.c_double),
                 ("pitch_max_hz", ctypes.c_double), ("harmonic_fade", ctypes.c_double),
                 ("lowpass", ctypes.c_double), ("lp_sos", ctypes.c_double * 10),
                 ("highpass_hz", ctypes.c_double), ("gain", ctypes.c_double),
@@ -33,12 +35,17 @@ class _Params(ctypes.Structure):
 
 
 def params(source_tilt=core.TILT_HZ, noise_gain=core.NOISE_GAIN, seed=core.SEED,
-           lowpass=True, highpass=core.HIGHPASS_HZ, gain=1.0, knee=0.0):
+           lowpass=False, highpass=core.HIGHPASS_HZ, gain=1.0, knee=0.0,
+           noise_lowpass=core.NOISE_LOWPASS_HZ):
     """The struct for these Core arguments."""
     p = _Params()
     p.rate = core.RATE
     p.source_tilt_hz = source_tilt or 0.0
     p.noise_gain = noise_gain
+    corners = [float(hz) for hz in (noise_lowpass or ()) if hz]
+    if len(corners) > core.NOISE_POLES:
+        raise ValueError("noise_lowpass: at most %d corners" % core.NOISE_POLES)
+    p.noise_lowpass_hz[:] = corners + [0.0] * (core.NOISE_POLES - len(corners))
     p.pitch_min_hz = core.PITCH_MIN_HZ
     p.pitch_max_hz = core.PITCH_MAX_HZ
     p.harmonic_fade = core.HARMONIC_FADE

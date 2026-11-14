@@ -25,7 +25,7 @@ def test_fused_highpass_is_bit_identical_to_three_passes(monkeypatch):
     monkeypatch.setenv("PCF8200_BACKEND", "python")
     fc, bw, amp, p, voiced = _tracks()
     fused = render(fc, bw, amp, p, voiced)                 # default path: fused
-    bare = render(fc, bw, amp, p, voiced, highpass=0)      # cascade + low-pass only
+    bare = render(fc, bw, amp, p, voiced, highpass=0)      # the cascade only
     three = _apply_highpass(bare, HIGHPASS_HZ, RATE)        # the old three passes
     assert fused.shape == three.shape
     assert np.array_equal(fused, three)

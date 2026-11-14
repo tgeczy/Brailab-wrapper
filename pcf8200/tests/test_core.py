@@ -36,6 +36,9 @@ def _run(block, **kw):
     {"highpass": 0, "lowpass": False},
     {"source_tilt": 0, "gain": 0.9315, "knee": 0.75},
     {"seed": 7, "noise_gain": 0.25},
+    {"lowpass": True},
+    {"noise_lowpass": ()},
+    {"noise_lowpass": (150.0, 1100.0, 1400.0), "noise_gain": 5.5},
 ])
 @pytest.mark.parametrize("block", [1, 7, 128, 1000])
 def test_any_block_split_is_bit_identical(block, kw):
@@ -60,6 +63,39 @@ def test_noise_is_uniform_at_the_asked_level():
     assert v.min() >= -0.5 and v.max() < 0.5
     assert abs(v.mean()) < 0.005
     assert abs(v.std() - 0.5 / 3 ** 0.5) < 0.002
+
+
+def test_noise_runs_through_its_one_pole_lowpasses():
+    """Written out here as the recurrence C repeats: y = (1 - a) x + a y, per corner."""
+    import math
+    corners = (900.0, 300.0)
+    c = core.Core(1, noise_lowpass=corners, noise_gain=0.5)
+    got = np.concatenate([c._noise(5), c._noise(120)])
+    want = core.Noise().block(125, 0.5).tolist()
+    for hz in corners:
+        a = math.exp(-2.0 * math.pi * hz / core.RATE)
+        y = 0.0
+        for k in range(len(want)):
+            y = (1.0 - a) * want[k] + a * y
+            want[k] = y
+    assert got.tolist() == want
+
+
+def test_the_noise_source_is_low_passed_by_default():
+    """The measured chip: far more noise under 500 Hz than at 4 kHz."""
+    x = core.Core(1)._noise(1 << 16)
+    spec = np.abs(np.fft.rfft(x)) ** 2
+    f = np.fft.rfftfreq(len(x), 1.0 / core.RATE)
+    low = spec[(f > 100) & (f < 500)].mean()
+    high = spec[(f > 3800) & (f < 4200)].mean()
+    assert 28.0 < 10 * np.log10(low / high) < 34.0
+    white = core.Core(1, noise_lowpass=())._noise(1000)
+    assert np.array_equal(white, core.Noise().block(1000, core.NOISE_GAIN))
+
+
+def test_more_noise_corners_than_the_c_core_holds_are_refused():
+    with pytest.raises(ValueError):
+        core.Core(1, noise_lowpass=(900.0,) * (core.NOISE_POLES + 1))
 
 
 def test_pitch_outside_the_range_is_held_to_it():

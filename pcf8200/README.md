@@ -10,8 +10,8 @@ chip's *own command stream* (5-byte frames + control writes), or phonetically
 from formant frequencies. It speaks whatever formants you give it — Hungarian,
 Spanish, **Polish**, a sine sweep, anything.
 
-Only dependency: **numpy**. (scipy is used *only* if you ask for a non-default
-output low-pass; the default path is scipy-free.)
+Only dependency: **numpy**. (scipy is used *only* if you ask for an output
+low-pass at a cutoff other than 4200 Hz; by default there is none.)
 
 ```
 pip install pcf8200-2.0.0-py3-none-<your platform>.whl
@@ -25,6 +25,14 @@ Set `PCF8200_BACKEND=python` to force the reference, or `native` to insist on C.
 
 Version 2.0 changes the noise generator, so a given seed gives different noise samples
 than 1.x did. It is the same kind of noise.
+
+Version 2.1 changes the sound of noise, from a measurement of a real chip (a BraiLab PC's
+line output, November 2026). The chip's noise source is not white: it falls steeply with
+frequency, so it is now run through three one-pole low-passes at 900 Hz, at a level set
+against the chip's voiced sound, and the output low-pass is off. Hiss built for white
+noise, like `Voice.fricative` with wide formants above 4 kHz, comes out much quieter than
+in 2.0: the chip's own speech gets its s from narrow, high formants. For the old sound
+pass `noise_lowpass=(), noise_gain=0.35, lowpass=4200` to `render`.
 
 ---
 
@@ -103,9 +111,9 @@ sounds. The chip renders whatever you feed it.
 
 ## How it works
 
-Periodic-pulse (band-limited sawtooth) or noise excitation → a gentle glottal
-tilt → **five cascaded resonators** (`y(n)=x(n)+B·F·y(n-1)−B²·y(n-2)`, with
-`F=2cos(2π·fc/fs)`, `B=exp(−π·bw/fs)`) → an output low-pass. Internal rate 10 kHz;
+Periodic-pulse excitation (a band-limited sawtooth with a gentle glottal tilt) or
+low-passed noise → **five cascaded resonators** (`y(n)=x(n)+B·F·y(n-1)−B²·y(n-2)`, with
+`F=2cos(2π·fc/fs)`, `B=exp(−π·bw/fs)`). Internal rate 10 kHz;
 ask for any output rate and it band-limit-resamples.
 
 ## Credits & license

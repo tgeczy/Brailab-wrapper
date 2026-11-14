@@ -269,6 +269,9 @@ measurements are still in the repo and look persuasive:
 | `MALE_FORMANTS` | 4 (log-spectral distance) | 5 -- LSD measured the wrong thing |
 | `CODEC_OFFSET` | +1 from thesis values | 0 -- +1 read as "slightly furcsa" |
 
+(That `NOISE_GAIN` row is brai_synth's. The chip core's noise in `pcf8200_core.py` was
+set in November 2026 from a real BraiLab PC, and there the ear and the measurement agreed.)
+
 The pattern is consistent enough to be a rule: when a band metric and the ear
 disagree, the ear wins. The metrics are useful for finding *bugs* (a 40% pitch
 sag, fricatives at twice the right level) and misleading for choosing *taste*.

@@ -49,11 +49,13 @@ STEP = STD // 8                        # 16 samples = one of the 8 interp steps
 # the reasoning behind each value.
 CHIP_TILT_HZ = core.TILT_HZ
 CHIP_LOWPASS_HZ = core.LOWPASS_HZ
+CHIP_LP_SOS_HZ = core.LP_SOS_HZ
 CHIP_HIGHPASS_HZ = core.HIGHPASS_HZ
 CHIP_HIGHPASS_POLES = core.HIGHPASS_POLES
 CHIP_HIGHPASS_MAKEUP = core.HIGHPASS_MAKEUP
 CHIP_SOFTKNEE = core.SOFTKNEE
 CHIP_NOISE_GAIN = core.NOISE_GAIN
+CHIP_NOISE_LOWPASS_HZ = core.NOISE_LOWPASS_HZ
 
 
 def _interp_formants(prev, cur, frac, nf):
@@ -278,16 +280,18 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
 
 
 def _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt, seed,
-                   scale, lp_default, block, highpass=CHIP_HIGHPASS_HZ):
+                   scale, lp_default, block, highpass=CHIP_HIGHPASS_HZ,
+                   noise_lowpass=CHIP_NOISE_LOWPASS_HZ):
     """The chip's audio, YIELDED in ~`block`-sample float arrays as it goes (block
     <= 0 => a single array).  core.Core carries every state across blocks, so
     concatenating the yields is bit-identical to a single pass.  Streaming the
     excitation as well as the cascade is what keeps first-audio ~one block long
-    even for an 18 s paragraph.  Non-default lowpass is added by the caller
-    afterwards, so here lp_default False means cascade only."""
+    even for an 18 s paragraph.  A lowpass other than the core's own is added by
+    the caller afterwards, so here lp_default False means cascade only."""
     # Makeup and knee are both the *amplifier*, so they arrive together: with
     # highpass=0 the caller asked for the bare chip and gets no output stage.
     c = core.make_core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
+                       noise_lowpass=noise_lowpass,
                        lowpass=lp_default, highpass=highpass,
                        gain=scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0),
                        knee=CHIP_SOFTKNEE if highpass else 0.0)
@@ -311,7 +315,8 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                      pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                      source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                      highpass=CHIP_HIGHPASS_HZ,
-                     flat_pitch=False, furcsa_override=None, **_ignored):
+                     flat_pitch=False, furcsa_override=None,
+                     noise_lowpass=CHIP_NOISE_LOWPASS_HZ, **_ignored):
     """Fast whole-utterance render: per-sample continuous interpolation, no a0,
     band-limited excitation, and the five-formant cascade as ONE manual per-sample
     loop (no scipy.lfilter per-call overhead).  Thin wrapper over _render_prep +
@@ -324,10 +329,10 @@ def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         furcsa_override=furcsa_override)
     if N == 0:
         return np.zeros(0)
-    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
+    lp_default = bool(lowpass) and abs(lowpass - CHIP_LP_SOS_HZ) < 1e-6
     sig = np.concatenate(list(_render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain,
                                              source_tilt, seed, scale, lp_default, 0,
-                                             highpass)))
+                                             highpass, noise_lowpass)))
     if lowpass and not lp_default:
         from scipy.signal import butter, sosfilt
         sig = sosfilt(butter(4, lowpass, 'low', fs=FS, output='sos'), sig)
@@ -343,24 +348,25 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
                        pitch_mode='cumulative', seed=12345, noise_gain=CHIP_NOISE_GAIN, scale=1.0,
                        source_tilt=CHIP_TILT_HZ, lowpass=CHIP_LOWPASS_HZ,
                        highpass=CHIP_HIGHPASS_HZ,
-                       flat_pitch=False, furcsa_override=None, block=4000, **_ignored):
+                       flat_pitch=False, furcsa_override=None, block=4000,
+                       noise_lowpass=CHIP_NOISE_LOWPASS_HZ, **_ignored):
     """Generator form of render_chip_fast: yields the SAME samples in order, in
     ~`block`-sample float chunks, AS they are produced -- so the NVDA driver can
     start playing ~block/CHIP_RATE seconds in while the rest still renders, with
     ZERO change to the audio (one continuous render, one intonation contour, no
     per-piece fades).  Invariant:
         np.concatenate(list(render_chip_stream(seq))) == render_chip_fast(seq)
-    Only the default path streams (out_rate == CHIP_RATE and default/off lowpass);
-    any other config yields the whole render in a single chunk."""
+    Only the core's own paths stream (out_rate == CHIP_RATE, and lowpass off or at
+    the core's cutoff); any other config yields the whole render in a single chunk."""
     FS = CHIP_RATE
-    lp_default = bool(lowpass) and abs(lowpass - CHIP_LOWPASS_HZ) < 1e-6
+    lp_default = bool(lowpass) and abs(lowpass - CHIP_LP_SOS_HZ) < 1e-6
     if out_rate != FS or (lowpass and not lp_default):
         x = render_chip_fast(
             seq, out_rate=out_rate, source=source, a0=a0, ampl_compress=ampl_compress,
             time_scale=time_scale, real=real, pitch_byte=pitch_byte, pitch_mode=pitch_mode,
             seed=seed, noise_gain=noise_gain, scale=scale, source_tilt=source_tilt,
             lowpass=lowpass, highpass=highpass, flat_pitch=flat_pitch,
-            furcsa_override=furcsa_override)
+            furcsa_override=furcsa_override, noise_lowpass=noise_lowpass)
         if len(x):
             yield x
         return
@@ -372,4 +378,4 @@ def render_chip_stream(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
     if N == 0:
         return
     yield from _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt,
-                              seed, scale, lp_default, block, highpass)
+                              seed, scale, lp_default, block, highpass, noise_lowpass)

@@ -8,11 +8,12 @@ module without the rest of the package.
 
 The chip runs a periodic-pulse / noise excitation into five cascaded resonators
 (y(n)=x(n)+B*F*y(n-1)-B**2*y(n-2), F=2cos(2*pi*fc/fs), B=exp(-pi*bw/fs)), with a
-gentle glottal tilt and an output low-pass.
+gentle glottal tilt on the voice and a low-passed noise source.
 
 Every uncertain constant is here, marked with where it came from:
 
     [chip]    fixed by the silicon, from the datasheet
+    [box]     measured on the line output of a real BraiLab PC (November 2026)
     [ear]     matched by ear to TTS.dll; the real BraiLab PC may overrule it
     [device]  the amplifier after the chip, not the chip itself
     [model]   a modelling choice
@@ -24,9 +25,29 @@ import numpy as np
 
 RATE = 10000                 # [chip] internal speech rate
 TILT_HZ = 600.0              # [ear] glottal source rolloff (tames the bright buzz)
-LOWPASS_HZ = 4200.0          # [ear] output low-pass (was 2600 to 2.0.0; see LP_SOS)
-NOISE_GAIN = 0.35            # [ear] level of the noise source (0.5 to 4.0.0; two listeners
-                             # preferred 0.35 at the 4200 Hz low-pass: clearer s/sz, not sharp)
+LOWPASS_HZ = 0.0             # [box] no output low-pass (4200 to 2.0.0; see LP_SOS)
+LP_SOS_HZ = 4200.0           # the low-pass a caller can still ask for by this cutoff
+
+#: [box] The noise source: its level, and the one-pole low-passes it runs through.
+#:
+#: The chip's noise is not white.  A real PCF8200 was sent noise through a tract
+#: with all five formants at their widest bandwidth, where the tract shapes least,
+#: and the same frames were run here with white noise.  The box's spectrum over
+#: this one's is, against its value at 150 Hz, 14 dB down at 750 Hz, 28 dB at
+#: 2 kHz and 40 dB at 4 kHz, the same within 0.3 dB in four holds, two per
+#: quantization table.  Three one-pole low-passes at 900 Hz with a gain of 1.70
+#: follow that from 500 Hz to 4 kHz within 0.7 dB, and put noise through a vowel's
+#: formants 1 dB below the box's, measured against the same vowel voiced.  White
+#: noise at 0.35, the value to 2.0.0, was 8 dB too quiet there, and in the tract
+#: above 15 to 20 dB too weak below 500 Hz and 18 dB too strong at 4 kHz: the hiss
+#: was thin and sharp.
+#:
+#: Below 500 Hz the box has more still than this gives: 2 dB at 400 Hz, 7 dB at
+#: 150 Hz.  Corners of 150, 1100 and 1400 Hz with a gain of 5.5 follow the whole
+#: band within 0.6 dB rms; whether that is the better sound is for the ear to say.
+NOISE_GAIN = 1.70
+NOISE_LOWPASS_HZ = (900.0, 900.0, 900.0)
+NOISE_POLES = 3              # as many as the C core holds
 SEED = 12345                 # [model] where the noise source starts
 PITCH_MIN_HZ = 40.0          # [model] floor of the pitch the source will follow
 PITCH_MAX_HZ = 400.0         # [model] ceiling of the same
@@ -66,7 +87,11 @@ SOFTKNEE = 0.75
 
 # butter(4, 4200, 'low', fs=10000) as two second-order sections (b0,b1,b2,a1,a2;
 # a0=1), hardcoded so no scipy is needed.  Regenerate with
-# scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if LOWPASS_HZ moves.
+# scipy.signal.butter(4, hz, 'low', fs=10000, output='sos') if LP_SOS_HZ moves.
+#
+# Off by default since 2.1.0.  The box's line output, compared with the same
+# frames run here, follows the unfiltered render within about 1 dB up to 4.5 kHz;
+# this filter is 8 dB down by 4.4 kHz.  It stays for callers who ask.
 #
 # 2600 Hz was tuned against TTS.dll, where it hid an F5 buzz.  But the chip's own
 # frames put F4 near 3.25 kHz and F5 at 3.9 or 4.6 kHz, and Arato places his
@@ -151,16 +176,24 @@ class Core:
     returns its audio; every filter, the phase and the noise carry across calls,
     so any split of the same samples gives the same output, bit for bit.
 
+    noise_lowpass  hertz of each one-pole low-pass on the noise source, up to
+                   NOISE_POLES of them; () for white noise
     lowpass     True runs the LP_SOS sections in the loop
     highpass    hertz of the output high-pass in the loop; 0 for none
     gain, knee  applied last: the makeup gain and the soft knee
     """
 
     def __init__(self, nf, source_tilt=TILT_HZ, noise_gain=NOISE_GAIN, seed=SEED,
-                 lowpass=True, highpass=HIGHPASS_HZ, gain=1.0, knee=0.0):
+                 lowpass=False, highpass=HIGHPASS_HZ, gain=1.0, knee=0.0,
+                 noise_lowpass=NOISE_LOWPASS_HZ):
         self.nf = nf
         self.noise_gain = noise_gain
         self.noise = Noise(seed)
+        corners = [float(hz) for hz in (noise_lowpass or ()) if hz]
+        if len(corners) > NOISE_POLES:
+            raise ValueError('noise_lowpass: at most %d corners' % NOISE_POLES)
+        self.na = [math.exp(-2.0 * math.pi * hz / RATE) for hz in corners]
+        self.nz = [0.0] * len(corners)       # noise low-passes
         self.tilt = math.exp(-2.0 * math.pi * source_tilt / RATE) if source_tilt else None
         self.lowpass = bool(lowpass)
         self.ha = math.exp(-2.0 * math.pi * float(highpass) / RATE) if highpass else None
@@ -208,19 +241,35 @@ class Core:
             vsrc = np.asarray(vl)
         return vsrc
 
+    def _noise(self, n):
+        """The next n values of the noise source, low-passed."""
+        noise = self.noise.block(n, self.noise_gain)
+        if not self.na:
+            return noise
+        nl = noise.tolist()
+        for i, a in enumerate(self.na):
+            c0 = 1.0 - a
+            yp = self.nz[i]
+            for k in range(n):
+                yp = c0 * nl[k] + a * yp
+                nl[k] = yp
+            self.nz[i] = yp
+        return np.asarray(nl)
+
     def run(self, amp, pitch, voiced, fc, bw):
         """Audio for the next block.  amp, pitch (Hz) and voiced (bool) are arrays
         of one length; fc and bw hold one such array per formant, in hertz.
 
         Both sources run on every sample, whichever one is heard: the phase and
-        the tilt advance through noise, and the noise through voicing."""
+        the tilt advance through noise, and the noise and its low-passes through
+        voicing."""
         n = len(amp)
         if n == 0:
             return np.zeros(0)
         nf = self.nf
         p = np.clip(pitch, PITCH_MIN_HZ, PITCH_MAX_HZ)
         vsrc = self._voiced(p)
-        noise = self.noise.block(n, self.noise_gain)
+        noise = self._noise(n)
         xl = (np.where(voiced, vsrc, noise) * amp).tolist()
 
         # ---- five-formant cascade (+ low-pass, high-pass), per-sample loop ----

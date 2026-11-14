@@ -9,14 +9,14 @@ it with ANY phonetics -- Polish, Klingon, a sine sweep, whatever.
 
 The chip runs a periodic-pulse / noise excitation into five cascaded resonators
 (y(n)=x(n)+B*F*y(n-1)-B**2*y(n-2), F=2cos(2*pi*fc/fs), B=exp(-pi*bw/fs)), with a
-gentle glottal tilt and an output low-pass.  Internal rate is 10 kHz; ask for any
-output rate and it band-limit-resamples.
+gentle glottal tilt on the voice and a low-passed noise source.  Internal rate is
+10 kHz; ask for any output rate and it band-limit-resamples.
 """
 import numpy as np
 
-from .pcf8200_core import (make_core, RATE, TILT_HZ, LOWPASS_HZ, HIGHPASS_HZ, HIGHPASS_POLES,
-                           HIGHPASS_MAKEUP, SOFTKNEE, NOISE_GAIN, SEED,
-                           soft_knee as _soft_knee)
+from .pcf8200_core import (make_core, RATE, TILT_HZ, LOWPASS_HZ, LP_SOS_HZ, HIGHPASS_HZ,
+                           HIGHPASS_POLES, HIGHPASS_MAKEUP, SOFTKNEE, NOISE_GAIN,
+                           NOISE_LOWPASS_HZ, SEED, soft_knee as _soft_knee)
 
 
 def _resample(x, src, dst):
@@ -60,7 +60,7 @@ def _apply_highpass(sig, fc, rate):
 
 def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
            lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=NOISE_GAIN,
-           seed=SEED):
+           seed=SEED, noise_lowpass=NOISE_LOWPASS_HZ):
     """Render formant tracks to a float waveform (roughly -1..1).
 
     Parameters
@@ -71,6 +71,8 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     pitch : array (N,) or scalar    F0 in Hz
     voiced : array (N,) bool        True = voiced (pulse), False = noise/fricative
     rate : int                      output sample rate (resampled from 10 kHz)
+    lowpass : hertz                 output low-pass; 0, the default, for none
+    noise_lowpass : hertz, ...      one-pole low-passes on the noise source; () for white
     """
     fc = np.atleast_2d(np.asarray(fc, dtype=float))
     bw = np.atleast_2d(np.asarray(bw, dtype=float))
@@ -80,10 +82,10 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     amp = np.broadcast_to(np.asarray(amp, dtype=float), (N,)).astype(float)
     pitch = np.broadcast_to(np.asarray(pitch, dtype=float), (N,)).astype(float)
     voiced = np.ones(N, bool) if voiced is None else np.asarray(voiced, bool)
-    # Only the default cutoff is the fused, scipy-free pair of sections.  Any
-    # other cutoff is applied after the cascade instead -- running both would
-    # filter twice at two different frequencies.
-    lp = bool(lowpass) and abs(lowpass - LOWPASS_HZ) < 1e-6
+    # Only LP_SOS_HZ is the fused, scipy-free pair of sections.  Any other
+    # cutoff is applied after the cascade instead -- running both would filter
+    # twice at two different frequencies.
+    lp = bool(lowpass) and abs(lowpass - LP_SOS_HZ) < 1e-6
     # The device's three output high-pass poles ride in the same loop when
     # nothing sits between the cascade and them (no resampling, no scipy
     # low-pass): three one-poles applied one after another per sample perform
@@ -91,11 +93,12 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     # same order, so the result is bit-identical.
     hp = bool(highpass) and rate == RATE and (lp or not lowpass)
     core = make_core(nf, source_tilt=source_tilt, noise_gain=noise_gain, seed=seed,
+                     noise_lowpass=noise_lowpass,
                      lowpass=lp, highpass=highpass if hp else 0,
                      gain=HIGHPASS_MAKEUP if hp else 1.0, knee=SOFTKNEE if hp else 0.0)
     sig = core.run(amp, pitch, voiced, fc, bw)
     if lowpass and not lp:
-        # Non-default cutoff: needs scipy (optional); the default path above is
+        # Any other cutoff: needs scipy (optional); the paths above are
         # scipy-free.  This filters the cascade OUTPUT.  It used to be handed
         # `exc` -- the raw excitation -- which silently discarded every formant
         # and returned a lowpassed buzz for any cutoff but the default.

@@ -18,11 +18,15 @@ int pcf8200_core_size(void)
 
 int pcf8200_init(pcf8200_core *c, int nf, const pcf8200_params *p)
 {
+    int i;
     if (nf < 1 || nf > PCF8200_MAX_FORMANTS)
         return -1;
     memset(c, 0, sizeof *c);
     c->p = *p;
     c->nf = nf;
+    for (i = 0; i < PCF8200_NOISE_POLES; i++)
+        if (p->noise_lowpass_hz[i] != 0.0)
+            c->na[c->nn++] = exp(-2.0 * PI * p->noise_lowpass_hz[i] / p->rate);
     if (p->source_tilt_hz != 0.0)
         c->tilt = exp(-2.0 * PI * p->source_tilt_hz / p->rate);
     if (p->highpass_hz != 0.0)
@@ -101,6 +105,10 @@ void pcf8200_run(pcf8200_core *c, const double *amp, const double *pitch,
             src = c->ty;
         }
         noise = next_noise(c, noise_scale, q->noise_gain);
+        for (i = 0; i < c->nn; i++) {
+            c->nz[i] = (1.0 - c->na[i]) * noise + c->na[i] * c->nz[i];
+            noise = c->nz[i];
+        }
         v = (voiced[s] ? src : noise) * amp[s];
 
         for (i = 0; i < nf; i++) {

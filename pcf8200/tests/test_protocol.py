@@ -185,7 +185,7 @@ def test_custom_lowpass_still_has_the_formants():
     The custom path used to be handed `exc` -- the raw excitation -- because
     `xl = exc.tolist()` copies, leaving `exc` pristine while the cascade wrote
     into the list.  Every formant was discarded and the caller got a lowpassed
-    buzz.  The default cutoff was fine, so nothing caught it.
+    buzz.  The fused cutoff was fine, so nothing caught it.
 
     Skipped without scipy, which CI deliberately does not install: a non-default
     cutoff is the one path in the library that needs it, and keeping the rest
@@ -194,13 +194,13 @@ def test_custom_lowpass_still_has_the_formants():
     import pytest
     pytest.importorskip("scipy")
     import numpy as np
-    from pcf8200.chip import render, LOWPASS_HZ
+    from pcf8200.chip import render, LP_SOS_HZ
     chip = PCF8200(voice="male").pitch_hz(110)
     for _ in range(24):
         chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
     fc, bw, amp, p, voiced = chip.tracks()
 
-    default = render(fc, bw, amp, p, voiced, lowpass=LOWPASS_HZ)
+    default = render(fc, bw, amp, p, voiced, lowpass=LP_SOS_HZ)
     custom = render(fc, bw, amp, p, voiced, lowpass=3000.0)
 
     n = min(len(default), len(custom))
