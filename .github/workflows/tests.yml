@@ -73,6 +73,10 @@ jobs:
           python src/platforms/speechd/test_sd_plugin.py build/linux/sd_brailab
           build/linux/test/libbrailab_tts.so build/linux/test/libbrailab_tts_other.so
 
+      # install.sh and uninstall.sh on a real package, against scratch folders.
+      - name: Run the installer's test
+        run: sh src/platforms/speechd/test_install.sh
+
       # chip_synth's pitch control, which NVDA's capital pitch change rides on.
       # Needs numpy only -- the sequences are built in the tests rather than
       # captured, so no Unicorn and no TALKHUN.
