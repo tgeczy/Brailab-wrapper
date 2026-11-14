@@ -57,6 +57,11 @@ def frame(F, B, pi=0, am=0, fd=0):
     assert 0 <= f1 < 32 and 0 <= f2 < 32 and 0 <= f3 < 8 and 0 <= f4 < 8 and 0 <= f5 < 2
     assert 0 <= b1 < 8 and 0 <= b2 < 8 and 0 <= b3 < 4 and 0 <= b4 < 4 and 0 <= b5 < 4
     assert 0 <= pi < 32 and 0 <= am < 16 and 0 <= fd < 4
+    # A frame cannot start with a zero byte: that is how a command write starts, and the chip
+    # takes it for one.  The first CHIP1 held F1 code 0 at B1 code 0 and the real box read the
+    # next byte as a command; the unit came out 1.7 s short and wrong from that hold on.
+    if b1 == 0 and f1 == 0:
+        raise ValueError('F1 code 0 with B1 code 0 makes the first byte 00: a command write to the chip')
     return bytes([b1 << 5 | f1, f5 << 7 | b5 << 5 | pi, (fd >> 1) << 7 | f3 << 4 | am,
                   (fd & 1) << 7 | b3 << 5 | f2, b4 << 6 | f4 << 3 | b2])
 
@@ -129,7 +134,7 @@ def chip1():
     out.append('Források.')
     u = Unit('flat-noise')
     u.hold('flat', 2.0, OFF_F, OFF_B, pi=NOISE, am=13)
-    u.hold('flat', 1.0, (0, 0, 0, 0, 0), OFF_B, pi=NOISE, am=13, what='all F codes lowest')
+    u.hold('flat', 1.0, (1, 0, 0, 0, 0), OFF_B, pi=NOISE, am=13, what='all F codes lowest (F1 one above: see frame)')
     u.hold('flat', 1.0, (31, 31, 7, 7, 1), OFF_B, pi=NOISE, am=13, what='all F codes highest')
     u.hold('flat', 0.6, OFF_F, OFF_B, pi=NOISE, am=13)
     out.append(u)
