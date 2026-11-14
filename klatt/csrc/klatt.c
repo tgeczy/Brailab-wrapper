@@ -156,6 +156,7 @@ typedef struct {
     int source;             /* SS */
     int all_parallel;       /* SW */
     int tap;                /* OS */
+    int parallel_corrections;   /* K80's corrections of A1..A6: on or off */
 
     /* the source parameters of the last frame: they wait for a glottal opening */
     double next_f0, next_av, next_avs, next_oq, next_tl, next_fl;
@@ -556,16 +557,25 @@ void klatt_set_frame(void *state, const klatt_frame *in)
      * 10 dB whatever the distance (negative too); and the one division is by an
      * F2 that is not let under F2_SKIRT_MIN here.  (As F2 goes to 0 so does what
      * the first difference passes, and undoing that would take a gain without
-     * limit.) */
+     * limit.)
+     * The config can turn all of this off. */
     d1 = f[0] / 500.0;
     d2 = (f[1] > F2_SKIRT_MIN ? f[1] : F2_SKIRT_MIN) / 1500.0;
     near[0] = proximity_db(f[1] - f[0]);
     near[1] = proximity_db(f[2] - f[1] - 50.0);
     near[2] = proximity_db(f[3] - f[2] - 150.0);
     for (i = 0; i < KLATT_FORMANTS; i++) {
-        const double skirt = i == 0 ? 1.0 : i == 1 ? d1 * d1 / d2 : d1 * d1 * d2 * d2;
-        const double boost = NEAR[i][0] * near[0] + NEAR[i][1] * near[1] + NEAR[i][2] * near[2];
-        s->amp[i] = skirt * level(hold(in->a[i], 0.0, AMP_MAX), boost + DB_A[i]);
+        const double a = hold(in->a[i], 0.0, AMP_MAX);
+        if (s->parallel_corrections) {
+            const double skirt = i == 0 ? 1.0 : i == 1 ? d1 * d1 / d2 : d1 * d1 * d2 * d2;
+            const double boost = NEAR[i][0] * near[0] + NEAR[i][1] * near[1] + NEAR[i][2] * near[2];
+            s->amp[i] = skirt * level(a, boost + DB_A[i]);
+        } else {
+            /* The later KLSYN88 makes none of these corrections: a parallel
+             * formant's amplitude is what its control says, wherever the other
+             * formants are.  The scale factors stay K80's. */
+            s->amp[i] = level(a, DB_A[i]);
+        }
     }
     s->amp_nasal = level(hold(in->an, 0.0, AMP_MAX), DB_AN);
     s->amp_bypass = level(hold(in->ab, 0.0, AMP_MAX), DB_AB);
@@ -712,6 +722,7 @@ void klatt_config_defaults(klatt_config *c)
     c->tap = TAP_OUTPUT;
     c->seed = 8.0;
     c->gain_db = 47.0;
+    c->parallel_corrections = 1.0;      /* K80's parallel branch */
 }
 
 void klatt_frame_defaults(klatt_frame *f)
@@ -755,6 +766,7 @@ int klatt_init(void *state, const klatt_config *c)
         || !whole(c->source, SOURCE_IMPULSIVE, SOURCE_KLGLOTT88)
         || !whole(c->all_parallel, 0.0, 1.0)
         || !whole(c->tap, TAP_OUTPUT, TAP_FRICATION)
+        || !whole(c->parallel_corrections, 0.0, 1.0)
         || c->seed != c->seed || c->gain_db != c->gain_db)
         return -1;
 
@@ -767,6 +779,7 @@ int klatt_init(void *state, const klatt_config *c)
     s->source = (int)c->source;
     s->all_parallel = (int)c->all_parallel;
     s->tap = (int)c->tap;
+    s->parallel_corrections = (int)c->parallel_corrections;
 
     /* the seed is scrambled so that neighbouring seeds give unrelated noise;
      * an xorshift must not start at 0 */

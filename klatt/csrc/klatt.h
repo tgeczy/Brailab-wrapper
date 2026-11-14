@@ -37,6 +37,12 @@ typedef struct {
                                   enters the parallel branch */
     double seed;               /* RS.  8; a 32-bit unsigned value */
     double gain_db;            /* G0.  47; 0 to 80 */
+    double parallel_corrections;   /* 1.  1 = K80's automatic corrections of A1..A6
+                                  (II-G): each parallel formant's amplitude follows
+                                  the formants below it and rises when two come
+                                  close, so the branch can stand in for the cascade.
+                                  0 = none, as in the later KLSYN88: an amplitude is
+                                  what the frame says */
 } klatt_config;
 
 /* What may change from frame to frame (K80 Table I, K90 Table XII).  The source

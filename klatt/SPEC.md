@@ -48,6 +48,11 @@ Vocal tract, as K80's block diagram:
 - Resonators are K80's: y(n) = A x(n) + B y(n-1) + C y(n-2) with
   C = -exp(-2 pi BW T), B = 2 exp(-pi BW T) cos(2 pi F T), A = 1 - B - C; an
   antiresonator is its inverse.
+- K80 (II-G) corrects the parallel formants' amplitudes automatically, for the
+  formants below each one and for two formants coming close, so that the
+  parallel branch can stand in for the cascade.  The later KLSYN88 has no such
+  correction: its parallel amplitudes are what the frame says.  The config's
+  `parallel_corrections` chooses: 1, the default, is K80's rules; 0 is none.
 - Amplitudes in dB become linear factors with K80's scale factors and overall
   gain G0.  AF and AH are interpolated linearly across a frame; K80's burst
   rule for a jump in AF is kept.
@@ -73,6 +78,7 @@ typedef struct {
                                   enters the parallel branch */
     double seed;               /* RS.  8; a 32-bit unsigned value */
     double gain_db;            /* G0.  47 */
+    double parallel_corrections; /* 1 = K80's automatic corrections of A1..A6; 0 = none.  1 */
 } klatt_config;
 
 typedef struct {

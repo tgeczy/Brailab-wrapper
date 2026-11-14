@@ -16,7 +16,7 @@ import numpy as np
 _c_double_p = ctypes.POINTER(ctypes.c_double)
 
 CONFIG_FIELDS = ("sample_rate", "samples_per_frame", "n_cascade", "source", "all_parallel",
-                 "tap", "seed", "gain_db")
+                 "tap", "seed", "gain_db", "parallel_corrections")
 TAP_OUTPUT, TAP_VOICING, TAP_ASPIRATION, TAP_FRICATION = 0, 1, 2, 3
 SOURCE_IMPULSIVE, SOURCE_KLGLOTT88 = 1, 2
 

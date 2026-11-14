@@ -83,7 +83,7 @@ def test_resonator_coefficients_are_k80s(F, BW):
 
 def test_defaults_are_the_papers():
     c = kn.default_config()
-    assert [getattr(c, n) for n in kn.CONFIG_FIELDS] == [10000.0, 50.0, 5.0, 2.0, 0.0, 0.0, 8.0, 47.0]
+    assert [getattr(c, n) for n in kn.CONFIG_FIELDS] == [10000.0, 50.0, 5.0, 2.0, 0.0, 0.0, 8.0, 47.0, 1.0]
     f = kn.default_frame()
     assert (f.f0, f.av, f.avs, f.ah, f.af, f.oq, f.tl, f.fl) == (100.0, 60.0, 0.0, 0.0, 0.0, 50.0, 0.0, 0.0)
     assert list(f.f) == [500.0, 1500.0, 2500.0, 3250.0, 3700.0, 4900.0]
@@ -94,7 +94,8 @@ def test_defaults_are_the_papers():
 
 
 @pytest.mark.parametrize("config", [{"n_cascade": 0}, {"n_cascade": 7}, {"source": 0}, {"source": 3},
-                                    {"sample_rate": 0}, {"samples_per_frame": 0}, {"tap": 9}])
+                                    {"sample_rate": 0}, {"samples_per_frame": 0}, {"tap": 9},
+                                    {"parallel_corrections": 2}, {"parallel_corrections": 0.5}])
 def test_a_bad_config_is_refused(config):
     with pytest.raises(ValueError):
         kn.Synth(**config)
@@ -420,6 +421,39 @@ def test_parallel_bandwidths_leave_the_cascade_alone():
     assert np.array_equal(render(8000, bp=[300, 300, 300, 300, 300, 300], **VOWEL), plain)
     hiss = render(8000, ah=55, **NOISE_ONLY)
     assert np.array_equal(render(8000, ah=55, bp=[300, 300, 300, 300, 300, 300], **NOISE_ONLY), hiss)
+
+
+def test_k80_corrects_a_parallel_formant_for_the_first_formant_and_klsyn88_does_not():
+    """K80, II-G: a parallel formant above the first rides on the first formant's skirt, so its
+    amplitude follows the square of F1 (halve F1: 12 dB less).  With the corrections off, as in
+    KLSYN88, the first formant plays no part in frication at all."""
+    n = SETTLE + 8000
+    frame = dict(af=60, a=[0, 0, 60, 0, 0, 0], **NOISE_ONLY)
+    high = render(n, f=[500, 1500, 2500, 3250, 3700, 4900], **frame)[SETTLE:]
+    low = render(n, f=[250, 1500, 2500, 3250, 3700, 4900], **frame)[SETTLE:]
+    assert db(low) - db(high) == pytest.approx(-12.04, abs=0.2)
+    off = {"parallel_corrections": 0}
+    high = render(n, off, f=[500, 1500, 2500, 3250, 3700, 4900], **frame)
+    low = render(n, off, f=[250, 1500, 2500, 3250, 3700, 4900], **frame)
+    assert high.any() and np.array_equal(low, high)
+
+
+def test_without_corrections_close_formants_get_no_boost():
+    """K80, II-G: two formants coming close both rise.  Off: moving F2 next to F3 leaves the
+    third parallel formant's output exactly as it was."""
+    n = SETTLE + 8000
+    frame = dict(af=60, a=[0, 0, 60, 0, 0, 0], **NOISE_ONLY)
+    off = {"parallel_corrections": 0}
+    far = render(n, off, f=[500, 1500, 2500, 3250, 3700, 4900], **frame)
+    near = render(n, off, f=[500, 2300, 2500, 3250, 3700, 4900], **frame)
+    assert np.array_equal(near, far)
+    far = render(n, f=[500, 1500, 2500, 3250, 3700, 4900], **frame)
+    near = render(n, f=[500, 2300, 2500, 3250, 3700, 4900], **frame)
+    assert db(near[SETTLE:]) > db(far[SETTLE:]) + 3.0
+
+
+def test_the_corrections_switch_leaves_the_cascade_alone():
+    assert np.array_equal(render(8000, {"parallel_corrections": 0}, **VOWEL), render(8000, **VOWEL))
 
 
 def test_the_bypass_path_is_flat():
