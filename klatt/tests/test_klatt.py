@@ -90,6 +90,7 @@ def test_defaults_are_the_papers():
     assert list(f.b) == [60.0, 90.0, 150.0, 200.0, 200.0, 1000.0]
     assert (f.fnp, f.bnp, f.fnz, f.bnz) == (280.0, 90.0, 280.0, 90.0)
     assert list(f.a) == [0.0] * 6 and (f.an, f.ab) == (0.0, 0.0)
+    assert list(f.bp) == [0.0] * 6
 
 
 @pytest.mark.parametrize("config", [{"n_cascade": 0}, {"n_cascade": 7}, {"source": 0}, {"source": 3},
@@ -181,7 +182,8 @@ def test_wild_parameters_stay_finite():
             s.frame(f0=wild(), av=wild(), avs=wild(), ah=wild(), af=wild(), oq=wild(), tl=wild(), fl=wild(),
                     f=[wild() for _ in range(6)], b=[wild() for _ in range(6)],
                     fnp=wild(), bnp=wild(), fnz=wild(), bnz=wild(),
-                    a=[wild() for _ in range(6)], an=wild(), ab=wild())
+                    a=[wild() for _ in range(6)], an=wild(), ab=wild(),
+                    bp=[wild() for _ in range(6)])
             x = s.run(r.choice([1, 50, 200]))
             assert np.isfinite(x).all()
             assert np.max(np.abs(x)) <= 1000.0 * full
@@ -388,6 +390,36 @@ def test_frication_goes_through_the_parallel_formants():
     assert db(louder) - db(only3) == pytest.approx(10.0, abs=0.5)
     moved3 = render(n, af=60, a=[0, 0, 60, 0, 0, 0], f=[500, 1500, 3000, 3250, 3700, 4900], **NOISE_ONLY)[SETTLE:]
     assert _smooth_peak_hz(moved3) == pytest.approx(3000.0, abs=200.0)
+
+
+def test_a_parallel_formant_has_its_cascade_bandwidth_unless_given_its_own():
+    n = SETTLE + 4000
+    frame = dict(af=60, a=[0, 57, 60, 48, 48, 46], **NOISE_ONLY)
+    plain = render(n, **frame)
+    assert np.array_equal(render(n, bp=[0, 0, 0, 0, 0, 0], **frame), plain)
+    assert np.array_equal(render(n, bp=[60, 90, 150, 200, 200, 1000], **frame), plain)
+    assert not np.array_equal(render(n, bp=[0, 0, 300, 0, 0, 0], **frame), plain)
+
+
+def test_a_parallel_bandwidth_is_that_formants_bandwidth_for_frication():
+    """K90 Table XII lists the parallel formants' bandwidths apart from the cascade's.  The same
+    noise through the third parallel formant at two bandwidths: the two spectra differ by the two
+    resonators' ratio, bin for bin."""
+    n = SETTLE + (1 << 15)
+    narrow = render(n, af=60, a=[0, 0, 60, 0, 0, 0], **NOISE_ONLY)[SETTLE:]
+    wide = render(n, af=60, a=[0, 0, 60, 0, 0, 0], bp=[0, 0, 300, 0, 0, 0], **NOISE_ONLY)[SETTLE:]
+    f, A = _spectrum_db(narrow)
+    _, B = _spectrum_db(wide)
+    m = (f > 300.0) & (f < 4500.0)
+    err = np.abs((B - A)[m] - (resonator_db(f[m], 2500.0, 300.0) - resonator_db(f[m], 2500.0, 150.0)))
+    assert np.median(err) < 0.5 and np.percentile(err, 90) < 2.0
+
+
+def test_parallel_bandwidths_leave_the_cascade_alone():
+    plain = render(8000, **VOWEL)
+    assert np.array_equal(render(8000, bp=[300, 300, 300, 300, 300, 300], **VOWEL), plain)
+    hiss = render(8000, ah=55, **NOISE_ONLY)
+    assert np.array_equal(render(8000, ah=55, bp=[300, 300, 300, 300, 300, 300], **NOISE_ONLY), hiss)
 
 
 def test_the_bypass_path_is_flat():

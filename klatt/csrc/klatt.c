@@ -517,13 +517,23 @@ void klatt_set_frame(void *state, const klatt_frame *in)
     ramp_to(&s->frication, level(af, s->g0 + DB_AF), s->frame_samples, af - s->last_af > 50.0);
     s->last_af = af;
 
-    /* the tract: the same formants in the cascade and in the parallel branch */
+    /* the tract: the same formant frequencies in the cascade and in the parallel
+     * branch */
     for (i = 0; i < KLATT_FORMANTS; i++) {
         f[i] = hold(in->f[i], 0.0, nyquist);
         set_resonator(&s->cascade[i], f[i], hold(in->b[i], BW_MIN, nyquist), s->rate);
-        s->parallel[i].a = s->cascade[i].a;
-        s->parallel[i].b = s->cascade[i].b;
-        s->parallel[i].c = s->cascade[i].c;
+        if (in->bp[i] != 0.0) {
+            /* K90 Table XII (B2F to B6F): a parallel formant may have a bandwidth
+             * of its own, a noise-excited formant being wider than the same one in
+             * the cascade.  Only the bandwidth differs: the frequency is shared,
+             * and the amplitude rules below do not look at bandwidths. */
+            set_resonator(&s->parallel[i], f[i], hold(in->bp[i], BW_MIN, nyquist), s->rate);
+        } else {
+            /* K80: one bandwidth for both branches */
+            s->parallel[i].a = s->cascade[i].a;
+            s->parallel[i].b = s->cascade[i].b;
+            s->parallel[i].c = s->cascade[i].c;
+        }
     }
     set_resonator(&s->nasal_pole, hold(in->fnp, 0.0, nyquist), hold(in->bnp, BW_MIN, nyquist), s->rate);
     s->parallel_nasal.a = s->nasal_pole.a;
@@ -706,7 +716,8 @@ void klatt_config_defaults(klatt_config *c)
 
 void klatt_frame_defaults(klatt_frame *f)
 {
-    /* K90 Table XII; F6 and B6 are K80's */
+    /* K90 Table XII; F6 and B6 are K80's, and so is the parallel branch sharing
+     * the cascade's bandwidths */
     static const double F[KLATT_FORMANTS] = {500.0, 1500.0, 2500.0, 3250.0, 3700.0, 4900.0};
     static const double B[KLATT_FORMANTS] = {60.0, 90.0, 150.0, 200.0, 200.0, 1000.0};
     int i;
@@ -722,6 +733,7 @@ void klatt_frame_defaults(klatt_frame *f)
         f->f[i] = F[i];
         f->b[i] = B[i];
         f->a[i] = 0.0;
+        f->bp[i] = 0.0;
     }
     f->fnp = 280.0;
     f->bnp = 90.0;

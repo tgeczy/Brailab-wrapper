@@ -41,7 +41,10 @@ Vocal tract, as K80's block diagram:
   the nasal pole (FNP, BNP) and the nasal zero (FNZ, BNZ).
 - **Parallel branch** for frication: resonators F2 to F6 with amplitudes A2 to
   A6, the bypass path AB, alternating signs; and, with the cascade/parallel
-  switch set to all-parallel, voicing through A1 and AN too.
+  switch set to all-parallel, voicing through A1 and AN too.  The parallel
+  formants may have bandwidths of their own (K90 Table XII's B2F to B6F): a
+  noise-excited formant is wider than the same formant in the cascade.  Left at
+  0, a parallel formant has its cascade bandwidth, as in K80.
 - Resonators are K80's: y(n) = A x(n) + B y(n-1) + C y(n-2) with
   C = -exp(-2 pi BW T), B = 2 exp(-pi BW T) cos(2 pi F T), A = 1 - B - C; an
   antiresonator is its inverse.
@@ -83,6 +86,7 @@ typedef struct {
     double fnp, bnp, fnz, bnz; /* Hz.  280 90 280 90 */
     double a[6];               /* A1..A6, dB.  0 */
     double an, ab;             /* dB.  0 */
+    double bp[6];              /* the parallel formants' own bandwidths, Hz.  0 = the cascade's */
 } klatt_frame;
 
 int    klatt_state_size(void);

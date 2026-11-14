@@ -34,7 +34,8 @@ class Frame(ctypes.Structure):
                 ("f", ctypes.c_double * 6), ("b", ctypes.c_double * 6),
                 ("fnp", ctypes.c_double), ("bnp", ctypes.c_double),
                 ("fnz", ctypes.c_double), ("bnz", ctypes.c_double),
-                ("a", ctypes.c_double * 6), ("an", ctypes.c_double), ("ab", ctypes.c_double)]
+                ("a", ctypes.c_double * 6), ("an", ctypes.c_double), ("ab", ctypes.c_double),
+                ("bp", ctypes.c_double * 6)]
 
 
 def _lib_path():

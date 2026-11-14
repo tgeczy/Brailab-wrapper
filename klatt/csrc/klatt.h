@@ -56,6 +56,11 @@ typedef struct {
     double fnp, bnp, fnz, bnz; /* Hz.  280 90 280 90 */
     double a[KLATT_FORMANTS];  /* A1..A6, dB.  0 = off */
     double an, ab;             /* dB.  0 = off */
+    double bp[KLATT_FORMANTS]; /* the parallel formants' own bandwidths, Hz (K90's B2F
+                                  to B6F; bp[0] is the first parallel formant's, used
+                                  in all-parallel mode).  0 = the cascade's, as in K80;
+                                  anything else is held to 5 Hz .. SR/2.  The parallel
+                                  nasal formant always has the nasal pole's */
 } klatt_frame;
 
 #ifdef __cplusplus
