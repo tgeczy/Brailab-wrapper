@@ -68,6 +68,31 @@ else
 fi
 [ -d "$MODBIN" ] || { echo "$MODBIN not found: where does your speech-dispatcher keep its modules?"; exit 1; }
 
+# The module hands its audio to speech-dispatcher to play, which the server can do from version 0.11 on.  On an
+# older one it would load and never make a sound, so say so instead of installing it.
+if command -v speech-dispatcher >/dev/null 2>&1; then
+    SPD="$(speech-dispatcher --version 2>/dev/null | head -n 1 | sed 's/^[^0-9]*//')"
+    major="${SPD%%.*}"; rest="${SPD#*.}"; minor="${rest%%[!0-9]*}"
+    case "$major$minor" in
+        ''|*[!0-9]*) ;;                 # no version to read: go on
+        *) if [ "$major" -eq 0 ] && [ "$minor" -lt 11 ]; then
+               echo "This needs speech-dispatcher 0.11 or later; this system has $SPD."
+               echo "From 0.11 on the server plays a module's audio, and that is how these voices speak."
+               exit 1
+           fi ;;
+    esac
+fi
+
+# A program or library that may be in use is never written over: on Linux that fails outright for a running
+# program ("Text file busy", and speech-dispatcher has the module running whenever Orca is on) and can crash one
+# that has a library loaded.  The new file is put beside the old one and renamed over it; what is running keeps
+# the old file until it is restarted.
+put() {             # put FILE DESTINATION MODE
+    cp "$1" "$2.new"
+    chmod "$3" "$2.new"
+    mv -f "$2.new" "$2"
+}
+
 # ---- the BraiLab PC voices: everything in the package -------------------------------------------------------------
 echo "Installing the BraiLab voices"
 mkdir -p "$DATA" "$MODCONF"
@@ -79,8 +104,7 @@ if [ -d "$HERE/licenses" ]; then
     mkdir -p "$DATA/licenses"
     cp "$HERE"/licenses/* "$DATA/licenses/"
 fi
-cp "$HERE/bin/sd_brailab" "$MODBIN/sd_brailab"
-chmod 755 "$MODBIN/sd_brailab"
+put "$HERE/bin/sd_brailab" "$MODBIN/sd_brailab" 755
 {
     cat "$HERE/share/brailab/speech-dispatcher/brailab.conf"
     echo "BrailabDataDir \"$DATA\""
@@ -130,9 +154,8 @@ install_tts() {     # install_tts ARCHIVE: unpack, check it is what it says, cop
         return 1
     fi
     for f in "$dir"/*; do
-        [ -f "$f" ] && cp "$f" "$DATA/"
+        [ -f "$f" ] && put "$f" "$DATA/$(basename "$f")" 644
     done
-    chmod 644 "$DATA/$PLUGIN_LIB"
     rm -rf "$work"
     echo "  BraiLab TTS: installed in $DATA"
 }

@@ -7,6 +7,11 @@
 A speech-dispatcher module, `sd_brailab`, for Orca, `spd-say` and anything else that speaks through
 speech-dispatcher. One program, nothing else to install.
 
+It needs **speech-dispatcher 0.11 or later**: from that version on the server plays a module's audio, and that is
+how these voices speak. The installer checks, and says so on an older system instead of installing a voice that
+would stay silent. The module answers the server exactly as speech-dispatcher's own modules do; that was checked
+against the sources of 0.11.0, 0.11.1, 0.11.5, 0.12.0 and 0.12.1, and it runs on 0.11.1.
+
 | Voice | What it is |
 |---|---|
 | BraiLab PC | the BraiLab PC itself: its own 1991 program, TALKHUN, on an emulated 8086, speaking through a model of its speech chip, the Philips PCF8200 |
@@ -62,6 +67,12 @@ TALKHUN is Arató András and Vaspöri Teréz's work and is here with their perm
 
 Egy speech-dispatcher modul, az `sd_brailab`: az Orca, az `spd-say` és minden más program számára, amely a
 speech-dispatcheren keresztül beszél. Egyetlen program, semmi mást nem kell hozzá telepíteni.
+
+**Legalább 0.11-es speech-dispatcher** kell hozzá: ettől a verziótól kezdve játssza le a kiszolgáló a modulok
+hangját, és ezek a hangok így szólalnak meg. A telepítő ezt ellenőrzi, és régebbi rendszeren szól, ahelyett hogy
+olyan hangot telepítene, amely néma maradna. A modul pontosan úgy válaszol a kiszolgálónak, ahogy a
+speech-dispatcher saját moduljai; ezt a 0.11.0, 0.11.1, 0.11.5, 0.12.0 és 0.12.1 forrásával vetettük össze, és
+0.11.1-en fut.
 
 | Hang | Mi ez |
 |---|---|

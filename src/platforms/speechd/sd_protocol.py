@@ -82,17 +82,23 @@ class Module:
 
     def set(self, **kw):
         self.send("SET", *["%s=%s" % (k, v) for k, v in kw.items()], ".")
-        assert self.line() == b"202 OK RECEIVING MESSAGE"
+        assert self.line() == b"203 OK RECEIVING SETTINGS"
         assert self.line() == b"203 OK SETTINGS RECEIVED"
 
-    def voices(self):
-        self.send("LIST VOICES")
+    def voices(self, request=""):
+        """The reply to LIST VOICES, or to "LIST VOICES <language> [<variant>]" as speech-dispatcher 0.12 sends it."""
+        self.send("LIST VOICES" + (" " + request if request else ""))
         out = []
         while True:
             s = self.line()
             out.append(s)
             if not s.startswith(b"200-"):
                 return out
+
+    def block(self, name, *lines):
+        """A command with a block of lines after it (AUDIO, LOGLEVEL): the two lines that answer it."""
+        self.send(name, *lines, ".")
+        return self.line(), self.line()
 
     def command(self, line):
         """One command on one line, and the one line that answers it."""

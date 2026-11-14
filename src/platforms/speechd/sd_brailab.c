@@ -5,7 +5,9 @@
  * The protocol's plumbing is sd_io.c, the text's preparation sd_text.c, the optional third voice sd_plugin.c.
  *
  * The protocol and its audio (705 blocks, HDLC-escaped, played and flushed by the server) follow speech-dispatcher's
- * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on.  Synthesis is synchronous: stdin
+ * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on; every reply line is the one
+ * speech-dispatcher's own modules give, which has not changed from 0.11.0 to 0.12.1.  0.11 is the oldest server
+ * this can speak on: it is the first that plays a module's audio.  Synthesis is synchronous: stdin
  * is polled for STOP and PAUSE between blocks (a STOP is answered 703, a PAUSE 704, which lets the server speak the
  * message again on RESUME).  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
  * Rate, pitch and volume come from SSIP, mapped as the NVDA driver maps its sliders.
@@ -286,7 +288,7 @@ int main(int argc, char **argv)
             /* only between messages here (during one, speak() catches it): nothing is playing */
         } else if (!strcmp(cmd, "SET")) {
             char *line;
-            sd_send_line("202 OK RECEIVING MESSAGE");
+            sd_send_line("203 OK RECEIVING SETTINGS");
             while ((line = sd_readline()) != NULL) {
                 char *eq;
                 if (!strcmp(line, ".")) {
@@ -313,21 +315,32 @@ int main(int argc, char **argv)
             else
                 sd_send_line("302 ERROR BAD SYNTAX");
         } else if (!strcmp(cmd, "AUDIO") || !strcmp(cmd, "LOGLEVEL")) {
+            /* The server offers to play the audio itself (audio_output_method=server), which is the only way
+             * this module speaks; and its log level, which this module has no use for. */
+            const int audio = !strcmp(cmd, "AUDIO");
             char *line;
-            sd_send_line("202 OK RECEIVING MESSAGE");
+            sd_send_line(audio ? "207 OK RECEIVING AUDIO SETTINGS" : "207 OK RECEIVING LOGLEVEL SETTINGS");
             while ((line = sd_readline()) != NULL) {
                 int end = !strcmp(line, ".");
                 free(line);
                 if (end)
                     break;
             }
-            sd_send_line("203 OK SETTINGS RECEIVED");
-        } else if (!strcmp(cmd, "LIST VOICES")) {
-            int v;
-            for (v = 0; v < NVOICES; v++)
-                if (have(v))
-                    printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
-            sd_send_line("249 OK VOICES LISTED");
+            sd_send_line(audio ? "203 OK AUDIO INITIALIZED" : "203 OK LOGLEVEL SET");
+        } else if (!strncmp(cmd, "LIST VOICES", 11) && (!cmd[11] || cmd[11] == ' ')) {
+            /* "LIST VOICES", and from speech-dispatcher 0.12 "LIST VOICES <language> [<variant>]".  Every voice here
+             * is Hungarian: a request for hu (hu-HU, HU_hu) gets them all, one for another language none.  The
+             * variant is not looked at. */
+            char lang[16] = "";
+            int v, any = 0;
+            sscanf(cmd + 11, "%15s", lang);
+            if (!*lang || ((lang[0] | 32) == 'h' && (lang[1] | 32) == 'u' && (!lang[2] || lang[2] == '-' || lang[2] == '_')))
+                for (v = 0; v < NVOICES; v++)
+                    if (have(v)) {
+                        printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
+                        any = 1;
+                    }
+            sd_send_line(any ? "200 OK VOICE LIST SENT" : "304 CANT LIST VOICES");
         } else if (!strcmp(cmd, "QUIT")) {
             sd_send_line("210 OK QUIT");             /* the server waits for it */
             free(cmd);

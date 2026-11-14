@@ -62,7 +62,7 @@ m = Module()
 check("init", m.init[-1] == b"299 OK LOADED SUCCESSFULLY", m.init[-1].decode())
 voices = m.voices()
 check("voices", voices == [b"200-BraiLab PC\thu\tMALE1", b"200-BraiLab PC furcsa\thu\tMALE2",
-                           b"249 OK VOICES LISTED"], repr(voices))
+                           b"200 OK VOICE LIST SENT"], repr(voices))
 for i, text in enumerate(TEXTS):
     pcm, end = m.speak(text)
     same("speak%d" % i, pcm, reference(text))

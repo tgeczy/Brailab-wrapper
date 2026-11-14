@@ -5,8 +5,10 @@
 #   - a stock config (no active AddModule: autodiscovery on) is left byte for byte as it was;
 #   - a config that lists its modules itself gets this one listed too, once, however often the installer runs;
 #   - --default sets DefaultModule, and uninstall.sh gives back each config exactly as it was;
+#   - a speech-dispatcher older than 0.11 (it cannot play a module's audio) is refused, with the reason;
 #   - with no terminal and no option nothing is fetched; --without-tts likewise;
 #   - at a terminal the installer asks: y or igen fetches, n or a bare Enter does not;
+#   - reinstalling while the module is running (as it is whenever Orca is on) works, and the running one lives on;
 #   - --with-tts fetches (from a folder, and over HTTP from a server on this machine), checks the checksum and
 #     installs, and the module then has the third voice;
 #   - a wrong checksum, a file that is no package, and a place that does not answer leave the voice out and the
@@ -95,6 +97,25 @@ if [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa" ] && [ ! -e "$D/prefix/share/b
     ok "no terminal: nothing fetched" "$(voices)"
 else fail "no terminal: nothing fetched" "$(voices) | $(tail -3 "$D/install.log" | tr '\n' ' ')"; fi
 
+# 1b. a server too old to play the module's audio is refused with the reason, and nothing is installed;
+#     the first that can (0.11.0) and a current one are accepted
+mkdir -p "$T/fake"
+for v in "0.10.2:refused" "0.9.1:refused" "0.11.0:installed" "0.12.1:installed"; do
+    ver="${v%%:*}"; want="${v#*:}"
+    printf '#!/bin/sh\necho "speech-dispatcher %s"\n' "$ver" > "$T/fake/speech-dispatcher"
+    chmod +x "$T/fake/speech-dispatcher"
+    fresh "version-$ver" "$STOCK"
+    if PATH="$T/fake:$PATH" install "file://$REL"; then got=installed; else got=refused; fi
+    [ -e "$D/modules/sd_brailab" ] || got="$got, no module"
+    case "$want:$got" in
+        "refused:refused, no module") grep -q 'needs speech-dispatcher 0.11' "$D/install.log" \
+            && ok "speech-dispatcher $ver" "refused, with the reason; nothing installed" \
+            || fail "speech-dispatcher $ver" "refused without the reason" ;;
+        "installed:installed") ok "speech-dispatcher $ver" "installed" ;;
+        *) fail "speech-dispatcher $ver" "$got | $(tail -2 "$D/install.log" | tr '\n' ' ')" ;;
+    esac
+done
+
 # 2. --with-tts on top of that: fetched, checked, the third voice is there; the first two as before
 install "file://$REL" --with-tts
 if [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa,BraiLab TTS" ]; then ok "--with-tts" "$(voices)"
@@ -143,6 +164,29 @@ if command -v script >/dev/null 2>&1 && script -qec true /dev/null >/dev/null 2>
     done
 else
     ok "asked at a terminal" "skipped: no script(1) here"
+fi
+
+# 2d. reinstalling while speech-dispatcher has the module running, plug-in loaded: the installer must not fail
+#     ("Text file busy"), and the running module must go on answering
+fresh busy "$STOCK"
+install "file://$REL" --with-tts
+mkfifo "$T/busy.in"
+HOME="$D" "$D/modules/sd_brailab" "$D/etc/modules/brailab.conf" < "$T/busy.in" > "$T/busy.out" 2>/dev/null &
+RUNNING=$!
+exec 9> "$T/busy.in"
+printf 'INIT\n' >&9
+sleep 0.5
+if install "file://$REL" --tts-file "$REL/brailab-tts-plugin-linux-$ARCH.tar.gz"; then
+    printf 'LIST VOICES\nQUIT\n' >&9
+    exec 9>&-
+    wait $RUNNING
+    if grep -q 'BraiLab TTS' "$T/busy.out" && grep -q '210 OK QUIT' "$T/busy.out" && [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa,BraiLab TTS" ]; then
+        ok "reinstall while the module runs" "installed; the running module went on answering"
+    else fail "reinstall while the module runs" "the running module: $(tr '\n\t' '| ' < "$T/busy.out" | cut -c1-200)"; fi
+else
+    exec 9>&-
+    kill $RUNNING 2>/dev/null
+    fail "reinstall while the module runs" "$(grep -iE 'busy|cannot' "$D/install.log" | tr '\n' ' ')"
 fi
 
 # 3. the download going wrong, three ways: the voice is left out, the installer succeeds, two voices work

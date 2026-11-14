@@ -6,6 +6,8 @@ given.  Needs no TALKHUN0.COM and no real plug-in, so it runs anywhere the modul
   set      SSIP rate to the ten tempos (0 is the voice's own, 4), pitch to the three pitches, volume as a gain
            here, the plug-in's own volume left alone
   stop     STOP after a block ends the message with 703, PAUSE with 704; the next message is whole
+  replies  every reply line is the one speech-dispatcher's own modules give (0.11.0 to 0.12.1): voices, also
+           asked for with a language as 0.12 does, AUDIO, LOGLEVEL, SET
   lines    DEBUG ON and OFF are answered; a command that merely holds the word STOP does not stop the message;
            an unknown command and QUIT are answered
   absent   no plug-in, another interface version, a file that is no plug-in, missing data: no third voice, and
@@ -74,13 +76,18 @@ def same(label, got, want):
 
 
 TTS = b"200-BraiLab TTS\thu\tMALE3"
-LISTED = b"249 OK VOICES LISTED"
+LISTED = b"200 OK VOICE LIST SENT"
 TEXT = "Jó napot kívánok, árvíztűrő tükörfúrógép."
 
 m = Module(MODULE, folder())
 check("alone", m.init[-1] == b"299 OK LOADED SUCCESSFULLY" and any(b"plug-in is loaded" in l for l in m.init),
       b" | ".join(m.init).decode())
 check("voices", m.voices() == [TTS, LISTED])
+check("voices12", m.voices("hu") == [TTS, LISTED] and m.voices("hu-HU none") == [TTS, LISTED]
+      and m.voices("en") == [b"304 CANT LIST VOICES"] and m.voices("hun") == [b"304 CANT LIST VOICES"],
+      "LIST VOICES with a language, as speech-dispatcher 0.12 sends it")
+check("audio", m.block("AUDIO", "audio_output_method=server") == (b"207 OK RECEIVING AUDIO SETTINGS", b"203 OK AUDIO INITIALIZED"))
+check("loglevel", m.block("LOGLEVEL", "log_level=3") == (b"207 OK RECEIVING LOGLEVEL SETTINGS", b"203 OK LOGLEVEL SET"))
 pcm, end = m.speak(TEXT)
 same("speak", pcm, stub(TEXT))
 check("end", end == b"702 END" and m.rate == 10000, "%s at %s Hz" % (end.decode(), m.rate))
