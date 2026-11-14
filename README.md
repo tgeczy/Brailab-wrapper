@@ -20,9 +20,23 @@ Why the wrapper exists:
 
 ### What's in this repo
 
-- `brailab_wrapper.dll` (built from the sources here)
-- A Python NVDA synth driver (`synthDrivers/brailab.py`) that uses the wrapper
-- **`src/talkhun_emu/`: an emulator of the BraiLab PC itself** (see below)
+What makes the sound is in `src/`; each system it speaks on has its own folder.
+
+- **`src/talkhun_emu/`: an emulator of the BraiLab PC itself** (see below):
+  TALKHUN on an emulated 8086, speaking through a model of its speech chip
+- `src/pcf8200/`: that chip, the Philips PCF8200, in software: a Python library
+  with a C core ([README](src/pcf8200/README.md))
+- `src/klatt/`: a cascade/parallel formant synthesizer in C, after Klatt's two
+  papers ([README](src/klatt/README.md))
+- `src/platforms/speechd/`: the voices for Linux, a speech-dispatcher module for
+  Orca; `build_linux.sh` builds it ([README](src/platforms/speechd/README-linux.md))
+- `nvda_driver/`: the NVDA add-ons: the emulated BraiLab PC, and the driver for
+  the original `TTS.dll` (`synthDrivers/brailab.py`)
+- `src/brailab_wrapper.cpp`, `include/`: `brailab_wrapper.dll`, which that
+  driver uses (see below)
+- `dos_speaker/`: for DOS: BRAISPK, which stands in for the BraiLab PC adapter
+  on a PC without one, and programs that drive a real one
+  ([README](dos_speaker/README.md))
 - **`third_party/brailab/`: TALKHUN**, the original BraiLab PC speech program
   for DOS, by Vaspöri Teréz and Arató András, included with their permission.
   See [`NOTICE.md`](NOTICE.md).
@@ -132,9 +146,24 @@ Miért kell a burkoló:
 
 ### Mi van ebben a tárolóban
 
-- `brailab_wrapper.dll` (az itteni forrásból készül)
-- Python nyelvű NVDA-beszédillesztő (`synthDrivers/brailab.py`), amely a burkolót használja
-- **`src/talkhun_emu/`: magának a BraiLab PC-nek az emulátora** (lásd lent)
+Ami a hangot adja, az a `src/` mappában van; minden rendszernek, amelyen megszólal,
+saját mappája van.
+
+- **`src/talkhun_emu/`: magának a BraiLab PC-nek az emulátora** (lásd lent):
+  a TALKHUN egy emulált 8086-oson, a beszédchipjének modelljén keresztül szól
+- `src/pcf8200/`: ez a chip, a Philips PCF8200 szoftverben: Python-könyvtár
+  C nyelvű maggal ([README](src/pcf8200/README.md))
+- `src/klatt/`: kaszkád/párhuzamos formánsszintetizátor C nyelven, Klatt két
+  cikke alapján ([README](src/klatt/README.md))
+- `src/platforms/speechd/`: a hangok Linuxra, speech-dispatcher modul az Orcához;
+  a `build_linux.sh` fordítja le ([README](src/platforms/speechd/README-linux.md))
+- `nvda_driver/`: az NVDA-bővítmények: az emulált BraiLab PC, és az eredeti
+  `TTS.dll` illesztője (`synthDrivers/brailab.py`)
+- `src/brailab_wrapper.cpp`, `include/`: a `brailab_wrapper.dll`, amelyet ez az
+  illesztő használ (lásd lent)
+- `dos_speaker/`: DOS-ra: a BRAISPK, amely a BraiLab PC adapterét helyettesíti
+  olyan gépen, amelyben nincs, és programok, amelyek egy valódit vezérelnek
+  ([README](dos_speaker/README.md))
 - **`third_party/brailab/`: a TALKHUN**, a BraiLab PC eredeti DOS-os
   beszélőprogramja, Vaspöri Teréz és Arató András munkája, az ő engedélyükkel.
   Lásd: [`NOTICE.md`](NOTICE.md).
