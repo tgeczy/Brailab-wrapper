@@ -1,7 +1,8 @@
 /*
  * sd_brailab -- a speech-dispatcher output module: the BraiLab PC's voice, as in the NVDA add-on, in one process
  * with no Python.  The 1991 TALKHUN0.COM runs on MAME's 8086 and drives a model of the Philips PCF8200
- * (src/talkhun_emu/csrc/brailab_voice.c); this file speaks the protocol.
+ * (src/talkhun_emu/csrc/brailab_voice.c).  This file is the module: its settings, its voices and its command loop.
+ * The protocol's plumbing is sd_io.c, the text's preparation sd_text.c, the optional third voice sd_plugin.c.
  *
  * The protocol and its audio (705 blocks, HDLC-escaped, played and flushed by the server) follow speech-dispatcher's
  * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on.  Synthesis is synchronous: stdin
@@ -20,228 +21,19 @@
  * BRAILAB_DATADIR overrides the data folder.  TALKHUN0.COM is Arató András's program and not part of this one.
  * MIT.
  */
-#include <dlfcn.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/select.h>
 #include <unistd.h>
 
-#include "brailab_tts_plugin.h"
 #include "brailab_voice.h"
+#include "sd_io.h"
+#include "sd_plugin.h"
+#include "sd_text.h"
 
 #define RATE 10000
-
-/* ---- stdin: one raw buffer for lines and the STOP poll (never stdio on stdin) ---------------------------------- */
-static char *rbuf;
-static size_t rlen, rcap;
-static int r_eof;
-
-static void rappend(const char *p, size_t n)
-{
-    if (rlen + n + 1 > rcap) {
-        size_t cap = rcap ? rcap : 8192;
-        while (cap < rlen + n + 1)
-            cap *= 2;
-        rbuf = (char *)realloc(rbuf, cap);
-        if (!rbuf)
-            exit(1);
-        rcap = cap;
-    }
-    memcpy(rbuf + rlen, p, n);
-    rlen += n;
-    rbuf[rlen] = 0;
-}
-
-/* The next line, without its \r\n, malloc'd; NULL at EOF. */
-static char *readline_sd(void)
-{
-    for (;;) {
-        char *nl = rbuf ? (char *)memchr(rbuf, '\n', rlen) : NULL;
-        if (nl) {
-            size_t n = (size_t)(nl - rbuf);
-            char *line = (char *)malloc(n + 1);
-            memcpy(line, rbuf, n);
-            line[n] = 0;
-            if (n && line[n - 1] == '\r')
-                line[n - 1] = 0;
-            memmove(rbuf, nl + 1, rlen - n - 1);
-            rlen -= n + 1;
-            rbuf[rlen] = 0;
-            return line;
-        }
-        if (r_eof)
-            return NULL;
-        {
-            char buf[4096];
-            ssize_t k = read(STDIN_FILENO, buf, sizeof buf);
-            if (k <= 0) {
-                r_eof = 1;
-                continue;
-            }
-            rappend(buf, (size_t)k);
-        }
-    }
-}
-
-/* STOP (or CANCEL or PAUSE) waiting on stdin?  Reads what is there, and leaves it for readline_sd. */
-static int poll_stop(void)
-{
-    fd_set f;
-    struct timeval tv = {0, 0};
-    FD_ZERO(&f);
-    FD_SET(STDIN_FILENO, &f);
-    if (select(STDIN_FILENO + 1, &f, NULL, NULL, &tv) > 0) {
-        char buf[4096];
-        ssize_t k = read(STDIN_FILENO, buf, sizeof buf);
-        if (k <= 0) {
-            r_eof = 1;
-            return 1;
-        }
-        rappend(buf, (size_t)k);
-    }
-    return rbuf && (strstr(rbuf, "STOP") || strstr(rbuf, "CANCEL") || strstr(rbuf, "PAUSE"));
-}
-
-static void send_line(const char *s)
-{
-    fputs(s, stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
-}
-
-/* 705: 16-bit mono little-endian, the payload HDLC-escaped (0x7D and '\n' become 0x7D, byte ^ 0x20) */
-static void send_audio(const int16_t *pcm, int n, int rate)
-{
-    const unsigned char *p = (const unsigned char *)pcm, *end = p + (size_t)n * 2;
-    printf("705-bits=16\n705-num_channels=1\n705-sample_rate=%d\n705-num_samples=%d\n705-big_endian=0\n705-AUDIO",
-           rate, n);
-    fputc(0, stdout);
-    for (; p < end; p++) {
-        if (*p == 0x7D || *p == '\n') {
-            fputc(0x7D, stdout);
-            fputc(*p ^ 0x20, stdout);
-        } else {
-            fputc(*p, stdout);
-        }
-    }
-    fputs("\n705 AUDIO\n", stdout);
-    fflush(stdout);
-}
-
-/* ---- text ------------------------------------------------------------------------------------------------------ */
-
-/* SSML tags dropped, XML's five entities decoded. */
-static void strip_ssml(char *s)
-{
-    static const char *ent[][2] = {{"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}};
-    char *r = s, *w = s;
-    int tag = 0, k;
-    while (*r) {
-        if (*r == '<') {
-            tag = 1;
-            r++;
-            continue;
-        }
-        if (*r == '>' && tag) {
-            tag = 0;
-            r++;
-            continue;
-        }
-        if (tag) {
-            r++;
-            continue;
-        }
-        if (*r == '&') {
-            for (k = 0; k < 5; k++) {
-                size_t n = strlen(ent[k][0]);
-                if (!strncmp(r, ent[k][0], n)) {
-                    *w++ = ent[k][1][0];
-                    r += n;
-                    break;
-                }
-            }
-            if (k < 5)
-                continue;
-        }
-        *w++ = *r++;
-    }
-    *w = 0;
-}
-
-/* TALKHUN0 (1991) reads CWI-2, the Hungarian DOS page from before CP852: CP437, with o and u double acute in
- * the slots of o and u circumflex.  CP437's upper half, as Unicode: */
-static const unsigned short CP437[128] = {
-    0x00C7, 0x00FC, 0x00E9, 0x00E2, 0x00E4, 0x00E0, 0x00E5, 0x00E7,
-    0x00EA, 0x00EB, 0x00E8, 0x00EF, 0x00EE, 0x00EC, 0x00C4, 0x00C5,
-    0x00C9, 0x00E6, 0x00C6, 0x00F4, 0x00F6, 0x00F2, 0x00FB, 0x00F9,
-    0x00FF, 0x00D6, 0x00DC, 0x00A2, 0x00A3, 0x00A5, 0x20A7, 0x0192,
-    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA,
-    0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB,
-    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556,
-    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510,
-    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F,
-    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567,
-    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B,
-    0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580,
-    0x03B1, 0x00DF, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4,
-    0x03A6, 0x0398, 0x03A9, 0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229,
-    0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248,
-    0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0, 0x00A0,
-};
-
-/* CWI-2's own letters, and the capitals CP437 hasn't got, folded to the lowercase byte: the engine speaks
- * words, not case.  Fed as CP852, every one of these was spelled out as a code ("kod 8b"). */
-static const struct { unsigned short cp; unsigned char b; } CWI2[] = {
-    {0x0151, 0x93}, {0x0150, 0x93}, {0x0171, 0x96}, {0x0170, 0x96},     /* o, u double acute */
-    {0x00C1, 0xA0}, {0x00CD, 0xA1}, {0x00D3, 0xA2}, {0x00DA, 0xA3},     /* capital A, I, O, U acute */
-};
-
-/* UTF-8 to CWI-2, in place (it never grows).  A character CWI-2 hasn't got, or a broken sequence, becomes
- * BRAILAB_VOICE_UNKNOWN, one per character, as the NVDA driver's encoding does. */
-static int to_cwi2(char *s)
-{
-    unsigned char *r = (unsigned char *)s, *w = r;
-    while (*r) {
-        unsigned c = *r, cp;
-        int extra, i;
-        if (c < 0x80) {
-            *w++ = *r++;
-            continue;
-        }
-        extra = c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : c >= 0xC0 ? 1 : -1;
-        if (extra < 0) {
-            *w++ = BRAILAB_VOICE_UNKNOWN;
-            r++;
-            continue;
-        }
-        cp = c & (0x3F >> extra);
-        for (i = 1; i <= extra; i++) {
-            if ((r[i] & 0xC0) != 0x80)
-                break;
-            cp = (cp << 6) | (r[i] & 0x3F);
-        }
-        if (i <= extra) {
-            *w++ = BRAILAB_VOICE_UNKNOWN;
-            r++;
-            continue;
-        }
-        r += extra + 1;
-        for (i = 0; i < (int)(sizeof CWI2 / sizeof CWI2[0]) && CWI2[i].cp != cp; i++)
-            ;
-        if (i < (int)(sizeof CWI2 / sizeof CWI2[0])) {
-            *w++ = CWI2[i].b;
-            continue;
-        }
-        for (i = 0; i < 128 && CP437[i] != cp; i++)
-            ;
-        *w++ = i < 128 ? (unsigned char)(0x80 + i) : BRAILAB_VOICE_UNKNOWN;
-    }
-    *w = 0;
-    return (int)(w - (unsigned char *)s);
-}
 
 /* ---- config ---------------------------------------------------------------------------------------------------- */
 static char datadir[1024];
@@ -311,55 +103,6 @@ static unsigned char *load_talkhun(int *len)
     return image;
 }
 
-/* ---- the optional plug-in -------------------------------------------------------------------------------------- */
-static struct {
-    void *lib;
-    int (*open)(const char *);
-    void (*close)(void);
-    int (*set)(int, int, int);
-    int (*say)(const char *, brailab_tts_sink, void *);
-    int rate;
-    char why[400];                                   /* a plug-in was there and was not taken: the reason */
-} tts;
-
-/* 1 with the plug-in open on the data folder; 0 without one, quietly when there simply is no such file. */
-static int load_tts(void)
-{
-    char path[1100];
-    int (*version)(void), (*rate)(void), ret;
-    if (*tts_plugin)
-        snprintf(path, sizeof path, "%s", tts_plugin);
-    else
-        snprintf(path, sizeof path, "%s/libbrailab_tts.so", datadir);
-    if (!strchr(path, '/') || access(path, R_OK) != 0)   /* a bare name would be searched for: never that */
-        return 0;
-    tts.lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
-    if (!tts.lib) {
-        snprintf(tts.why, sizeof tts.why, "%.390s", dlerror());
-        return 0;
-    }
-    version = (int (*)(void))dlsym(tts.lib, "brailab_tts_api_version");
-    rate = (int (*)(void))dlsym(tts.lib, "brailab_tts_sample_rate");
-    tts.open = (int (*)(const char *))dlsym(tts.lib, "brailab_tts_open");
-    tts.close = (void (*)(void))dlsym(tts.lib, "brailab_tts_close");
-    tts.set = (int (*)(int, int, int))dlsym(tts.lib, "brailab_tts_set");
-    tts.say = (int (*)(const char *, brailab_tts_sink, void *))dlsym(tts.lib, "brailab_tts_say");
-    if (!version || !rate || !tts.open || !tts.close || !tts.set || !tts.say)
-        snprintf(tts.why, sizeof tts.why, "%.300s is not a BraiLab TTS plug-in", path);
-    else if (version() != BRAILAB_TTS_API)
-        snprintf(tts.why, sizeof tts.why, "%.250s speaks version %d of the interface, this module version %d", path,
-                 version(), BRAILAB_TTS_API);
-    else if ((ret = tts.open(datadir)) != 0)
-        snprintf(tts.why, sizeof tts.why, "the plug-in did not open on the data folder %.300s (%d)", datadir, ret);
-    else if ((tts.rate = rate()) < 4000 || tts.rate > 96000)
-        snprintf(tts.why, sizeof tts.why, "the plug-in's sample rate is %d", tts.rate);
-    else
-        return 1;
-    dlclose(tts.lib);
-    tts.lib = NULL;
-    return 0;
-}
-
 /* ---- speaking -------------------------------------------------------------------------------------------------- */
 enum { PC, FURCSA, TTS, NVOICES };
 static const char *VOICES[NVOICES] = {"BraiLab PC", "BraiLab PC furcsa", "BraiLab TTS"};
@@ -369,7 +112,7 @@ static int ssip_rate = 0, ssip_pitch = 0, ssip_volume = 100;
 
 static int have(int v)
 {
-    return v == TTS ? tts.lib != NULL : voice != NULL;
+    return v == TTS ? sd_plugin_loaded() : voice != NULL;
 }
 
 static int to100(int ssip)                           /* SSIP -100..100 to the NVDA driver's 0..100 (0 is 50) */
@@ -378,53 +121,23 @@ static int to100(int ssip)                           /* SSIP -100..100 to the NV
     return v < 0 ? 0 : v > 100 ? 100 : v;
 }
 
-/* The plug-in's samples, turned by the volume and gathered into blocks; STOP is polled after each block. */
-static struct {
-    int16_t pcm[BRAILAB_VOICE_BLOCK];
-    int n, stopped;
-    double gain;
-} out;
-
-static int tts_sink(void *user, const int16_t *pcm, int n)
-{
-    int i;
-    (void)user;
-    for (i = 0; i < n; i++) {
-        double v = pcm[i] * out.gain;
-        v = v > 32767.0 ? 32767.0 : v < -32767.0 ? -32767.0 : v;
-        out.pcm[out.n++] = (int16_t)(v >= 0.0 ? v + 0.5 : v - 0.5);
-        if (out.n == BRAILAB_VOICE_BLOCK) {
-            send_audio(out.pcm, out.n, tts.rate);
-            out.n = 0;
-            if (poll_stop()) {
-                out.stopped = 1;
-                return 1;
-            }
-        }
-    }
-    return 0;
-}
-
 /* The NVDA driver's sliders for this voice: ten tempos (SSIP 0 is the voice's own, 4) and three pitches.  The voice
- * is left at its own level and the samples are turned here, by the gain the other two voices get. */
+ * is left at its own level and the samples are turned by the gain the other two voices get. */
 static void speak_tts(char *text)
 {
     const int rate = to100(ssip_rate), pitch = to100(ssip_pitch);
+    int stopped;
 
-    strip_ssml(text);
-    send_line("200 OK SPEAKING");
-    send_line("701 BEGIN");
-    if (poll_stop()) {                               /* already stopped (key repeat): nothing to say */
-        send_line("703 STOP");
+    sd_strip_ssml(text);
+    sd_send_line("200 OK SPEAKING");
+    sd_send_line("701 BEGIN");
+    if (sd_poll_stop()) {                               /* already stopped (key repeat): nothing to say */
+        sd_send_line("703 STOP");
         return;
     }
-    out.n = out.stopped = 0;
-    out.gain = 0.25 + to100(ssip_volume) / 100.0;
-    tts.set((rate * 9 + 49) / 100, pitch <= 25 ? -1 : pitch >= 75 ? 1 : 0, 0);
-    tts.say(text, tts_sink, NULL);
-    if (!out.stopped && out.n)
-        send_audio(out.pcm, out.n, tts.rate);
-    send_line(out.stopped ? "703 STOP" : "702 END");
+    stopped = sd_plugin_say(text, (rate * 9 + 49) / 100, pitch <= 25 ? -1 : pitch >= 75 ? 1 : 0,
+                            0.25 + to100(ssip_volume) / 100.0);
+    sd_send_line(stopped ? "703 STOP" : "702 END");
 }
 
 static void speak(char *text)
@@ -438,35 +151,35 @@ static void speak(char *text)
         speak_tts(text);
         return;
     }
-    strip_ssml(text);
-    len = to_cwi2(text);
-    if (poll_stop()) {                               /* already stopped (key repeat): nothing to say */
-        send_line("200 OK SPEAKING");
-        send_line("701 BEGIN");
-        send_line("703 STOP");
+    sd_strip_ssml(text);
+    len = sd_to_cwi2(text);
+    if (sd_poll_stop()) {                               /* already stopped (key repeat): nothing to say */
+        sd_send_line("200 OK SPEAKING");
+        sd_send_line("701 BEGIN");
+        sd_send_line("703 STOP");
         return;
     }
-    send_line("200 OK SPEAKING");
-    send_line("701 BEGIN");
+    sd_send_line("200 OK SPEAKING");
+    sd_send_line("701 BEGIN");
     /* the NVDA driver's _timeScale, _pitchFactor and gain */
     if (brailab_voice_begin(voice, (const uint8_t *)text, len, pow(2.0, (pitch - 50.0) / 100.0),
                             0.9 - 0.55 * (rate / 100.0), furcsa, intonation, 0.25 + volume / 100.0) == 0) {
         while ((n = brailab_voice_read(voice, pcm, BRAILAB_VOICE_BLOCK)) > 0) {
-            send_audio(pcm, n, RATE);
-            if (poll_stop()) {
+            sd_send_audio(pcm, n, RATE);
+            if (sd_poll_stop()) {
                 stopped = 1;
                 break;
             }
         }
     }
-    send_line(stopped ? "703 STOP" : "702 END");
+    sd_send_line(stopped ? "703 STOP" : "702 END");
 }
 
 static char *read_text(void)
 {
     char *text = (char *)calloc(1, 1), *line;
     size_t n = 0;
-    while ((line = readline_sd()) != NULL) {
+    while ((line = sd_readline()) != NULL) {
         const char *s = line;
         size_t k;
         if (!strcmp(line, ".")) {
@@ -517,44 +230,44 @@ int main(int argc, char **argv)
     if (argc > 1)
         read_config(argv[1]);
     read_user_config();
-    cmd = readline_sd();
+    cmd = sd_readline();
     if (!cmd || strcmp(cmd, "INIT"))
         return 1;
     free(cmd);
     image = load_talkhun(&len);
     voice = image ? brailab_voice_create(image, len) : NULL;
-    load_tts();
-    if (!voice && !tts.lib) {
+    sd_plugin_load(tts_plugin, datadir);
+    if (!voice && !sd_plugin_loaded()) {
         char msg[1200];
         snprintf(msg, sizeof msg, image ? "399-TALKHUN0.COM in %s did not install"
                                         : "399-no TALKHUN0.COM in the data folder %s", datadir);
         free(image);
-        send_line(msg);
-        if (*tts.why) {
-            snprintf(msg, sizeof msg, "399-BraiLab TTS: %s", tts.why);
-            send_line(msg);
+        sd_send_line(msg);
+        if (*sd_plugin_why()) {
+            snprintf(msg, sizeof msg, "399-BraiLab TTS: %s", sd_plugin_why());
+            sd_send_line(msg);
         }
-        send_line("399 ERR CANT INIT MODULE");
+        sd_send_line("399 ERR CANT INIT MODULE");
         return 1;
     }
     free(image);
     if (voice)
-        send_line("299-the BraiLab PC: TALKHUN0 on an emulated 8086, through a model of the PCF8200");
+        sd_send_line("299-the BraiLab PC: TALKHUN0 on an emulated 8086, through a model of the PCF8200");
     else
         which = TTS;
-    if (tts.lib) {
-        send_line("299-BraiLab TTS: the optional voice plug-in is loaded");
-    } else if (*tts.why) {
+    if (sd_plugin_loaded()) {
+        sd_send_line("299-BraiLab TTS: the optional voice plug-in is loaded");
+    } else if (*sd_plugin_why()) {
         char msg[500];
-        snprintf(msg, sizeof msg, "299-BraiLab TTS is not offered: %s", tts.why);
-        send_line(msg);
+        snprintf(msg, sizeof msg, "299-BraiLab TTS is not offered: %s", sd_plugin_why());
+        sd_send_line(msg);
     }
-    send_line("299 OK LOADED SUCCESSFULLY");
-    while ((cmd = readline_sd()) != NULL) {
+    sd_send_line("299 OK LOADED SUCCESSFULLY");
+    while ((cmd = sd_readline()) != NULL) {
         if (!strcmp(cmd, "SPEAK") || !strcmp(cmd, "CHAR") || !strcmp(cmd, "KEY") || !strcmp(cmd, "SOUND_ICON")) {
             int is_key = !strcmp(cmd, "KEY"), icon = !strcmp(cmd, "SOUND_ICON");
             char *text;
-            send_line("202 OK RECEIVING MESSAGE");
+            sd_send_line("202 OK RECEIVING MESSAGE");
             text = read_text();
             if (is_key) {
                 char *c;
@@ -563,9 +276,9 @@ int main(int argc, char **argv)
                         *c = ' ';
             }
             if (icon || !*text) {                    /* no sound icons: an empty message still completes */
-                send_line("200 OK SPEAKING");
-                send_line("701 BEGIN");
-                send_line("702 END");
+                sd_send_line("200 OK SPEAKING");
+                sd_send_line("701 BEGIN");
+                sd_send_line("702 END");
             } else {
                 speak(text);
             }
@@ -574,8 +287,8 @@ int main(int argc, char **argv)
             /* only between messages here (during one, speak() catches it): nothing is playing */
         } else if (!strcmp(cmd, "SET")) {
             char *line;
-            send_line("202 OK RECEIVING MESSAGE");
-            while ((line = readline_sd()) != NULL) {
+            sd_send_line("202 OK RECEIVING MESSAGE");
+            while ((line = sd_readline()) != NULL) {
                 char *eq;
                 if (!strcmp(line, ".")) {
                     free(line);
@@ -588,34 +301,33 @@ int main(int argc, char **argv)
                 }
                 free(line);
             }
-            send_line("203 OK SETTINGS RECEIVED");
+            sd_send_line("203 OK SETTINGS RECEIVED");
         } else if (!strcmp(cmd, "AUDIO") || !strcmp(cmd, "LOGLEVEL") || !strcmp(cmd, "DEBUG")) {
             char *line;
-            send_line("202 OK RECEIVING MESSAGE");
-            while ((line = readline_sd()) != NULL) {
+            sd_send_line("202 OK RECEIVING MESSAGE");
+            while ((line = sd_readline()) != NULL) {
                 int end = !strcmp(line, ".");
                 free(line);
                 if (end)
                     break;
             }
-            send_line("203 OK SETTINGS RECEIVED");
+            sd_send_line("203 OK SETTINGS RECEIVED");
         } else if (!strcmp(cmd, "LIST VOICES")) {
             int v;
             for (v = 0; v < NVOICES; v++)
                 if (have(v))
                     printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
-            send_line("249 OK VOICES LISTED");
+            sd_send_line("249 OK VOICES LISTED");
         } else if (!strcmp(cmd, "QUIT")) {
             free(cmd);
             break;
         } else {
-            send_line("300 ERR UNKNOWN COMMAND");
+            sd_send_line("300 ERR UNKNOWN COMMAND");
         }
         free(cmd);
     }
     if (voice)
         brailab_voice_destroy(voice);
-    if (tts.lib)
-        tts.close();
+    sd_plugin_close();
     return 0;
 }

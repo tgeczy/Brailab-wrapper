@@ -15,12 +15,16 @@ INC="-I$ROOT/src/talkhun_emu/csrc -I$ROOT/src/talkhun_emu/csrc/cpu -I$ROOT/src/p
 mkdir -p "$OUT/obj"
 $CXX -O2 -std=c++17 -fno-exceptions -fno-rtti -Wall -Wno-sign-compare $INC \
     -c -o "$OUT/obj/i86_mame.o" "$ROOT/src/talkhun_emu/csrc/cpu/i86_mame.cpp"
-for f in src/talkhun_emu/csrc/talkhun_host.c src/talkhun_emu/csrc/brailab_voice.c src/pcf8200/csrc/pcf8200.c \
-         src/platforms/speechd/sd_brailab.c; do
-    $CC $CFLAGS $INC -c -o "$OUT/obj/$(basename "$f" .c).o" "$ROOT/$f"
+SOURCES="src/talkhun_emu/csrc/talkhun_host.c src/talkhun_emu/csrc/brailab_voice.c src/pcf8200/csrc/pcf8200.c
+         src/platforms/speechd/sd_io.c src/platforms/speechd/sd_text.c src/platforms/speechd/sd_plugin.c
+         src/platforms/speechd/sd_brailab.c"
+OBJECTS="$OUT/obj/i86_mame.o"
+for f in $SOURCES; do
+    o="$OUT/obj/$(basename "$f" .c).o"
+    $CC $CFLAGS $INC -c -o "$o" "$ROOT/$f"
+    OBJECTS="$OBJECTS $o"
 done
-$CXX -o "$OUT/sd_brailab" "$OUT/obj/i86_mame.o" "$OUT/obj/talkhun_host.o" "$OUT/obj/brailab_voice.o" \
-    "$OUT/obj/pcf8200.o" "$OUT/obj/sd_brailab.o" -static-libstdc++ -static-libgcc -lm -ldl
+$CXX -o "$OUT/sd_brailab" $OBJECTS -static-libstdc++ -static-libgcc -lm -ldl
 # the stand-in voice plug-ins that test_sd_plugin.py loads; they are for the tests and go nowhere else
 mkdir -p "$OUT/test"
 $CC $CFLAGS -fPIC -shared -o "$OUT/test/libbrailab_tts.so" "$SD/test_tts_stub.c"
