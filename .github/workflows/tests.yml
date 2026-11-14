@@ -52,6 +52,13 @@ jobs:
         env:
           PCF8200_BACKEND: native
 
+      # The Klatt synthesizer: C only, tested against what the papers predict.
+      - name: Build the Klatt synthesizer
+        run: python klatt/csrc/build_native.py
+
+      - name: Run the klatt suite
+        run: python -m pytest klatt/tests -v
+
       # The voice's tests need TALKHUN0, so they skip here, but it must still build.
       - name: Build the voice
         run: python talkhun_emu/csrc/build_native.py
