@@ -63,6 +63,16 @@ jobs:
       - name: Build the voice
         run: python talkhun_emu/csrc/build_native.py
 
+      # The speech-dispatcher module must build, and its loading of an optional voice
+      # plug-in is tested with a stand-in, which needs no TALKHUN0 either.
+      - name: Build the speech-dispatcher module
+        run: sh speechd/build_linux.sh
+
+      - name: Run the module's plug-in tests
+        run: >
+          python speechd/test_sd_plugin.py build/linux/sd_brailab
+          build/linux/test/libbrailab_tts.so build/linux/test/libbrailab_tts_other.so
+
       # chip_synth's pitch control, which NVDA's capital pitch change rides on.
       # Needs numpy only -- the sequences are built in the tests rather than
       # captured, so no Unicorn and no TALKHUN.

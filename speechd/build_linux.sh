@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build sd_brailab, the speech-dispatcher module: one program, no Python, nothing to install beside it but
-# TALKHUN0.COM.  Also builds talkhun_emu's library, which the tests drive directly.
+# TALKHUN0.COM.  Also builds talkhun_emu's library, which the tests drive directly, and the tests' stand-in
+# voice plug-ins.
 #
 #   ./build_linux.sh [out folder]        default: build/linux in the repository
 set -e
@@ -19,6 +20,10 @@ for f in talkhun_emu/csrc/talkhun_host.c talkhun_emu/csrc/brailab_voice.c pcf820
     $CC $CFLAGS $INC -c -o "$OUT/obj/$(basename "$f" .c).o" "$ROOT/$f"
 done
 $CXX -o "$OUT/sd_brailab" "$OUT/obj/i86_mame.o" "$OUT/obj/talkhun_host.o" "$OUT/obj/brailab_voice.o" \
-    "$OUT/obj/pcf8200.o" "$OUT/obj/sd_brailab.o" -static-libstdc++ -static-libgcc -lm
+    "$OUT/obj/pcf8200.o" "$OUT/obj/sd_brailab.o" -static-libstdc++ -static-libgcc -lm -ldl
+# the stand-in voice plug-ins that test_sd_plugin.py loads; they are for the tests and go nowhere else
+mkdir -p "$OUT/test"
+$CC $CFLAGS -fPIC -shared -o "$OUT/test/libbrailab_tts.so" "$HERE/test_tts_stub.c"
+$CC $CFLAGS -fPIC -shared -DSTUB_API=99 -o "$OUT/test/libbrailab_tts_other.so" "$HERE/test_tts_stub.c"
 python3 "$ROOT/talkhun_emu/csrc/build_native.py"
 echo "built $OUT/sd_brailab"

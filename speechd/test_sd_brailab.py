@@ -1,7 +1,6 @@
 """sd_brailab against speech-dispatcher's module protocol, every message's audio checked byte for byte.
 
-The harness plays the server: it starts the module, speaks the protocol on its stdin and stdout, and decodes the
-705 AUDIO blocks.  The reference is brailab_voice.py on the library the NVDA add-on uses, given what the NVDA
+The harness (sd_protocol.py) plays the server.  The reference is brailab_voice.py on the library the NVDA add-on uses, given what the NVDA
 driver would give it, so the module must be the add-on's voice:
 
   init     INIT loads, LIST VOICES has both voices, in Hungarian
@@ -18,11 +17,12 @@ driver would give it, so the module must be the add-on's voice:
 import os
 import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "talkhun_emu"))
+sys.path.insert(0, HERE)
 import brailab_voice                                        # noqa: E402
+import sd_protocol                                          # noqa: E402
 
 MODULE, DATA = sys.argv[1], sys.argv[2]
 with open(os.path.join(DATA, "TALKHUN0.COM"), "rb") as f:
@@ -40,83 +40,8 @@ def reference(text, rate=0, pitch=0, volume=100, furcsa=False, intonation=True):
                                furcsa=furcsa, intonation=intonation, gain=0.25 + v / 100.0))
 
 
-class Module:
-    def __init__(self, conf=None, user_conf=None):
-        self.home = tempfile.mkdtemp(prefix="sdbrailab")
-        args = [MODULE]
-        if conf is not None:
-            path = os.path.join(self.home, "brailab.conf")
-            with open(path, "w") as f:
-                f.write(conf)
-            args.append(path)
-        if user_conf is not None:
-            os.makedirs(os.path.join(self.home, ".config", "brailab"))
-            with open(os.path.join(self.home, ".config", "brailab", "sd_brailab.conf"), "w") as f:
-                f.write(user_conf)
-        env = dict(os.environ, HOME=self.home, BRAILAB_DATADIR=DATA)
-        env.pop("XDG_CONFIG_HOME", None)
-        self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
-        self.send("INIT")
-        lines = []
-        while True:
-            lines.append(self.line())
-            if not lines[-1].startswith(b"299-") and not lines[-1].startswith(b"399-"):
-                break
-        self.init = lines
-
-    def send(self, *lines):
-        self.p.stdin.write(b"".join(l.encode("utf-8") + b"\n" for l in lines))
-        self.p.stdin.flush()
-
-    def line(self):
-        return self.p.stdout.readline().rstrip(b"\n")
-
-    def audio_block(self, first):
-        s, n = first, None
-        while not s.startswith(b"705-AUDIO"):
-            if s.startswith(b"705-num_samples="):
-                n = int(s.split(b"=")[1])
-            assert s.startswith(b"705-"), s
-            s = self.line()
-        data = s[len(b"705-AUDIO") + 1:] + b"\n"
-        while not data.endswith(b"\n705 AUDIO\n"):
-            data += self.p.stdout.readline()
-        raw, out, i = data[:-len(b"\n705 AUDIO\n")], bytearray(), 0
-        while i < len(raw):
-            if raw[i] == 0x7D:
-                out.append(raw[i + 1] ^ 0x20)
-                i += 2
-            else:
-                out.append(raw[i])
-                i += 1
-        assert len(out) == 2 * n, (len(out), n)
-        return bytes(out)
-
-    def speak(self, text, cmd="SPEAK", stop_after=None):
-        self.send(cmd)
-        assert self.line() == b"202 OK RECEIVING MESSAGE"
-        self.send(*[("." + l if l.startswith(".") else l) for l in text.split("\n")], ".")
-        assert self.line() == b"200 OK SPEAKING"
-        assert self.line() == b"701 BEGIN"
-        pcm, blocks = bytearray(), 0
-        while True:
-            s = self.line()
-            if s.startswith(b"705-"):
-                pcm += self.audio_block(s)
-                blocks += 1
-                if blocks == stop_after:
-                    self.send("STOP")
-            else:
-                return bytes(pcm), s
-
-    def set(self, **kw):
-        self.send("SET", *["%s=%s" % (k, v) for k, v in kw.items()], ".")
-        assert self.line() == b"202 OK RECEIVING MESSAGE"
-        assert self.line() == b"203 OK SETTINGS RECEIVED"
-
-    def quit(self):
-        self.send("QUIT")
-        self.p.wait(10)
+def Module(conf=None, user_conf=None):
+    return sd_protocol.Module(MODULE, DATA, conf, user_conf)
 
 
 def check(label, ok, detail=""):
@@ -135,13 +60,7 @@ TEXTS = ["Jó napot kívánok.", "árvíztűrő tükörfúrógép, ÁRVÍZTŰRŐ
 
 m = Module()
 check("init", m.init[-1] == b"299 OK LOADED SUCCESSFULLY", m.init[-1].decode())
-m.send("LIST VOICES")
-voices = []
-while True:
-    s = m.line()
-    voices.append(s)
-    if not s.startswith(b"200-"):
-        break
+voices = m.voices()
 check("voices", voices == [b"200-BraiLab PC\thu\tMALE1", b"200-BraiLab PC furcsa\thu\tMALE2",
                            b"249 OK VOICES LISTED"], repr(voices))
 for i, text in enumerate(TEXTS):

@@ -8,13 +8,19 @@
  * is polled for STOP between blocks.  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
  * Rate, pitch and volume come from SSIP, mapped as the NVDA driver maps its sliders.
  *
+ * A third voice, "BraiLab TTS", is offered when an optional binary plug-in is in the data folder with its two data
+ * files (brailab_tts_plugin.h; the plug-in is not built from this repository).  Either part may be missing: the
+ * module loads with whichever voices it finds, and fails only with none.
+ *
  * Config (argv[1], speech-dispatcher's module config; then this user's own file, whose keys win:
  * $XDG_CONFIG_HOME/brailab/sd_brailab.conf, else ~/.config/brailab/sd_brailab.conf; every key optional):
  *   BrailabDataDir "/usr/local/share/brailab"   where TALKHUN0.COM is
  *   BrailabIntonation 1                         0: each clause held at its start pitch
+ *   BrailabTtsPlugin "/path/to/the/plug-in"     default: libbrailab_tts.so in the data folder
  * BRAILAB_DATADIR overrides the data folder.  TALKHUN0.COM is Arató András's program and not part of this one.
  * MIT.
  */
+#include <dlfcn.h>
 #include <math.h>
 #include <signal.h>
 #include <stdio.h>
@@ -23,6 +29,7 @@
 #include <sys/select.h>
 #include <unistd.h>
 
+#include "brailab_tts_plugin.h"
 #include "brailab_voice.h"
 
 #define RATE 10000
@@ -106,11 +113,11 @@ static void send_line(const char *s)
 }
 
 /* 705: 16-bit mono little-endian, the payload HDLC-escaped (0x7D and '\n' become 0x7D, byte ^ 0x20) */
-static void send_audio(const int16_t *pcm, int n)
+static void send_audio(const int16_t *pcm, int n, int rate)
 {
     const unsigned char *p = (const unsigned char *)pcm, *end = p + (size_t)n * 2;
     printf("705-bits=16\n705-num_channels=1\n705-sample_rate=%d\n705-num_samples=%d\n705-big_endian=0\n705-AUDIO",
-           RATE, n);
+           rate, n);
     fputc(0, stdout);
     for (; p < end; p++) {
         if (*p == 0x7D || *p == '\n') {
@@ -238,6 +245,7 @@ static int to_cwi2(char *s)
 
 /* ---- config ---------------------------------------------------------------------------------------------------- */
 static char datadir[1024];
+static char tts_plugin[1024];
 static int intonation = 1;
 
 static void read_config(const char *path)
@@ -255,6 +263,8 @@ static void read_config(const char *path)
             snprintf(datadir, sizeof datadir, "%s", val);
         else if (!strcmp(key, "BrailabIntonation"))
             intonation = atoi(val) != 0;
+        else if (!strcmp(key, "BrailabTtsPlugin"))
+            snprintf(tts_plugin, sizeof tts_plugin, "%s", val);
     }
     fclose(f);
 }
@@ -301,11 +311,66 @@ static unsigned char *load_talkhun(int *len)
     return image;
 }
 
+/* ---- the optional plug-in -------------------------------------------------------------------------------------- */
+static struct {
+    void *lib;
+    int (*open)(const char *);
+    void (*close)(void);
+    int (*set)(int, int, int);
+    int (*say)(const char *, brailab_tts_sink, void *);
+    int rate;
+    char why[400];                                   /* a plug-in was there and was not taken: the reason */
+} tts;
+
+/* 1 with the plug-in open on the data folder; 0 without one, quietly when there simply is no such file. */
+static int load_tts(void)
+{
+    char path[1100];
+    int (*version)(void), (*rate)(void), ret;
+    if (*tts_plugin)
+        snprintf(path, sizeof path, "%s", tts_plugin);
+    else
+        snprintf(path, sizeof path, "%s/libbrailab_tts.so", datadir);
+    if (!strchr(path, '/') || access(path, R_OK) != 0)   /* a bare name would be searched for: never that */
+        return 0;
+    tts.lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!tts.lib) {
+        snprintf(tts.why, sizeof tts.why, "%.390s", dlerror());
+        return 0;
+    }
+    version = (int (*)(void))dlsym(tts.lib, "brailab_tts_api_version");
+    rate = (int (*)(void))dlsym(tts.lib, "brailab_tts_sample_rate");
+    tts.open = (int (*)(const char *))dlsym(tts.lib, "brailab_tts_open");
+    tts.close = (void (*)(void))dlsym(tts.lib, "brailab_tts_close");
+    tts.set = (int (*)(int, int, int))dlsym(tts.lib, "brailab_tts_set");
+    tts.say = (int (*)(const char *, brailab_tts_sink, void *))dlsym(tts.lib, "brailab_tts_say");
+    if (!version || !rate || !tts.open || !tts.close || !tts.set || !tts.say)
+        snprintf(tts.why, sizeof tts.why, "%.300s is not a BraiLab TTS plug-in", path);
+    else if (version() != BRAILAB_TTS_API)
+        snprintf(tts.why, sizeof tts.why, "%.250s speaks version %d of the interface, this module version %d", path,
+                 version(), BRAILAB_TTS_API);
+    else if ((ret = tts.open(datadir)) != 0)
+        snprintf(tts.why, sizeof tts.why, "the plug-in did not open on the data folder %.300s (%d)", datadir, ret);
+    else if ((tts.rate = rate()) < 4000 || tts.rate > 96000)
+        snprintf(tts.why, sizeof tts.why, "the plug-in's sample rate is %d", tts.rate);
+    else
+        return 1;
+    dlclose(tts.lib);
+    tts.lib = NULL;
+    return 0;
+}
+
 /* ---- speaking -------------------------------------------------------------------------------------------------- */
-static const char *VOICES[2] = {"BraiLab PC", "BraiLab PC furcsa"};
+enum { PC, FURCSA, TTS, NVOICES };
+static const char *VOICES[NVOICES] = {"BraiLab PC", "BraiLab PC furcsa", "BraiLab TTS"};
 static brailab_voice *voice;
-static int furcsa = 0;
+static int which = PC;
 static int ssip_rate = 0, ssip_pitch = 0, ssip_volume = 100;
+
+static int have(int v)
+{
+    return v == TTS ? tts.lib != NULL : voice != NULL;
+}
 
 static int to100(int ssip)                           /* SSIP -100..100 to the NVDA driver's 0..100 (0 is 50) */
 {
@@ -313,12 +378,66 @@ static int to100(int ssip)                           /* SSIP -100..100 to the NV
     return v < 0 ? 0 : v > 100 ? 100 : v;
 }
 
+/* The plug-in's samples, turned by the volume and gathered into blocks; STOP is polled after each block. */
+static struct {
+    int16_t pcm[BRAILAB_VOICE_BLOCK];
+    int n, stopped;
+    double gain;
+} out;
+
+static int tts_sink(void *user, const int16_t *pcm, int n)
+{
+    int i;
+    (void)user;
+    for (i = 0; i < n; i++) {
+        double v = pcm[i] * out.gain;
+        v = v > 32767.0 ? 32767.0 : v < -32767.0 ? -32767.0 : v;
+        out.pcm[out.n++] = (int16_t)(v >= 0.0 ? v + 0.5 : v - 0.5);
+        if (out.n == BRAILAB_VOICE_BLOCK) {
+            send_audio(out.pcm, out.n, tts.rate);
+            out.n = 0;
+            if (poll_stop()) {
+                out.stopped = 1;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/* The NVDA driver's sliders for this voice: ten tempos (SSIP 0 is the voice's own, 4) and three pitches.  The voice
+ * is left at its own level and the samples are turned here, by the gain the other two voices get. */
+static void speak_tts(char *text)
+{
+    const int rate = to100(ssip_rate), pitch = to100(ssip_pitch);
+
+    strip_ssml(text);
+    send_line("200 OK SPEAKING");
+    send_line("701 BEGIN");
+    if (poll_stop()) {                               /* already stopped (key repeat): nothing to say */
+        send_line("703 STOP");
+        return;
+    }
+    out.n = out.stopped = 0;
+    out.gain = 0.25 + to100(ssip_volume) / 100.0;
+    tts.set((rate * 9 + 49) / 100, pitch <= 25 ? -1 : pitch >= 75 ? 1 : 0, 0);
+    tts.say(text, tts_sink, NULL);
+    if (!out.stopped && out.n)
+        send_audio(out.pcm, out.n, tts.rate);
+    send_line(out.stopped ? "703 STOP" : "702 END");
+}
+
 static void speak(char *text)
 {
     static int16_t pcm[BRAILAB_VOICE_BLOCK];
     const double rate = to100(ssip_rate), pitch = to100(ssip_pitch), volume = to100(ssip_volume);
+    const int furcsa = which == FURCSA;
     int len, n, stopped = 0;
 
+    if (which == TTS) {
+        speak_tts(text);
+        return;
+    }
     strip_ssml(text);
     len = to_cwi2(text);
     if (poll_stop()) {                               /* already stopped (key repeat): nothing to say */
@@ -333,7 +452,7 @@ static void speak(char *text)
     if (brailab_voice_begin(voice, (const uint8_t *)text, len, pow(2.0, (pitch - 50.0) / 100.0),
                             0.9 - 0.55 * (rate / 100.0), furcsa, intonation, 0.25 + volume / 100.0) == 0) {
         while ((n = brailab_voice_read(voice, pcm, BRAILAB_VOICE_BLOCK)) > 0) {
-            send_audio(pcm, n);
+            send_audio(pcm, n, RATE);
             if (poll_stop()) {
                 stopped = 1;
                 break;
@@ -380,10 +499,10 @@ static void set_param(char *key, const char *val)
     else if (!strcmp(key, "volume"))
         ssip_volume = atoi(val);
     else if (!strcmp(key, "synthesis_voice")) {      /* "NULL" or a name we haven't got: no change */
-        if (!strcmp(val, VOICES[0]))
-            furcsa = 0;
-        else if (!strcmp(val, VOICES[1]))
-            furcsa = 1;
+        int v;
+        for (v = 0; v < NVOICES; v++)
+            if (have(v) && !strcmp(val, VOICES[v]))
+                which = v;
     }
 }
 
@@ -404,17 +523,32 @@ int main(int argc, char **argv)
     free(cmd);
     image = load_talkhun(&len);
     voice = image ? brailab_voice_create(image, len) : NULL;
-    if (!voice) {
+    load_tts();
+    if (!voice && !tts.lib) {
         char msg[1200];
         snprintf(msg, sizeof msg, image ? "399-TALKHUN0.COM in %s did not install"
                                         : "399-no TALKHUN0.COM in the data folder %s", datadir);
         free(image);
         send_line(msg);
+        if (*tts.why) {
+            snprintf(msg, sizeof msg, "399-BraiLab TTS: %s", tts.why);
+            send_line(msg);
+        }
         send_line("399 ERR CANT INIT MODULE");
         return 1;
     }
     free(image);
-    send_line("299-the BraiLab PC: TALKHUN0 on an emulated 8086, through a model of the PCF8200");
+    if (voice)
+        send_line("299-the BraiLab PC: TALKHUN0 on an emulated 8086, through a model of the PCF8200");
+    else
+        which = TTS;
+    if (tts.lib) {
+        send_line("299-BraiLab TTS: the optional voice plug-in is loaded");
+    } else if (*tts.why) {
+        char msg[500];
+        snprintf(msg, sizeof msg, "299-BraiLab TTS is not offered: %s", tts.why);
+        send_line(msg);
+    }
     send_line("299 OK LOADED SUCCESSFULLY");
     while ((cmd = readline_sd()) != NULL) {
         if (!strcmp(cmd, "SPEAK") || !strcmp(cmd, "CHAR") || !strcmp(cmd, "KEY") || !strcmp(cmd, "SOUND_ICON")) {
@@ -466,8 +600,10 @@ int main(int argc, char **argv)
             }
             send_line("203 OK SETTINGS RECEIVED");
         } else if (!strcmp(cmd, "LIST VOICES")) {
-            printf("200-%s\thu\tMALE1\n", VOICES[0]);
-            printf("200-%s\thu\tMALE2\n", VOICES[1]);
+            int v;
+            for (v = 0; v < NVOICES; v++)
+                if (have(v))
+                    printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
             send_line("249 OK VOICES LISTED");
         } else if (!strcmp(cmd, "QUIT")) {
             free(cmd);
@@ -477,6 +613,9 @@ int main(int argc, char **argv)
         }
         free(cmd);
     }
-    brailab_voice_destroy(voice);
+    if (voice)
+        brailab_voice_destroy(voice);
+    if (tts.lib)
+        tts.close();
     return 0;
 }
