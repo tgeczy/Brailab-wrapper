@@ -6,6 +6,7 @@
 #   - a config that lists its modules itself gets this one listed too, once, however often the installer runs;
 #   - --default sets DefaultModule, and uninstall.sh gives back each config exactly as it was;
 #   - with no terminal and no option nothing is fetched; --without-tts likewise;
+#   - at a terminal the installer asks: y or igen fetches, n or a bare Enter does not;
 #   - --with-tts fetches (from a folder, and over HTTP from a server on this machine), checks the checksum and
 #     installs, and the module then has the third voice;
 #   - a wrong checksum, a file that is no package, and a place that does not answer leave the voice out and the
@@ -121,6 +122,28 @@ install "http://127.0.0.1:$PORT" --with-tts
 kill $SERVER 2>/dev/null
 if [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa,BraiLab TTS" ]; then ok "--with-tts over HTTP" "$(voices)"
 else fail "--with-tts over HTTP" "$(voices) | $(grep 'TTS' "$D/install.log" | tr '\n' ' ')"; fi
+
+# 2c. the question itself, at a terminal (a pty from script(1)): yes fetches, no and a bare Enter do not
+ask() {     # ask ANSWER: install.sh with a terminal for its input, and that answer typed
+    cat > "$T/ask.sh" <<EOF
+cd "$PKG" && PREFIX="$D/prefix" BRAILAB_SPD_MODULES="$D/modules" BRAILAB_SPD_CONF="$D/etc/speechd.conf" \\
+    BRAILAB_TTS_BASE="file://$REL" sh ./install.sh
+EOF
+    printf '%s\n' "$1" | script -qec "sh $T/ask.sh" /dev/null > "$D/install.log" 2>&1
+}
+if command -v script >/dev/null 2>&1 && script -qec true /dev/null >/dev/null 2>&1; then
+    for a in "y:BraiLab PC,BraiLab PC furcsa,BraiLab TTS" "igen:BraiLab PC,BraiLab PC furcsa,BraiLab TTS" \
+             "n:BraiLab PC,BraiLab PC furcsa" ":BraiLab PC,BraiLab PC furcsa"; do
+        answer="${a%%:*}"; want="${a#*:}"
+        fresh "ask-${answer:-enter}" "$STOCK"
+        ask "$answer"
+        if grep -q 'Also install the BraiLab TTS voice' "$D/install.log" && [ "$(voices)" = "$want" ]; then
+            ok "asked at a terminal: '${answer:-Enter}'" "$(voices)"
+        else fail "asked at a terminal: '${answer:-Enter}'" "$(voices) | $(grep -a 'TTS' "$D/install.log" | tr '\n\r' '  ')"; fi
+    done
+else
+    ok "asked at a terminal" "skipped: no script(1) here"
+fi
 
 # 3. the download going wrong, three ways: the voice is left out, the installer succeeds, two voices work
 for c in "badsum:file://$T/release-badsum:checksum" "nowhere:file://$T/nowhere:did not work" "refused:http://127.0.0.1:9:did not work"; do

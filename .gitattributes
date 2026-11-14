@@ -1,0 +1,2 @@
+# Shell scripts go into the Linux package as they are, and sh cannot read CRLF.
+*.sh text eol=lf

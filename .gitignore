@@ -15,8 +15,8 @@ mode_sweep/
 # TTS.dll and its data files, the BraiLab authors' work: they go out in
 # release packages only, never into the repository (see NOTICE.md).
 nvda_driver/**/build/
-# the add-on laid out for its tests: it holds TALKHUN0.COM
-/build/test-addon/
+# build output: the add-on laid out for its tests (it holds TALKHUN0.COM), the Linux build and its packages
+/build/
 nvda_driver/**/dist/
 *.nvda-addon
 nvda_driver/**/synthDrivers/Brailab/TTS.dll
@@ -47,6 +47,3 @@ src/pcf8200/_bin/
 src/pcf8200/dist/
 src/talkhun_emu/_bin/
 src/klatt/_bin/
-# the Linux build (build_linux.sh) and its packages
-/build/linux/
-/build/package/
