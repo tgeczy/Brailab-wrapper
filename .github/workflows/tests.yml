@@ -38,54 +38,55 @@ jobs:
         run: pip install pytest numpy
 
       - name: Run the pcf8200 suite on the Python reference
-        run: python -m pytest pcf8200/tests -v
+        run: python -m pytest src/pcf8200/tests -v
         env:
           PCF8200_BACKEND: python
 
       # test_native.py is what holds the C to the reference; without the library
       # it skips, so build it first and force the backend.
       - name: Build the C core
-        run: python pcf8200/csrc/build_native.py
+        run: python src/pcf8200/csrc/build_native.py
 
       - name: Run the pcf8200 suite on the C core
-        run: python -m pytest pcf8200/tests -v
+        run: python -m pytest src/pcf8200/tests -v
         env:
           PCF8200_BACKEND: native
 
       # The Klatt synthesizer: C only, tested against what the papers predict.
       - name: Build the Klatt synthesizer
-        run: python klatt/csrc/build_native.py
+        run: python src/klatt/csrc/build_native.py
 
       - name: Run the klatt suite
-        run: python -m pytest klatt/tests -v
+        run: python -m pytest src/klatt/tests -v
 
       # The voice's tests need TALKHUN0, so they skip here, but it must still build.
       - name: Build the voice
-        run: python talkhun_emu/csrc/build_native.py
+        run: python src/talkhun_emu/csrc/build_native.py
 
       # The speech-dispatcher module must build, and its loading of an optional voice
       # plug-in is tested with a stand-in, which needs no TALKHUN0 either.
       - name: Build the speech-dispatcher module
-        run: sh speechd/build_linux.sh
+        run: sh build_linux.sh
 
       - name: Run the module's plug-in tests
         run: >
-          python speechd/test_sd_plugin.py build/linux/sd_brailab
+          python src/platforms/speechd/test_sd_plugin.py build/linux/sd_brailab
           build/linux/test/libbrailab_tts.so build/linux/test/libbrailab_tts_other.so
 
       # chip_synth's pitch control, which NVDA's capital pitch change rides on.
       # Needs numpy only -- the sequences are built in the tests rather than
       # captured, so no Unicorn and no TALKHUN.
       - name: Run the chip_synth suite
-        run: python -m pytest talkhun_emu/tests -v
+        run: python -m pytest src/talkhun_emu/tests -v
 
       - name: The examples must still run
         run: |
-          cd pcf8200/examples
+          cd src/pcf8200/examples
           for f in *.py; do echo "-- $f"; python "$f" >/dev/null; done
 
       # numpy only. If scipy ever creeps back in, the add-on grows by ~30 MB.
       - name: Check the library imports without scipy
+        working-directory: src
         run: |
           python - <<'PY'
           import sys

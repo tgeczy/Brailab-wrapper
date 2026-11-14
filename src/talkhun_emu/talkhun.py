@@ -344,7 +344,7 @@ def load(com_path=None):
         env = os.environ.get('BRAILAB_ARCHIVE')
         if env:
             roots.append(env)
-        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         roots.append(os.path.join(repo, 'third_party', 'brailab'))
         roots.append(os.path.join(repo, 'BRAILAB-archive'))
         for root in roots:

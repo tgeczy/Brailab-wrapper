@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), "talkhun_emu"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "talkhun_emu"))
 sys.path.insert(0, HERE)
 import brailab_voice                                        # noqa: E402
 import sd_protocol                                          # noqa: E402

@@ -6,7 +6,7 @@ clause, capture, transpose, render, then fades and scaling.  Sessions stay alive
 across texts and settings, so any state the engine keeps has to agree too.
 
 Needs what is not in the repository, so it skips without it: the program itself
-(BRAILAB_ARCHIVE, else ../third_party/brailab), Unicorn, and the built library.
+(BRAILAB_ARCHIVE, else the repository's third_party/brailab), Unicorn, and the built library.
 """
 import os
 import sys
@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 import brailab_voice                                     # noqa: E402
 
-ARCHIVE = os.environ.get('BRAILAB_ARCHIVE', os.path.join(os.path.dirname(HERE), 'third_party', 'brailab'))
+ARCHIVE = os.environ.get('BRAILAB_ARCHIVE', os.path.join(os.path.dirname(os.path.dirname(HERE)), 'third_party', 'brailab'))
 COM = os.path.join(ARCHIVE, 'TALKHUN0.COM')
 
 pytestmark = pytest.mark.skipif(brailab_voice.load_library() is None or not os.path.exists(COM),

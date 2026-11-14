@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 r"""Package the standalone pcf8200 library for release.
 
-    python build_zip.py            -> ../release/pcf8200-python-<version>.zip
+    python build_zip.py            -> release/pcf8200-python-<version>.zip in the repository
 
 This exists because the released zip silently went stale: it was built once by
 hand for v3.0.5 and then re-attached to two later releases, so the published
@@ -16,7 +16,7 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.path.dirname(os.path.dirname(HERE))      # the repository
 OUT_DIR = os.path.join(ROOT, "release")
 
 #: What a user of the library needs. Tests and the build script itself stay out.

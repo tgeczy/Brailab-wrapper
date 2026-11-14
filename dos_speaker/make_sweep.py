@@ -33,7 +33,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'talkhun_emu'))
+sys.path.insert(0, os.path.join(os.path.dirname(HERE), 'src', 'talkhun_emu'))
 import make_braiplay as mb                                   # noqa: E402
 
 FS_MS = (12.8, 8.8, 10.4, 17.6)         # command bits FS1 FS0 -> a standard frame, in ms

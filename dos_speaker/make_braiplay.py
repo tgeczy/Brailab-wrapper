@@ -25,7 +25,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-sys.path.insert(0, os.path.join(ROOT, 'talkhun_emu'))
+sys.path.insert(0, os.path.join(ROOT, 'src', 'talkhun_emu'))
 from brailab_device import BraiLabDevice, STATUS_BUSY, STATUS_READY     # noqa: E402
 from dos_host import DosHost, DEFAULT_CPU_HZ                            # noqa: E402
 

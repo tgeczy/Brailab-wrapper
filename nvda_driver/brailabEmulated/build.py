@@ -7,7 +7,7 @@ brailab_voice.py with ctypes, so the add-on carries no numpy and no Unicorn.
 TALKHUN0.COM is Arato Andras's work -- it is copied into the release package's
 archive/ only, never committed to this repo.
 
-    python talkhun_emu/csrc/build_native.py     (needs W64DEVKIT and W64DEVKIT_X86)
+    python src/talkhun_emu/csrc/build_native.py     (needs W64DEVKIT and W64DEVKIT_X86)
     python build.py          -> release/brailabEmulated-<ver>.nvda-addon
     python build.py --test   -> release/brailabEmulatedC-<ver>.nvda-addon
 
@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from po2mo import compile_mo  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))                 # repo root
-EMU = os.path.join(ROOT, "talkhun_emu")                       # engine sources
+EMU = os.path.join(ROOT, "src", "talkhun_emu")                # engine sources
 ARCHIVE_SRC = os.path.join(ROOT, "third_party", "brailab")    # TALKHUN0.COM (NOTICE.md)
 ENGINE = "_brailab_native"
 MAME_LICENSE = os.path.join(EMU, "csrc", "cpu", "mame_i86", "LICENSE-BSD-3-Clause.txt")
@@ -96,7 +96,7 @@ def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=
     for arch in ("x64", "x86"):
         dll = os.path.join(EMU, "_bin", arch, "talkhun.dll")
         if not os.path.isfile(dll):
-            raise SystemExit("%s isn't built: run talkhun_emu/csrc/build_native.py" % dll)
+            raise SystemExit("%s isn't built: run src/talkhun_emu/csrc/build_native.py" % dll)
         os.makedirs(os.path.join(eng, "_bin", arch))
         shutil.copy2(dll, os.path.join(eng, "_bin", arch))
     talkhun = os.path.join(ARCHIVE_SRC, "TALKHUN0.COM")

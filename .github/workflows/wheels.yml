@@ -1,6 +1,6 @@
 # The pcf8200 wheels: Windows 64- and 32-bit, Linux x86-64 and arm64, and a pure wheel for
 # everything else.  Each platform runs the whole suite on the C core before its wheel is
-# built, then installs the wheel into a clean environment (pcf8200/test_wheel.py).
+# built, then installs the wheel into a clean environment (src/pcf8200/test_wheel.py).
 #
 # The wheels go to an untagged draft release.  Nothing here publishes one, and a release
 # that is already published is left alone: this job fails instead.
@@ -12,7 +12,7 @@ name: Wheels
 on:
   pull_request:
     paths:
-      - "pcf8200/**"
+      - "src/pcf8200/**"
       - ".github/workflows/wheels.yml"
   workflow_dispatch:
 
@@ -69,24 +69,24 @@ jobs:
           echo "${{ matrix.kit_var }}=$(cygpath -w "$RUNNER_TEMP/kit/w64devkit/bin")" >> "$GITHUB_ENV"
 
       - name: Build the C core
-        run: python pcf8200/csrc/build_native.py ${{ matrix.arch }}
+        run: python src/pcf8200/csrc/build_native.py ${{ matrix.arch }}
 
       - name: The suite on the C core
         run: |
           pip install pytest numpy
-          python -m pytest pcf8200/tests -q
+          python -m pytest src/pcf8200/tests -q
         env:
           PCF8200_BACKEND: native
 
       - name: Build and test the wheel
         run: |
-          python pcf8200/build_wheel.py --plat ${{ matrix.plat }}
-          python pcf8200/test_wheel.py pcf8200/dist/*.whl
+          python src/pcf8200/build_wheel.py --plat ${{ matrix.plat }}
+          python src/pcf8200/test_wheel.py src/pcf8200/dist/*.whl
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.plat }}
-          path: pcf8200/dist/*.whl
+          path: src/pcf8200/dist/*.whl
           if-no-files-found: error
 
   linux:
@@ -124,25 +124,25 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Build the C core
-        run: python3 pcf8200/csrc/build_native.py
+        run: python3 src/pcf8200/csrc/build_native.py
 
       - name: The suite on the C core
         run: |
           python3 -m venv /tmp/env
           /tmp/env/bin/pip install -q pytest numpy
-          /tmp/env/bin/python -m pytest pcf8200/tests -q
+          /tmp/env/bin/python -m pytest src/pcf8200/tests -q
         env:
           PCF8200_BACKEND: native
 
       - name: Build and test the wheel
         run: |
-          /tmp/env/bin/python pcf8200/build_wheel.py --plat linux
-          /tmp/env/bin/python pcf8200/test_wheel.py pcf8200/dist/*.whl
+          /tmp/env/bin/python src/pcf8200/build_wheel.py --plat linux
+          /tmp/env/bin/python src/pcf8200/test_wheel.py src/pcf8200/dist/*.whl
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-linux-${{ matrix.arch }}
-          path: pcf8200/dist/*.whl
+          path: src/pcf8200/dist/*.whl
           if-no-files-found: error
 
   pure:
@@ -159,13 +159,13 @@ jobs:
 
       - name: Build and test the wheel
         run: |
-          python pcf8200/build_wheel.py --plat any
-          python pcf8200/test_wheel.py pcf8200/dist/*.whl
+          python src/pcf8200/build_wheel.py --plat any
+          python src/pcf8200/test_wheel.py src/pcf8200/dist/*.whl
 
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-any
-          path: pcf8200/dist/*.whl
+          path: src/pcf8200/dist/*.whl
           if-no-files-found: error
 
   draft:

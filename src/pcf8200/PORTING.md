@@ -32,10 +32,10 @@ The code is small, but there are two renderers, and that comes first:
 | Piece | File | Lines | Needs |
 |---|---|---|---|
 | The library's renderer | `pcf8200/chip.py` | 271 | numpy |
-| The add-on's renderer | `talkhun_emu/chip_synth.py` | 510 | numpy, scipy off the default path |
-| Frame decoding and tables | `talkhun_emu/pcf8200.py`, `pcf8200_tables.py`, `pcf8200/protocol.py`, `pcf8200/tables.py` | about 570 | nothing |
+| The add-on's renderer | `src/talkhun_emu/chip_synth.py` | 510 | numpy, scipy off the default path |
+| Frame decoding and tables | `src/talkhun_emu/pcf8200.py`, `pcf8200_tables.py`, `src/pcf8200/protocol.py`, `src/pcf8200/tables.py` | about 570 | nothing |
 | Frame to parameters | `brai_synth.frame_params` | small | tables |
-| TALKHUN0 running | `talkhun_emu/talkhun.py` | 359 | Unicorn |
+| TALKHUN0 running | `src/talkhun_emu/talkhun.py` | 359 | Unicorn |
 | BRAISPK's synth | `dos_speaker/braispk.c` | part of 2201 | Watcom, x87 |
 
 `chip.py` and `chip_synth.py` do the same maths but share only 29 lines.
@@ -103,10 +103,10 @@ profile of the same chip, sharing what it can:
    on C, then `test_wheel.py` installs its wheel into a clean environment and compares PCM with
    the reference inside it. CI posts them to an untagged draft release.
 4. **TALKHUN without Unicorn.** Done early, because it was the one real unknown:
-   `talkhun_emu/csrc/talkhun_host.c` runs TALKHUN0 on MAME's 8086, 13 times faster. Against
+   `src/talkhun_emu/csrc/talkhun_host.c` runs TALKHUN0 on MAME's 8086, 13 times faster. Against
    Unicorn, over 720 lines of the archive's own text, every byte value and random ESC
    settings: 395,958 frames, none different.
-5. **The NVDA add-on on C.** `talkhun_emu/csrc/brailab_voice.c` is the whole voice, text in and
+5. **The NVDA add-on on C.** `src/talkhun_emu/csrc/brailab_voice.c` is the whole voice, text in and
    PCM out, and `brailab_voice.py` is all the add-on carries of Python. The add-on drops numpy and
    Unicorn, goes from 14.6 MB to 0.2 MB, and has both widths of the library, so it runs in 32-bit
    NVDA too. Against the Python pipeline, over 663 texts with random settings: 17.4 million samples,
@@ -119,9 +119,9 @@ hold-out that nothing is tuned on, as ssi263-speech does with its hold-out set.
 
 ## Questions to settle
 
-- MAME's core is copied from ssi263-speech with its pin, into `talkhun_emu/csrc/cpu/`, so this
+- MAME's core is copied from ssi263-speech with its pin, into `src/talkhun_emu/csrc/cpu/`, so this
   repository stands alone. A fix there has to be carried over by hand.
-- `talkhun_emu/pcf8200.py` has the package's name, which is why the two suites can't run in
+- `src/talkhun_emu/pcf8200.py` has the package's name, which is why the two suites can't run in
   one pytest and why `chip_synth` takes only `pcf8200_core`. Rename it when the track builders
   merge.
 - `PCF8200.tracks()` starts from the last pitch and speed given, not the first, so frames ahead

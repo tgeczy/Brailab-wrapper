@@ -22,7 +22,7 @@ Why the wrapper exists:
 
 - `brailab_wrapper.dll` (built from the sources here)
 - A Python NVDA synth driver (`synthDrivers/brailab.py`) that uses the wrapper
-- **`talkhun_emu/`: an emulator of the BraiLab PC itself** (see below)
+- **`src/talkhun_emu/`: an emulator of the BraiLab PC itself** (see below)
 - **`third_party/brailab/`: TALKHUN**, the original BraiLab PC speech program
   for DOS, by Vaspöri Teréz and Arató András, included with their permission.
   See [`NOTICE.md`](NOTICE.md).
@@ -71,7 +71,7 @@ Runtime:
 - NVDA (the driver is written for modern NVDA versions; tested with NVDA 2025.x)
 - BraiLab `tts.dll` (provided in the NVDA driver release package, not this repo)
 
-### `talkhun_emu/`: the BraiLab PC emulator
+### `src/talkhun_emu/`: the BraiLab PC emulator
 
 The wrapper above gives you the *voice*. This gives you the *machine*.
 
@@ -88,8 +88,8 @@ and something else did the talking.
 
 ```
 set BRAILAB_ARCHIVE=third_party\brailab
-python talkhun_emu/braipc.py            # browse for a program and run it
-python talkhun_emu/speak.py "mama."     # just the synthesiser
+python src/talkhun_emu/braipc.py            # browse for a program and run it
+python src/talkhun_emu/speak.py "mama."     # just the synthesiser
 ```
 
 `F12` opens a settings menu (tempo, pitch, furcsa), which speaks itself, so it
@@ -134,7 +134,7 @@ Miért kell a burkoló:
 
 - `brailab_wrapper.dll` (az itteni forrásból készül)
 - Python nyelvű NVDA-beszédillesztő (`synthDrivers/brailab.py`), amely a burkolót használja
-- **`talkhun_emu/`: magának a BraiLab PC-nek az emulátora** (lásd lent)
+- **`src/talkhun_emu/`: magának a BraiLab PC-nek az emulátora** (lásd lent)
 - **`third_party/brailab/`: a TALKHUN**, a BraiLab PC eredeti DOS-os
   beszélőprogramja, Vaspöri Teréz és Arató András munkája, az ő engedélyükkel.
   Lásd: [`NOTICE.md`](NOTICE.md).
@@ -184,7 +184,7 @@ Futtatáshoz:
 - NVDA (az illesztő a mai NVDA-változatokhoz készült; az NVDA 2025.x-szel kipróbálva)
 - a BraiLab `tts.dll` (az NVDA-illesztő kiadási csomagjában, nem ebben a tárolóban)
 
-### `talkhun_emu/`: a BraiLab PC emulátora
+### `src/talkhun_emu/`: a BraiLab PC emulátora
 
 A fenti burkoló a *hangot* adja. Ez a *gépet*.
 
@@ -201,8 +201,8 @@ más intézte.
 
 ```
 set BRAILAB_ARCHIVE=third_party\brailab
-python talkhun_emu/braipc.py            # programválasztás és futtatás
-python talkhun_emu/speak.py "mama."     # csak a szintetizátor
+python src/talkhun_emu/braipc.py            # programválasztás és futtatás
+python src/talkhun_emu/speak.py "mama."     # csak a szintetizátor
 ```
 
 Az `F12` beállításmenüt nyit (tempó, hangmagasság, furcsa hang), amely maga is

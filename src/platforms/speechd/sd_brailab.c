@@ -1,7 +1,7 @@
 /*
  * sd_brailab -- a speech-dispatcher output module: the BraiLab PC's voice, as in the NVDA add-on, in one process
  * with no Python.  The 1991 TALKHUN0.COM runs on MAME's 8086 and drives a model of the Philips PCF8200
- * (talkhun_emu/csrc/brailab_voice.c); this file speaks the protocol.
+ * (src/talkhun_emu/csrc/brailab_voice.c); this file speaks the protocol.
  *
  * The protocol and its audio (705 blocks, HDLC-escaped, played and flushed by the server) follow speech-dispatcher's
  * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on.  Synthesis is synchronous: stdin

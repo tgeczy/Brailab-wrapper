@@ -13,7 +13,7 @@ import filecmp, os, shutil, sys, zipfile
 
 BUILD = os.path.dirname(os.path.abspath(__file__))
 EMU = os.path.dirname(BUILD)                       # talkhun_emu
-ROOT = os.path.dirname(EMU)                        # repo root
+ROOT = os.path.dirname(os.path.dirname(EMU))       # repo root
 SITE = os.path.join(os.path.dirname(sys.executable), "Lib", "site-packages")
 OUT = os.path.join(BUILD, "BraiLabPC-portable")
 if os.path.isdir(OUT):

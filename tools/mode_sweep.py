@@ -45,7 +45,7 @@ Bits 0 and 1 are tested inside String_to_TTSText, but they gate per-character
 transforms, so they most likely shape the output text buffer, not the voice.
 
 Which settles a bigger question: furcsa is not reachable from TTS.dll.  The
-emulated TALKHUN in talkhun_emu/ remains the only way to get it.
+emulated TALKHUN in src/talkhun_emu/ remains the only way to get it.
 """
 import ctypes
 import hashlib

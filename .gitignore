@@ -32,18 +32,21 @@ nvda_driver/**/synthDrivers/brailab_host32.exe
 nvda_driver/**/brailab_host32.spec
 nvda_driver/**/build.cmd
 
-# Frozen emulator build output (see talkhun_emu/build_exe.py)
-talkhun_emu/build/
-talkhun_emu/dist/
-talkhun_emu/release/
-talkhun_emu/*.spec
+# Frozen emulator build output (see src/talkhun_emu/build_exe.py)
+src/talkhun_emu/build/
+src/talkhun_emu/dist/
+src/talkhun_emu/release/
+src/talkhun_emu/*.spec
 
 # emulated-addon build output (bundled deps + Arato's TALKHUN0.COM -- release only)
 /release/
 nvda_driver/brailabEmulated/_stage/
 
-# The C core, built by pcf8200/csrc/build_native.py
-pcf8200/_bin/
-pcf8200/dist/
-talkhun_emu/_bin/
-klatt/_bin/
+# The native libraries, built by each folder's csrc/build_native.py, and the wheels
+src/pcf8200/_bin/
+src/pcf8200/dist/
+src/talkhun_emu/_bin/
+src/klatt/_bin/
+# the Linux build (build_linux.sh) and its packages
+/build/linux/
+/build/package/

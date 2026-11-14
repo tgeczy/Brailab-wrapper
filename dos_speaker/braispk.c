@@ -22,7 +22,7 @@
  * are a speech frame, two a control write, one a start-sequence single
  * (settings nibble, then pitch).  A frame is synthesised at once -- the chip's
  * five-formant cascade at its own 10 kHz rate, the same model as
- * talkhun_emu/chip_synth.py -- into a ring of 8-bit PWM counts.
+ * src/talkhun_emu/chip_synth.py -- into a ring of 8-bit PWM counts.
  *
  * Output is the SPEAKER 1990 method: IRQ0 reprogrammed to 1193182/119 =
  * 10027 Hz, and every tick writes one count into PIT channel 2 in mode 0, so

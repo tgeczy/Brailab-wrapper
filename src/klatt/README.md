@@ -18,12 +18,12 @@ papers leave open.
 ## Build
 
 ```
-python klatt/csrc/build_native.py
-python -m pytest klatt/tests
+python src/klatt/csrc/build_native.py
+python -m pytest src/klatt/tests
 ```
 
 On Windows this wants w64devkit (`W64DEVKIT`, `W64DEVKIT_X86`), as `pcf8200` does;
-on Linux, any C compiler. The library lands in `klatt/_bin/`.
+on Linux, any C compiler. The library lands in `src/klatt/_bin/`.
 
 ## Use
 

@@ -231,8 +231,8 @@ def boot(games_dir, archive_dir=None, talkhun='TALKHUN.COM', cpu_hz=None,
     from dos_host import DosHost, DEFAULT_CPU_HZ
 
     if archive_dir is None:
-        archive_dir = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.abspath(__file__))), 'third_party', 'brailab')
+        archive_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__)))), 'third_party', 'brailab')
 
     dev = BraiLabDevice()
     host = DosHost(games_dir,
