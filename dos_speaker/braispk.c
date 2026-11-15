@@ -228,6 +228,7 @@ static unsigned n_swallowed;                    /* start pitches that fell into 
  * 11 starts for 4892 frames of Enter pressed again and again).  Unless /9 is given: */
 static unsigned long drain_tick;                /* tick at which everything synthesised so far has played */
 static unsigned long tick_rate;                 /* ticks a second, whole number                 */
+static unsigned long frame_tick;                /* tick at which the last frame came            */
 static unsigned utter_frames;                   /* frames since the utterance began             */
 static unsigned char badstop;                   /* at rest because it ran dry, not because of a STOP */
 static unsigned n_badstop;
@@ -1123,6 +1124,7 @@ static void transaction_done(void)
             unsigned long now = tick_count;
             if ((long)(drain_tick - now) < 0) drain_tick = now;
             drain_tick += (unsigned long)last_synth_n * ticks_per_sample;
+            frame_tick = now;
         }
         utter_frames++;
     } else if (len == 2) {
@@ -1271,8 +1273,15 @@ static unsigned char poll_status(void)
     if (stop_tail) {
         /* run dry for half a frame inside an utterance and the chip has stopped itself */
         if (!armed && utter_frames && tick_rate) {
+            /* The chip holds one frame and gives up when the next is half a frame late.  BRAISPK
+             * keeps fifo_frames of them queued, so the same lateness shows as the queue having
+             * stood below its "ready" level for half a frame: 0.55 waited for the queue to empty,
+             * which TALKHUN's short pause after a key never does (a Pentium 166: once in a session). */
             unsigned long half = (unsigned long)FS_MS10[S.fs & 3] * tick_rate / 20000UL;
-            if ((long)(tick_count - drain_tick) > (long)half) { armed = 1; badstop = 1; n_badstop++; utter_frames = 0; }
+            long late = (long)(tick_count - drain_tick) + (long)((unsigned long)fifo_frames * 128UL * ticks_per_sample);
+            long idle = (long)(tick_count - frame_tick);        /* and nothing has come for that long either: */
+            if (idle < late) late = idle;                       /* a queue still being filled is not late     */
+            if (late > (long)half) { armed = 1; badstop = 1; n_badstop++; utter_frames = 0; }
         }
         /* At rest the real adapter is taken to answer 10h: TALKHUN's start check goes ahead at once
          * on bit 4 set with bit 5 clear, and waits out four BIOS ticks on 30h.  While the last
@@ -2043,7 +2052,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.55: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.56: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;

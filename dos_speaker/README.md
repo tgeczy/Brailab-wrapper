@@ -139,7 +139,8 @@ never loads the start pitch. Until 0.54 BRAISPK did not climb this way: it
 never left an utterance by itself, so TALKHUN kept streaming frames into it and
 sent no start at all (a Pentium 166's counters: 11 starts for 4892 frames).
 Since 0.55 BRAISPK does what the chip does (`/9` is the old handshake): it stops
-when the frames run dry for half a frame, answers "at rest" with status 10h so
+when the next frame is half a frame late (0.56; 0.55 waited for its own
+three-frame queue to empty, which hardly ever happens), answers "at rest" with status 10h so
 that TALKHUN starts the next utterance at once and not after its 170 ms
 time-out, and lets the start after such a stop move the pitch without loading
 it. Under DOSBox-X this also cures lost speech: four sentences in a row arrive
