@@ -122,7 +122,7 @@ static const float AMPL[16]  = {0.0f,0.0078125f,0.01171875f,0.015625f,0.02148437
 static const float PI_TAB[32] = {0.0f,1.2f,2.4f,3.7f,4.9f,6.1f,7.3f,8.5f,9.8f,11.0f,13.4f,15.9f,19.5f,25.6f,34.2f,45.2f,0.0f,-45.2f,-34.2f,-25.6f,-19.5f,-15.9f,-13.4f,-11.0f,-9.8f,-8.5f,-7.3f,-6.1f,-4.9f,-3.7f,-2.4f,-1.2f};
 static const int FD_MULT[4]  = {1, 2, 3, 5};
 #define PITCH_HZ_PER_UNIT (10000.0 / 4096.0)
-#define PITCH_REG_MAX 4000.0        /* only keeps the number finite; measured straight to 1100 Hz */
+#define PITCH_REG_HALF 5000.0       /* half the chip's sample rate: where the pitch register goes round */
 #define PI_NOISE 16
 
 /* ---- the ear-matched output stage (chip_synth.py) ------------------------ */
@@ -968,7 +968,13 @@ static void synth_frame(const unsigned char *f)
      * round and round; until 0.52 the value was held between 40 and 400 Hz here and
      * topped out. */
     pt = S.pitch + pi * FD_MULT[fd];
-    if (pt > PITCH_REG_MAX) pt = PITCH_REG_MAX; else if (pt < -PITCH_REG_MAX) pt = -PITCH_REG_MAX;
+    /* Not measured beyond 2 kHz either way.  The start byte counts in units of the
+     * chip's 10 kHz sample rate / 4096, which is what a 12-bit phase counter gives;
+     * such a counter cannot tell 10000 - f from -f, and -f sounding as f is the
+     * mirror that was measured.  So the register goes round at 10 kHz: past +5000
+     * it continues from -5000.  An inference, and it only matters far outside speech. */
+    if (pt > PITCH_REG_HALF)       { pt -= 2.0 * PITCH_REG_HALF; S.pitch -= 2.0 * PITCH_REG_HALF; S.cp -= 2.0 * PITCH_REG_HALF; }
+    else if (pt < -PITCH_REG_HALF) { pt += 2.0 * PITCH_REG_HALF; S.pitch += 2.0 * PITCH_REG_HALF; S.cp += 2.0 * PITCH_REG_HALF; }
 
     /* Coefficients, amplitude and pitch are computed at each block's END and
      * ramped to it sample by sample from wherever the previous block left

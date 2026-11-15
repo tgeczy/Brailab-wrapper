@@ -4,9 +4,10 @@
 
 ## English
 
-**Status: experimental, work in progress.** BRAISPK is not part of the releases. It
-has a known fault (at the prompt, the exception dictionary can miss the first word of
-a repeated DOS message), and it has been checked far less than the NVDA voice.
+**Status: experimental, work in progress.** BRAISPK is not part of the releases, and
+it has been checked far less than the NVDA voice. (At the prompt, the exception
+dictionary can miss the first word of a repeated DOS message. That was listed here
+as a BRAISPK fault; a real BraiLab PC with the original TALKHUN does the same.)
 
 A 16-bit DOS TSR that stands in for the BraiLab PC speech adapter. TALKHUN, the
 1991–2003 BraiLab screen reader, thinks it is clocking frames into a PCF8200 on
@@ -124,8 +125,10 @@ past 1100 Hz, and when the increments take it below zero it comes back up the
 other side: where the sum says -365 Hz the box sounds 347 Hz, at -907 Hz it
 sounds 891. This matters when Enter is pressed quickly many times: on the real
 box the pitch then keeps climbing, drops very low and climbs again, round and
-round, while BRAISPK stopped at 400 Hz. Whether 0.52 now goes round the same
-way has not been heard on a real PC yet.
+round, while BRAISPK stopped at 400 Hz. Beyond 2 kHz nothing was measured;
+there BRAISPK lets the value go round at the chip's 10 kHz sample rate, which is
+an inference from the mirror at zero. Whether 0.52 now goes round the way the
+box does has not been heard on a real PC yet.
 
 ## Making Windows 98's DOS readable (0.26)
 
@@ -196,9 +199,10 @@ kept up.
 
 ## Magyarul
 
-**Állapot: kísérleti, még készül.** A BRAISPK nem része a kiadásoknak. Van egy ismert
-hibája (a parancssorban a kivételszótár kihagyhatja egy megismételt DOS-üzenet első
-szavát), és sokkal kevesebbet teszteltük, mint az NVDA-hangot.
+**Állapot: kísérleti, még készül.** A BRAISPK nem része a kiadásoknak, és sokkal
+kevesebbet teszteltük, mint az NVDA-hangot. (A parancssorban a kivételszótár
+kihagyhatja egy megismételt DOS-üzenet első szavát. Ez itt a BRAISPK hibájaként
+szerepelt; a valódi BraiLab PC az eredeti TALKHUN-nal ugyanezt teszi.)
 
 A BRAISPK egy 16 bites, rezidens DOS-program, amely a BraiLab PC beszédadapterét
 helyettesíti. A TALKHUN, a BraiLab 1991 és 2003 között használt képernyőolvasója,
