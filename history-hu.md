@@ -67,7 +67,8 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   Philips-szabadalom, Johannes N. Kroon munkája, olyan eszközt ír le, amely karaktereket mond ki, és
   a nagybetűt nem plusz szavakkal, hanem a hang megváltoztatásával különbözteti meg a kisbetűtől. A
   szintetizátorát meg is nevezi: „PHILIPS MEA 8000” [25]. A képernyőolvasók ma is hangmagassággal
-  jelzik a nagybetűt.
+  jelzik a nagybetűt. Az IPO 1987-es jelentése Kroonnak tulajdonítja a Typophone nevű beszélő
+  írógép 1983-as tervét [35].
 - **1983, más források szerint.** A múzeum szerint a Philips 1983-ban dobta piacra a chipet [14b].
   A CPCWiki egy abban az évben megjelent Philips-kiadványt említ („MEA8000 voice synthesizer:
   principles and interfacing”, Technical Publication 101), amelyet nem láttunk [4].
@@ -147,6 +148,11 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 - **Elindul a Multivox család** (múzeum). A múzeum a családot 1987-től 2002-ig keltezi, a mögötte álló
   közös munkát pedig 1983-tól: a Műszaki Egyetem adta a hardvert és a szoftvert, az MTA Fonetikai
   Laboratóriuma a fonetikai adatokat, a szabályokat és a nyelvi adaptációkat [14d].
+- **A Pocketstem megkapja az új chipet** (közlemény). Az IPO 1987-es éves jelentése egy zsebméretű
+  segédeszközt ír le, amely tárolt mondatokat mond ki azok helyett, akik nem tudnak beszélni. Öt
+  prototípust 24 beszédsérült ember próbált ki rehabilitációs központokban, kórházakban és otthon,
+  és az új beszédszintetizátor, a PCF8200 beépítése bekerült egy új változatba, amely kérésre női
+  hangon is megszólal [35]. Ez a legkorábbi keltezhető eszköz, amelyről tudjuk, hogy PCF8200 van benne.
 
 ## 1988
 
@@ -304,7 +310,10 @@ chipre épülő beszédbővítőket kaptak, és otthon, Hollandiában.
   hang”), amelyet Deliege írt le 1989-ben, billentyűzetről beszédet előállító rendszer volt azoknak,
   akik elvesztették a beszédképességüket; a diádjai az IPO-ban készültek, és a MEA8000
   paramétereire kódolták át őket. Mondatokat is elő tudott készíteni egy kisebb, hordozható
-  segédeszköz, a Pocketstem számára (Waterham, 1989) [30].
+  segédeszköz, a Pocketstem számára (Waterham, 1989) [30]. Az IPO 1987-es jelentésében már
+  mindkettő a felhasználók kezében van: a Pocketstem 28 tárolt mondata elég volt a korlátozott
+  kommunikációhoz, azok, akik az intenzív osztályon átmenetileg elvesztették a beszédüket, nagyon
+  kedvezően fogadták, és senkinek sem okozott gondot a szintetikus beszéd elfogadása vagy megértése [35].
 - **Franciaország: tanítórendszer vak és látó gyerekeknek** (közlemény). Ugyanazon az 1990-es
   RESNA-konferencián Burger, Beltrando, Liard és Sagot (INSERM, Párizs) egy IBM PC kompatibilis
   gépbe való kártyát ír le, amelyen a beszédrészleteket egy Philips RTC MEA 8000 állítja elő [32].
@@ -313,18 +322,20 @@ chipre épülő beszédbővítőket kaptak, és otthon, Hollandiában.
 
 A Philips saját kártyáin kívül [1] minden PCF8200-ra épülő termék, amelyet nyomtatásban találtunk,
 szerepel ezen az oldalon: Budapesten a Microvox-64, a BraiLab PC és a Multivox-8, Barcelonában a
-Ciber232. A PC-ROBOT a Multivox családhoz tartozik, amelynek chipjeiként a múzeum a MEA8000-et, majd
-a PCF8200-at nevezi meg [14d]; a saját oldala nem írja le, melyik chip van a kártyán [14f], de azon
-a kártyán, amellyel dolgoztunk, PCF8200 van (lásd 1994-nél). Ha tudsz még egy termékről, kérlek,
-nyiss egy issue-t.
+Ciber232, Eindhovenben pedig a későbbi Pocketstem (lásd 1987-nél). A PC-ROBOT a Multivox családhoz
+tartozik, amelynek chipjeiként a múzeum a MEA8000-et, majd a PCF8200-at nevezi meg [14d]; a saját
+oldala nem írja le, melyik chip van a kártyán [14f], de azon a kártyán, amellyel dolgoztunk,
+PCF8200 van (lásd 1994-nél). Ha tudsz még egy termékről, kérlek, nyiss egy issue-t.
 
 További nyomok. Többet a SpeechChips.com-on, Scott Savage beszédchip-múzeumában találtunk [28],
 amelynek irodalomjegyzéke a fenti 1982-es cikkhez és szabadalomhoz is elvezetett [24][25]:
 
 - **Kommunikációs segédeszközök:** King 1991-es eszközei erre a chipre készültek (lásd 1991-nél)
-  [27], és az Innocomp 1990-es bevezetője is (lásd 1990-nél) [32]. Ha egy segédeszközgyártó
-  bevezetőt ír a chipről, az arra utal, hogy az eszközei ezt használták, de nem találtunk
-  kézikönyvet vagy kártyát, amely ezt kimondaná.
+  [27], és az Innocomp 1990-es bevezetője is (lásd 1990-nél) [32]. Az Innocomp gyártotta a
+  Say-It-All II Plust, amely szerepel egy 1990 júliusi, kommunikációs segédeszközökről szóló
+  útmutatóban [36]. Ha egy ilyen gyártó bevezetőt ír a chipről, az arra utal, hogy az eszközei ezt
+  használták, de az útmutató nem írja le, mi van az eszközben, és nem találtunk kézikönyvet vagy
+  kártyát, amely kimondaná.
 - **Egy autó** (későbbi beszámoló). A SpeechChips.com a BMW E38 navigációs egységét olyan gépként
   sorolja fel, amely PCF8200-on keresztül mondta be az útirányt [28]. Az oldal sem évszámot, sem
   forrást nem ad. Az adatlaphoz illene, amelynek alkalmazási listája az autóipari felhasználással
@@ -358,8 +369,10 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
   keltezett dokumentumunk. Az általunk látott kártyán lévő chip 1993 tavaszán készült.
 - **Mikortól lehetett megvenni a PCF8200-at.** Az 1986 júliusi adatlapon „Development data” áll
   [2]; Nooteboom szerint a MEA8000 1988-ban kapta meg az utódját [30]; a legkorábbi dátumkód,
-  amelyet chipen láttunk, 1988 tavaszáról való [28]. Mindháromhoz illene, hogy 1986-ban jelentették
-  be, és 1988-tól adták el nagyobb számban, de ez csak a mi feltevésünk.
+  amelyet chipen láttunk, 1988 tavaszáról való [28]. Az IPO 1987-es jelentésében viszont az „új
+  beszédszintetizátor”, a PCF8200 már benne van a Pocketstemben [35], tehát abban az évben létezett
+  a chip. Mind a négyhez illene, hogy 1986-ban jelentették be, 1987-ben a fejlesztők kezében volt,
+  és 1988-tól adták el nagyobb számban, de ez csak a mi feltevésünk.
 - **Mikor szűnt meg a PCF8200 gyártása.** Valamikor 1993 és 2000 között. A PC-ROBOT kártyán lévő
   chip 1993 tavaszán készült (lásd 1994-nél). 2000. március 4-én Dale Grover azt írta a Useneten,
   hogy a PCF8200 már nem kapható, „add hozzá a már nem létező egychipes beszédszintetizátorok
@@ -465,3 +478,11 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
 34. BMW, „On Board Monitor and Navigation Systems: Overview” (szervizoktatási anyag), a DiagnostData
     oldalán közölt formában.
     <https://diagnostdata.com/bmw/7-series/e38-1994-1998/remont/gauges-instrument-panels/on-board-monitor-and-navigation-systems-overview-e38-ee39-e46-e52-e65-e85/overview/>
+35. H. E. M. Melotte, „Developments” (a Communication Aids for the Handicapped munkacsoport
+    beszámolója), valamint a jelentés bevezetője, in *IPO Annual Progress Report* 22, 1987, 124–125.
+    o. Institute for Perception Research, Eindhoven. Az egyetem szervere ennek írásakor nem
+    válaszolt; archivált példány:
+    <https://web.archive.org/web/20240417191115/http://alexandria.tue.nl/tijdschrift/IPO%2022.pdf>
+36. Beth Mineo, *Augmentative and Alternative Communication. Tech Use Guide: Using Computer
+    Technology*, Council for Exceptional Children, 1990. július (ERIC-dokumentum: ED 339 152).
+    <https://files.eric.ed.gov/fulltext/ED339152.pdf>

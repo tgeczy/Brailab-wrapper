@@ -63,6 +63,8 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   date, by Johannes N. Kroon, describes a device that speaks characters, and makes a capital letter
   sound different from a small one by changing the voice instead of adding words. It names its
   synthesizer as the "PHILIPS MEA 8000" [25]. Screen readers still mark capitals by pitch today.
+  IPO's report for 1987 credits Kroon with the 1983 design of the Typophone, a talking typewriter
+  [35].
 - **1983, in other accounts.** The museum says Philips put the chip on the market in 1983 [14b].
   CPCWiki lists a Philips publication of that year, "MEA8000 voice synthesizer: principles and
   interfacing" (Technical Publication 101), which we have not seen [4].
@@ -138,6 +140,12 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 - **The Multivox family begins** (museum). The museum dates the family 1987 to 2002, and the joint
   work behind it, between the Technical University (hardware and software) and the Academy's Phonetics
   Laboratory (phonetic data, rules, languages), from 1983 [14d].
+- **The Pocketstem takes the new chip** (paper). IPO's annual report for 1987 describes a
+  pocket-size aid that speaks stored phrases for people who cannot. Five prototypes had been tried
+  by 24 speech-impaired people in rehabilitation centres, hospitals and at home, and "the
+  implementation of the new speech synthesizer PCF8200" has gone into a new version, "which
+  optionally features a woman's voice" [35]. It is the earliest dated device we know of with a
+  PCF8200 in it.
 
 ## 1988
 
@@ -286,7 +294,10 @@ on it, and at home in the Netherlands.
 - **The Netherlands: a voice for people who cannot speak** (later account). The Tiepstem ("typing
   voice"), described by Deliege in 1989, was a keyboard-to-speech system for people who had lost
   their speech; its diphones were made at IPO and re-coded for the MEA8000. It could also prepare
-  utterances for a smaller portable aid, the Pocketstem (Waterham, 1989) [30].
+  utterances for a smaller portable aid, the Pocketstem (Waterham, 1989) [30]. IPO's 1987 report
+  has both in users' hands: the Pocketstem's 28 stored utterances were enough for limited
+  communication, people who had lost their speech for a time in intensive care reacted very positively,
+  and nobody had trouble accepting or understanding the synthetic speech [35].
 - **France: a teaching system for blind and sighted children** (paper). At the same 1990 RESNA
   conference, Burger, Beltrando, Liard and Sagot (INSERM, Paris) describe a board for IBM PC
   compatibles on which "spoken fragments are produced ... from a Philips RTC MEA 8000" [32].
@@ -294,7 +305,8 @@ on it, and at home in the Netherlands.
 ## The PCF8200 elsewhere
 
 Outside Philips' own boards [1], every PCF8200 product we have found in print is on this page:
-Microvox-64, the BraiLab PC and Multivox-8 in Budapest, and Ciber232 in Barcelona. PC-ROBOT belongs
+Microvox-64, the BraiLab PC and Multivox-8 in Budapest, Ciber232 in Barcelona, and the later
+Pocketstem in Eindhoven (see 1987). PC-ROBOT belongs
 to the Multivox family, whose chips the museum names as the MEA8000 and then the PCF8200 [14d]; its
 own page does not say which chip is on the card [14f], but the card we have worked with holds a
 PCF8200 (see 1994). If you know of another product, please open an issue.
@@ -303,8 +315,10 @@ More traces. Several were found through SpeechChips.com, Scott Savage's museum o
 whose reference lists also led us to the 1982 article and patent above [24][25]:
 
 - **Communication aids:** King's 1991 tools were written for the chip (see 1991) [27], and so was
-  Innocomp's 1990 primer (see 1990) [32]. A maker of communication aids writing a primer on the chip
-  suggests its aids used it, but we have found no manual or board that says so.
+  Innocomp's 1990 primer (see 1990) [32]. Innocomp made the Say-It-All II Plus, listed in a July
+  1990 guide to communication aids [36]. A maker of such aids writing a primer on the chip suggests
+  its aids used it, but the guide does not say what is inside, and we have found no manual or board
+  that does.
 - **A car** (later account). SpeechChips.com lists the navigation unit of the BMW E38 as a machine
   that gave its spoken directions through a PCF8200 [28]. The page gives no year and no source. It
   would fit the data sheet, whose list of uses begins with "automotive" [2]. BMW's own training text
@@ -337,8 +351,10 @@ and its place on this page is not a plan to include it.
   for the earlier year. The chip on the card we have seen was made in the spring of 1993.
 - **When the PCF8200 could first be bought.** The data sheet of July 1986 is marked "Development
   data" [2]; Nooteboom writes that the MEA8000 got its successor "in 1988" [30]; the earliest date
-  code we have seen on a chip is from the spring of 1988 [28]. Announced in 1986 and sold in numbers
-  from 1988 would fit all three, but that is our guess.
+  code we have seen on a chip is from the spring of 1988 [28]. But IPO's report for 1987 already has
+  "the new speech synthesizer PCF8200" in the Pocketstem [35], so chips existed that year. Announced
+  in 1986, in developers' hands in 1987 and sold in numbers from 1988 would fit all four, but that
+  is our guess.
 - **When the PCF8200 stopped being made.** Somewhere between 1993 and 2000. The chip on the PC-ROBOT
   card was made in the spring of 1993 (see 1994). On 4 March 2000 Dale Grover wrote on Usenet: "Yes,
   the PCF8200 is no longer available--add it to the long list of single-chip speech synthesizers no
@@ -443,3 +459,11 @@ and its place on this page is not a plan to include it.
 34. BMW, "On Board Monitor and Navigation Systems: Overview" (service training text), as reproduced
     at DiagnostData.
     <https://diagnostdata.com/bmw/7-series/e38-1994-1998/remont/gauges-instrument-panels/on-board-monitor-and-navigation-systems-overview-e38-ee39-e46-e52-e65-e85/overview/>
+35. H. E. M. Melotte, "Developments" (working group Communication Aids for the Handicapped), and the
+    report's introduction, in *IPO Annual Progress Report* 22, 1987, pp. 124–125. Institute for
+    Perception Research, Eindhoven. The university's server did not answer when this was written;
+    an archived copy:
+    <https://web.archive.org/web/20240417191115/http://alexandria.tue.nl/tijdschrift/IPO%2022.pdf>
+36. Beth Mineo, *Augmentative and Alternative Communication. Tech Use Guide: Using Computer
+    Technology*, Council for Exceptional Children, July 1990 (ERIC document ED 339 152).
+    <https://files.eric.ed.gov/fulltext/ED339152.pdf>
