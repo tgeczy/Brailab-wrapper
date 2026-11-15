@@ -222,6 +222,17 @@ static unsigned char stop_tail;                 /* /9 turns the rule on.  Off by
                                                  * fired in ordinary reading would stop the pitch from ever
                                                  * being loaded.  The count in /S is kept either way. */
 static unsigned n_swallowed;                    /* start pitches that fell into the tail        */
+/* Running dry.  The chip stops by itself when the next frame does not come within half a frame
+ * (its BADSTOP) and then stands at rest.  On a PC, a real BraiLab shows what follows: TALKHUN
+ * sees the adapter at rest and sends a start sequence, and the chip does not load that start
+ * pitch but moves by the byte's low five bits.  BRAISPK used to stay "in the utterance" for
+ * ever, so TALKHUN kept streaming frames and sent no start at all (the Pentium's own counters:
+ * 11 starts for 4892 frames of Enter pressed again and again).  With /9: */
+static unsigned long drain_tick;                /* tick at which everything synthesised so far has played */
+static unsigned long tick_rate;                 /* ticks a second, whole number                 */
+static unsigned utter_frames;                   /* frames since the utterance began             */
+static unsigned char badstop;                   /* at rest because it ran dry, not because of a STOP */
+static unsigned n_badstop;
 static unsigned long gap_last, gap_min = 0xFFFFFFFFUL;  /* ticks from a STOP to the next start pitch */
 
 /* counters for the /S report */
@@ -1022,7 +1033,7 @@ static void synth_frame(const unsigned char *f)
             double dt;
             S.ca += da; S.can += dn; S.cp += dp;
             p = S.cp < 0.0 ? -S.cp : S.cp;     /* below zero it mirrors */
-            if (p > 0.4 * FS) p = 0.4 * FS;    /* the sawtooth's own limit */
+            if (p > 0.47 * FS) p = 0.47 * FS;  /* the sawtooth's own limit */
             /* both sources run on every sample, whichever is heard */
             S.rng = S.rng * 1103515245UL + 12345UL;
             z = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5) * S.noise_k;
@@ -1108,7 +1119,14 @@ static void transaction_done(void)
          * directly there and save/restore the FPU only in real mode (the P166). */
         fpu_enter();
         synth_frame(body);
+        tick_rate = (unsigned long)fs_hz * ticks_per_sample;
         fpu_leave();
+        {   /* when will this frame have been played */
+            unsigned long now = tick_count;
+            if ((long)(drain_tick - now) < 0) drain_tick = now;
+            drain_tick += (unsigned long)last_synth_n * ticks_per_sample;
+        }
+        utter_frames++;
     } else if (len == 2) {
         unsigned char c = body[1];
         n_ctrls++;
@@ -1116,6 +1134,7 @@ static void transaction_done(void)
             if (c & 0x20) {                    /* STOP: back at rest            */
                 armed = 1;
                 stop_tick = tick_count; stop_pending = 1;
+                badstop = 0; utter_frames = 0;
             } else {
                 S.furcsa = (c & 0x10) != 0;    /* M/F: female table, 4 formants */
                 S.fs = c & 3;
@@ -1128,18 +1147,19 @@ static void transaction_done(void)
             if (stop_pending) {
                 unsigned long gap = tick_count - stop_tick;
                 /* two frames at the speed in force, in ticks */
-                unsigned long tail = 2UL * (unsigned long)FS_MS10[S.fs & 3] * (unsigned long)fs_hz * ticks_per_sample / 10000UL;
+                unsigned long tail = 2UL * (unsigned long)FS_MS10[S.fs & 3] * tick_rate / 10000UL;
                 stop_pending = 0;
                 gap_last = gap;
                 if (gap < gap_min) gap_min = gap;
                 in_tail = (unsigned char)(gap < tail);
             }
-            if (in_tail && stop_tail) {
+            if ((in_tail || badstop) && stop_tail) {
                 n_swallowed++;
                 S.pitch += PI_TAB[body[0] & 31];
             } else {
                 S.anchor = S.pitch = body[0] * PITCH_HZ_PER_UNIT;
             }
+            badstop = 0;
         }
         singles++;
     }
@@ -1249,6 +1269,17 @@ static unsigned char poll_status(void)
         if (armed || !(req_seen || !(card_last & 0x40))) { n_polls_busy++; return STATUS_BUSY; }
         n_polls_ready++;
         return STATUS_READY;
+    }
+    if (stop_tail) {
+        /* /9: run dry for half a frame inside an utterance and the chip has stopped itself */
+        if (!armed && utter_frames && tick_rate) {
+            unsigned long half = (unsigned long)FS_MS10[S.fs & 3] * tick_rate / 20000UL;
+            if ((long)(tick_count - drain_tick) > (long)half) { armed = 1; badstop = 1; n_badstop++; utter_frames = 0; }
+        }
+        /* At rest the real adapter is taken to answer 10h: TALKHUN's start check goes ahead at once
+         * on bit 4 set with bit 5 clear, and waits out four BIOS ticks on 30h.  While the last
+         * frames still sound it is 30h, as the chip is busy for about two frames after a STOP. */
+        if (armed) { n_polls_busy++; return (unsigned char)(queued() ? STATUS_BUSY : 0x10); }
     }
     if (queued() > (unsigned)fifo_frames * 128 || armed) { n_polls_busy++; return STATUS_BUSY; }
     n_polls_ready++;
@@ -1905,10 +1936,12 @@ static int report(void)
         unsigned long gl = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_last), gm = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_min);
         if (!rate) rate = 1;
         if (gm == 0xFFFFFFFFUL) gm = gl = 0;
-        printf("         start pitch after a STOP: last %lu.%lu ms, soonest %lu.%lu ms; fell into the stop tail %u times (tail = 2 frames); rule %s\r\n",
-               gl * 1000UL / rate, gl * 10000UL / rate % 10, gm * 1000UL / rate, gm * 10000UL / rate % 10,
-               *(unsigned far *)MK_FP(ds, (unsigned)&n_swallowed),
-               *(unsigned char far *)MK_FP(ds, (unsigned)&stop_tail) ? "on (/9)" : "off (/9 turns it on)");
+        printf("         start pitch after a STOP: last %lu.%lu ms, soonest %lu.%lu ms\r\n",
+               gl * 1000UL / rate, gl * 10000UL / rate % 10, gm * 1000UL / rate, gm * 10000UL / rate % 10);
+        printf("         chip experiment %s: ran dry and stopped itself %u times, start pitches not loaded %u\r\n",
+               *(unsigned char far *)MK_FP(ds, (unsigned)&stop_tail) ? "ON (/9)" : "off (/9 turns it on)",
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_badstop),
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_swallowed));
     }
     return 0;
 }
@@ -2012,7 +2045,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.53: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.54: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -2032,7 +2065,8 @@ int main(int argc, char **argv)
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C0    old timing: every frame 12.8 ms, whatever speed TALKHUN asks for\r\n"
-                       "  BRAISPK /9     experiment: a start within two frames of a STOP moves the pitch, as on the chip\r\n"
+                       "  BRAISPK /9     experiment: stop when the frames run dry, as the chip does; the start that\r\n"
+                       "                 follows moves the pitch (Enter pressed again and again climbs, as on the box)\r\n"
                        "  BRAISPK /Vn    output level 0..9 (8 = default x8, 2 = the NVDA voice's level)\r\n"
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"

@@ -135,12 +135,17 @@ of Enter while it speaks raises the pitch by 13.4 Hz, in a straight line from
 116 Hz to past 4500 Hz. 13.4 Hz is the pitch increment that the start pitch
 byte, 2Ah, names in its low five bits. The chip is still finishing the
 utterance that was cut off, takes the next start sequence for a frame, and
-never loads the start pitch. BRAISPK does not climb this way yet: under
-DOSBox-X, TALKHUN sends its start about 180 ms after every STOP, long after the
-chip's two frames of wind-down, and the timing on a real PC is not known.
-`BRAISPK /S` (0.53) shows the pitch register and that timing; `/9` turns on an
-experimental rule that treats a start within two frames of a STOP as the chip
-does.
+never loads the start pitch. Without a switch BRAISPK does not climb this way:
+it never leaves an utterance by itself, so TALKHUN keeps streaming frames into
+it and sends no start at all (a Pentium 166's counters: 11 starts for 4892
+frames). `BRAISPK /9` (0.54, an experiment) does what the chip does: it stops
+when the frames run dry for half a frame, answers "at rest" with status 10h so
+that TALKHUN starts the next utterance at once and not after its 170 ms
+time-out, and lets the start after such a stop move the pitch without loading
+it. Under DOSBox-X `/9` also cures lost speech: four sentences in a row arrive
+whole (676 frames, against 242 without it). The run-dry case does not occur in
+DOSBox-X and has not been heard on a real PC. `BRAISPK /S` shows the pitch
+register, the timing and the counts.
 
 ## Making Windows 98's DOS readable (0.26)
 
