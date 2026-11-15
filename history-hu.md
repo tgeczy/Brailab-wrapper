@@ -237,7 +237,12 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   PCF8200-ra, amely mintegy 150 kilobájt rezidens memóriát igényel, képernyőolvasóval nem
   foglalkoztak, később pedig további nyelveket fejlesztettek hozzá. Megemlíti Király József PC
   Talkerét is, amely Sound Blaster hardveren szólt: a beszéde tisztább volt a PCF8200-énál, többe
-  került, és sokkal több rezidens memóriát igényelt [15].
+  került, és sokkal több rezidens memóriát igényelt [15]. A PC-TALKER-ben egyáltalán nem volt
+  beszédchip: Király saját hangjának felvételeiből kivágott elemeket fűzött össze. 1987-ben kezdte
+  el, és az 1988-as budapesti vásáron mutatta be, a nyomtatóportra kötött átalakítóval.
+  Az 1991-es Sound Blasteres kiadás előtt a puszta PC-hangszóróra is készültek változatok, a
+  legkorábbi 1990. március 18-i keltezésű. A hangszórós és a Sound Blasteres kiadás egy
+  testvérprojektben újra megszólal, az ő engedélyével [29].
 - **Ciber 232P** (későbbi beszámoló). Ugyanaz a spanyol történet egy 1994-re keltezett Ciber 232P-t
   mutat a CIBERVEU-t követő „javított változatok” között [18]. Arról, hogy mi van benne, semmit sem
   találtunk nyomtatásban.
@@ -402,3 +407,5 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
 28. SpeechChips.com (Scott Savage), „Philips PCF8200” és „BMW E38 Navigation System unit”.
     <https://speechchips.com/chips/pcf8200.html>,
     <https://speechchips.com/devices/bmw-navigation.html>
+29. *pctalker-nvda*: Király József PC-TALKER-e NVDA beszédszintetizátorként, a történetével a
+    README-ben. <https://github.com/tgeczy/pctalker-nvda>

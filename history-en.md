@@ -225,7 +225,11 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   developers wrote a general Hungarian text-to-speech program for the PCF8200 that needs about 150 KB
   of resident memory, did not deal with screen readers, and later gained more languages. It also
   mentions Király József's PC Talker, on Sound Blaster hardware, whose speech "was purer than
-  PCF8200's, cost more and required much more resident memory" [15].
+  PCF8200's, cost more and required much more resident memory" [15]. PC-TALKER had no speech chip
+  at all: it joined elements cut from recordings of Király's own voice. He began it in 1987 and
+  showed it at the 1988 Budapest fair driving a converter on the printer port. Editions for the bare
+  PC speaker came before the Sound Blaster one of 1991, the earliest dated 18 March 1990. The
+  speaker and Sound Blaster editions speak again in a sibling project, with his permission [29].
 - **Ciber 232P** (later account). The same Spanish history shows a Ciber 232P dated 1994, among the
   "improved versions" that followed CIBERVEU [18]. We have found nothing in print about what is
   inside it.
@@ -383,3 +387,5 @@ and its place on this page is not a plan to include it.
 28. SpeechChips.com (Scott Savage), "Philips PCF8200" and "BMW E38 Navigation System unit".
     <https://speechchips.com/chips/pcf8200.html>,
     <https://speechchips.com/devices/bmw-navigation.html>
+29. *pctalker-nvda*: Király József's PC-TALKER as NVDA speech synthesizers, with its history in the
+    README. <https://github.com/tgeczy/pctalker-nvda>
