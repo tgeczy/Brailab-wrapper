@@ -3,7 +3,7 @@
 These are the things that were learned the hard way while getting TALKHUN to
 speak on real machines: a Pentium 166 running Windows 98's DOS, and a Dell with
 an SB Live! under SBEMU. The [README](README.md) describes the design; this file
-describes the surprises. It matches BRAISPK 0.41.
+describes the surprises. It matches BRAISPK 0.50.
 
 Addresses in TALKHUN are memory offsets in the `.COM` (file offset + 100h), in
 the build BRAISPK patches: `TALKHUN.COM`, 64,941 bytes, 20 June 2000. Nothing

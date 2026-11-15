@@ -4,6 +4,10 @@
 
 ## English
 
+**Status: experimental, work in progress.** BRAISPK is not part of the releases. It
+has a known fault (at the prompt, the exception dictionary can miss the first word of
+a repeated DOS message), and it has been checked far less than the NVDA voice.
+
 A 16-bit DOS TSR that stands in for the BraiLab PC speech adapter. TALKHUN, the
 1991–2003 BraiLab screen reader, thinks it is clocking frames into a PCF8200 on
 the printer port; in fact it is talking to a few kilobytes of resident code that
@@ -15,6 +19,13 @@ five-formant cascade at its 10 kHz internal rate, the chip's own quantisation
 ROM, the ear-matched source tilt, low-pass, high-pass and soft knee. The one
 deliberate difference is the voiced source: a PolyBLEP sawtooth instead of the
 per-harmonic sum, because the sum does not fit a 166 in real time.
+
+Since 0.50 it also has what was measured on a real BraiLab PC in November 2026:
+the chip's noise source (not white, but white noise through three one-pole
+low-passes at 900 Hz, at the measured level), the voice and the hiss each with a
+loudness of their own, crossfading where a frame changes source, and no output
+low-pass by default (`/J9 /Y9`; the old cuts are `/J6 /Y0`). Against the vowels its
+hiss now sits where the box's does; before, it was about 8 dB too loud.
 
 ## Files
 
@@ -167,6 +178,10 @@ kept up.
 
 ## Magyarul
 
+**Állapot: kísérleti, még készül.** A BRAISPK nem része a kiadásoknak. Van egy ismert
+hibája (a parancssorban a kivételszótár kihagyhatja egy megismételt DOS-üzenet első
+szavát), és sokkal kevesebbet teszteltük, mint az NVDA-hangot.
+
 A BRAISPK egy 16 bites, rezidens DOS-program, amely a BraiLab PC beszédadapterét
 helyettesíti. A TALKHUN, a BraiLab 1991 és 2003 között használt képernyőolvasója,
 azt hiszi, hogy a nyomtatóporton egy PCF8200 chipnek küldi a beszédkereteket;
@@ -176,6 +191,13 @@ adapter, hangkártya vagy memóriakezelő; egy Pentium 166-nak bőven elég.
 
 A szintézis ugyanaz a modell, mint az NVDA-bővítményé: a PCF8200 öt formánsa a
 chip belső, 10 kHz-es ütemén, a chip saját kvantálási táblázataival.
+
+A 0.50 óta benne van az is, amit 2026 novemberében egy valódi BraiLab PC-n mértünk:
+a chip zajforrása (nem fehér zaj, hanem három, 900 Hz-es egypólusú aluláteresztőn
+átvezetett fehér zaj, a mért szinten), a zönge és a zörej külön hangereje, amelyek
+forrásváltáskor átúsznak egymásba, és alapértelmezésben nincs kimeneti aluláteresztő
+(`/J9 /Y9`; a régi vágások: `/J6 /Y0`). A sziszegők a magánhangzókhoz képest most ott
+vannak, ahol a dobozon; korábban mintegy 8 decibellel hangosabbak voltak.
 
 ### Fájlok
 

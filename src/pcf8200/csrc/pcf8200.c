@@ -203,8 +203,6 @@ int pcf8200_tracker_length(const pcf8200_tracker *t, const uint8_t *f)
 /* One source's amplitude across a frame: fade() in pcf8200_core.py. */
 static double fade(double a, double b, double frac)
 {
-    if (a == 0.0 && b > 0.0)
-        return a + (b - a) * (frac * frac * frac);
     return a + (b - a) * frac;
 }
 

@@ -37,8 +37,7 @@ pass `noise_lowpass=(), noise_gain=0.35, lowpass=4200` to `render`.
 Version 2.2 gives the voice and the hiss an amplitude each. A frame that changes source
 used to switch in one step, at the level the frame before had reached, which put a small
 pop where a stop's burst meets its vowel. Now the outgoing source fades to zero across the
-frame and the incoming one rises from zero, slowly at first, as a real chip was measured
-to do. `PCF8200.render()` does this by itself; `PCF8200.source_tracks()` gives the two
+frame and the incoming one rises from zero. `PCF8200.render()` does this by itself; `PCF8200.source_tracks()` gives the two
 amplitudes, and `render(..., noise_amp=...)` and `Core.run(..., noise_amp=...)` take them.
 `tracks()` and a `render` call with `voiced` are unchanged. In C, `pcf8200_run` and
 `pcf8200_tracker_frame` take the two amplitudes in place of one amplitude and a flag.

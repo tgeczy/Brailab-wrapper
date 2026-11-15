@@ -136,12 +136,23 @@ static const int FD_MULT[4]  = {1, 2, 3, 5};
 /* Noise frames: f, s, c live above 3 kHz; the 2600 Hz cut made "c" and "f"
  * the same dull puff (0.26), 4600 Hz made "sz" too sharp (0.27).  /Jn picks
  * the cutoff, 3600 by default. */
-static double noise_lp_hz = 4000.0;            /* /J6 by Tomi's ear, 2026-09-10 */
+static double noise_lp_hz = 4950.0;            /* 0.50: open.  A real BraiLab PC's line output passes
+                                                * the chip's whole band, and its noise source is not
+                                                * white (below), so the hiss needs no cut.  /J6 was
+                                                * Tomi's ear on the white noise of 0.41 and before. */
 /* Voiced frames: 2600 Hz came from the NVDA voice's tuning against TTS.dll,
  * where it killed an F5 buzz; Arató's thesis says the "microintonation" of
  * his vowels lives in F4/F5 movement (3500-4600 Hz), which that cut hides.
  * /Yn opens it, for the ear and, once the crystal is in, for the real chip. */
-static double voiced_lp_hz = 2600.0;
+static double voiced_lp_hz = 4950.0;           /* 0.50: open, as measured on the box; /Y0 is the old 2600 */
+/* Both cuts at or above this: the low-pass pair is skipped altogether. */
+#define LP_OPEN_HZ    4900.0
+/* The noise source, measured on a real PCF8200 (pcf8200_core.py, NOISE_GAIN and
+ * NOISE_LOWPASS_HZ): not white, but white noise through three one-pole low-passes
+ * at 900 Hz, at 1.70 times the sawtooth's swing.  The gain is for white noise at
+ * 10 kHz; at another rate the same level per hertz needs sqrt(rate / 10000). */
+#define NOISE_POLE_HZ 900.0
+#define NOISE_GAIN    1.70
 static const double NOISE_LP_TAB[10] = {2600, 3000, 3200, 3400, 3600, 3800, 4000, 4300, 4600, 4950};
 #define CUT_HZ        300.0
 static double LP_A[5], LP_B[5], LPN_A[5], LPN_B[5], CUT_C[5];
@@ -214,6 +225,10 @@ static struct {
     int have_prev;
     double y1[MAX_FORMANTS], y2[MAX_FORMANTS];
     double cB1[MAX_FORMANTS], cB2[MAX_FORMANTS], ca, cp;   /* the ramped values, per sample */
+    double can;                                /* the hiss's amplitude; ca is the voice's */
+    int prev_noise;                            /* the frame before was hiss      */
+    double nl0, nl1, nl2;                      /* the noise source's low-passes  */
+    double noise_a, noise_c, noise_k;          /* their pole, 1 - pole, and the source's gain */
     double nz0, nz1, pz0, pz1;                 /* the noise-cutoff low-pass, run in parallel */
     double lw;                                 /* crossfade weight: 0 = voiced LP, 1 = noise LP */
     double tilt_y;
@@ -839,6 +854,9 @@ static void synth_reset(void)
     S.rng = 12345UL;
     S.tilt_a = exp(-2.0 * 3.14159265358979 * TILT_HZ / FS);
     S.hp_a = exp(-2.0 * 3.14159265358979 * HIGHPASS_HZ / FS);
+    S.noise_a = exp(-2.0 * 3.14159265358979 * NOISE_POLE_HZ / FS);
+    S.noise_c = 1.0 - S.noise_a;
+    S.noise_k = NOISE_GAIN * sqrt(FS / 10000.0);
     lp_design(FS, voiced_lp_hz, LP_A, LP_B);
     lp_design(FS, noise_lp_hz, LPN_A, LPN_B);
     hp_design(CUT_HZ, FS, CUT_C);
@@ -891,13 +909,24 @@ static double polyblep(double ph, double dt)
     return 0.0;
 }
 
+/* One source's amplitude across a frame, as in pcf8200_core.py: the voice and the
+ * hiss each have their own, and the one a frame does not use falls to zero while
+ * the other rises from it, both in a straight line.  One amplitude switched from
+ * source to source in one step put a pop where a stop's burst meets its vowel
+ * ("kettes", "este"). */
+static double fade(double a, double b, double frac)
+{
+    return a + (b - a) * frac;
+}
+
 static void synth_frame(const unsigned char *f)
 {
     double fc[MAX_FORMANTS], bw[MAX_FORMANTS], amp, pi;
     double B1[MAX_FORMANTS], B2[MAX_FORMANTS];
     double dw, wt;
-    int noise, fd, nf, n, pos, i;
-    double pt, p, a, frac, v, o, x;
+    int noise, fd, nf, n, pos, i, lp_on;
+    double pt, p, frac, v, o, x, z;
+    double pv, pn, cv, cn;
     const double two_pi = 6.28318530717958;
     unsigned spnow;
     nf = S.furcsa ? 4 : 5;
@@ -909,8 +938,12 @@ static void synth_frame(const unsigned char *f)
     if (!S.have_prev) {
         for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
         S.prev_amp = amp;
+        S.prev_noise = noise;
         S.have_prev = 1;
     }
+    pv = S.prev_noise ? 0.0 : S.prev_amp;  pn = S.prev_noise ? S.prev_amp : 0.0;
+    cv = noise ? 0.0 : amp;                cn = noise ? amp : 0.0;
+    lp_on = voiced_lp_hz < LP_OPEN_HZ || noise_lp_hz < LP_OPEN_HZ;
     n = (int)((chip_timing ? FS_MS10[S.fs & 3] : STD_SAMPLES) * fs_hz / 10000.0 + 0.5) * FD_MULT[fd];
     last_synth_n = n;                                   /* R4: prove n is 128, not the ~6 that ticks */
     if (n >= 0 && (unsigned)n < min_synth_n) min_synth_n = (unsigned)n;
@@ -934,7 +967,7 @@ static void synth_frame(const unsigned char *f)
      * (B1, B2) pairs stay inside the stability triangle. */
     for (pos = 0; pos < n; pos += BLOCK) {
         int m = n - pos < BLOCK ? n - pos : BLOCK, k;
-        double d1[MAX_FORMANTS], d2[MAX_FORMANTS], da, dp, ae, pe;
+        double d1[MAX_FORMANTS], d2[MAX_FORMANTS], da, dn, dp, ae, an, pe;
         frac = (double)(pos + m) / n;
         for (i = 0; i < nf; i++) {
             double cf = S.prev_fc[i] + (fc[i] - S.prev_fc[i]) * frac;
@@ -946,26 +979,29 @@ static void synth_frame(const unsigned char *f)
             d1[i] = (B1[i] - S.cB1[i]) / m;
             d2[i] = (B2[i] - S.cB2[i]) / m;
         }
-        ae = S.prev_amp + (amp - S.prev_amp) * frac;
+        ae = fade(pv, cv, frac);
+        an = fade(pn, cn, frac);
         pe = S.pitch + (pt - S.pitch) * frac;
         da = (ae - S.ca) / m;
+        dn = (an - S.can) / m;
         dp = (pe - S.cp) / m;
         for (k = 0; k < m; k++) {
-            S.ca += da; S.cp += dp;
-            a = S.ca; p = S.cp;
-            if (noise) {
-                S.rng = S.rng * 1103515245UL + 12345UL;
-                v = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5);
-            } else {
-                double dt = p / FS;
-                S.phase += dt;
-                if (S.phase >= 1.0) S.phase -= 1.0;
-                v = (2.0 * S.phase - 1.0) - polyblep(S.phase, dt);
-                v = -0.5 * v;
-                S.tilt_y = (1.0 - S.tilt_a) * v + S.tilt_a * S.tilt_y;
-                v = S.tilt_y;
-            }
-            v *= a;
+            double dt;
+            S.ca += da; S.can += dn; S.cp += dp;
+            p = S.cp;
+            /* both sources run on every sample, whichever is heard */
+            S.rng = S.rng * 1103515245UL + 12345UL;
+            z = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5) * S.noise_k;
+            S.nl0 = S.noise_c * z + S.noise_a * S.nl0;
+            S.nl1 = S.noise_c * S.nl0 + S.noise_a * S.nl1;
+            S.nl2 = S.noise_c * S.nl1 + S.noise_a * S.nl2;
+            dt = p / FS;
+            S.phase += dt;
+            if (S.phase >= 1.0) S.phase -= 1.0;
+            v = (2.0 * S.phase - 1.0) - polyblep(S.phase, dt);
+            v = -0.5 * v;
+            S.tilt_y = (1.0 - S.tilt_a) * v + S.tilt_a * S.tilt_y;
+            v = S.tilt_y * S.ca + S.nl2 * S.can;
             for (i = 0; i < nf; i++) {
                 S.cB1[i] += d1[i]; S.cB2[i] += d2[i];
                 x = v + S.cB1[i] * S.y1[i] + S.cB2[i] * S.y2[i];
@@ -973,9 +1009,9 @@ static void synth_frame(const unsigned char *f)
                 S.y1[i] = x;
                 v = x;
             }
-            {
+            S.lw += dw;
+            if (lp_on) {
                 double u = v, q, y1v, y1n;
-                S.lw += dw;
                 o = LP_A[0] * u + S.lz0;                       /* voiced-cutoff filter */
                 S.lz0 = LP_A[1] * u - LP_A[3] * o + S.lz1;
                 S.lz1 = LP_A[2] * u - LP_A[4] * o;
@@ -1002,12 +1038,13 @@ static void synth_frame(const unsigned char *f)
             push_sample(soft_knee(v * MAKEUP * out_gain));
         }
         for (i = 0; i < nf; i++) { S.cB1[i] = B1[i]; S.cB2[i] = B2[i]; }   /* no drift */
-        S.ca = ae; S.cp = pe;
+        S.ca = ae; S.can = an; S.cp = pe;
     }
     S.lw = wt;
     S.pitch = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
     S.prev_amp = amp;
+    S.prev_noise = noise;
     n_synth_out++;
 }
 
@@ -1895,7 +1932,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.41: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.50: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;

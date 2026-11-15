@@ -130,18 +130,17 @@ def soft_knee(sig, knee):
 #: step was heard as a small pop where a stop's burst meets its vowel, in "kettes"
 #: and "este".
 #:
-#: A source rising from zero follows the cube of the frame's fraction.  On a real
-#: PCF8200 the incoming source stays near the floor for the first half of the
-#: frame: over 29 burst-to-vowel boundaries of TALKHUN's own speech the first
-#: voiced frame was 16 dB under the steady vowel, where a straight rise gives 14
-#: and the one-step switch 11.  The cube is not the chip's law, which is not known;
-#: it is the simplest curve that starts as late.  Every other move, between two
-#: levels or down to zero, is a straight line.
+#: [ear] Every move is a straight line.  A real PCF8200 brings a source in more
+#: slowly than that: over 29 burst-to-vowel boundaries of TALKHUN's own speech the
+#: first voiced frame was 16 dB under the steady vowel, where a straight rise gives
+#: 14 and the one-step switch 11.  A rise as the cube of the frame's fraction was
+#: tried for that reason.  It also took 8 to 13 dB off the first frame after every
+#: silence, and by ear the sz of "szombat" and the c of "PC" came out too quiet;
+#: the pop is gone with the straight line just the same.  The chip's own law is not
+#: known.
 def fade(a, b, frac):
     """One source's amplitude across a frame: from `a` to `b`, with `frac` the
     frame's fraction at each sample."""
-    if a == 0.0 and b > 0.0:
-        return a + (b - a) * (frac * frac * frac)
     return a + (b - a) * frac
 
 

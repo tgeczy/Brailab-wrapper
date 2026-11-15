@@ -140,8 +140,8 @@ def test_the_two_version_numbers_agree():
 
 
 def test_a_boundary_between_hiss_and_voice_is_a_crossfade():
-    """The incoming source rises from nothing, slowly; the outgoing one falls in a
-    straight line; a frame after its own kind holds its level."""
+    """The incoming source rises from nothing and the outgoing one falls to it, both
+    in a straight line; a frame after its own kind holds its level."""
     from pcf8200 import PCF8200
     chip = PCF8200()
     chip.pitch(46)
@@ -153,11 +153,11 @@ def test_a_boundary_between_hiss_and_voice_is_a_crossfade():
     hiss, full = noise[0], voice[-1]
     assert hiss > 0 and full > 0
     assert not voice[:2 * n].any() and (noise[:2 * n] == hiss).all()
-    assert np.array_equal(voice[2 * n:3 * n], 0.0 + (full - 0.0) * (frac * frac * frac))
+    assert np.array_equal(voice[2 * n:3 * n], 0.0 + (full - 0.0) * frac)
     assert np.array_equal(noise[2 * n:3 * n], hiss + (0.0 - hiss) * frac)
     assert (voice[3 * n:] == full).all() and not noise[3 * n:].any()
-    # the first sample of the voice is far below a straight rise
-    assert voice[2 * n] < 0.001 * full
+    # the voice starts from nothing, not at the level the hiss had reached
+    assert voice[2 * n] < 0.01 * full
     # the frames as they state themselves are still there, unchanged
     fc, bw, amp, p, voiced = chip.tracks()
     assert not voiced[:2 * n].any() and voiced[2 * n:].all()
