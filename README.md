@@ -40,6 +40,8 @@ What makes the sound is in `src/`; each system it speaks on has its own folder.
 - **`third_party/brailab/`: TALKHUN**, the original BraiLab PC speech program
   for DOS, by Vaspöri Teréz and Arató András, included with their permission.
   See [`NOTICE.md`](NOTICE.md).
+- [`history-en.md`](history-en.md): a cited timeline of the two chips BraiLab
+  spoke through, the MEA8000 and the PCF8200, and the machines built on them
 
 ### What's NOT in this repo
 
@@ -167,6 +169,8 @@ saját mappája van.
 - **`third_party/brailab/`: a TALKHUN**, a BraiLab PC eredeti DOS-os
   beszélőprogramja, Vaspöri Teréz és Arató András munkája, az ő engedélyükkel.
   Lásd: [`NOTICE.md`](NOTICE.md).
+- [`history-hu.md`](history-hu.md): forrásokkal ellátott időrend a két chipről,
+  amelyen a BraiLab beszélt (MEA8000 és PCF8200), és a rájuk épült gépekről
 
 ### Mi NINCS ebben a tárolóban
 
