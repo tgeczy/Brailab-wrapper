@@ -2487,8 +2487,9 @@ resident:
     top = sp_now + 512;                        /* we are near the top of DGROUP  */
     paras = (unsigned)((((unsigned long)FP_SEG((void __far *)&ring_head) << 4) + top - ((unsigned long)_psp << 4) + 15) >> 4);
     if (box_port)
-        printf("braispk: resident, %u KB, BOX MODE: everything goes on to the real BraiLab PC at %03Xh and is logged (status now %02Xh), API INT %02Xh\r\n",
-               (paras + 63) / 64, box_port, inp(box_port + 1) & 0x30, API_INT);
+        /* no read of the port here either: nothing of BRAISPK's reaches the box before TALKHUN's first byte */
+        printf("braispk: resident, %u KB, BOX MODE: everything goes on to the real BraiLab PC at %03Xh and is logged, API INT %02Xh%s\r\n",
+               (paras + 63) / 64, box_port, API_INT, box_prewrite ? " (port set to rest first, /4)" : "");
     else if (clock_mode == CLOCK_CARD)
         printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
                (paras + 63) / 64, card_port, API_INT);
