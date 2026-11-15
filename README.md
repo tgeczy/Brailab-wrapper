@@ -8,6 +8,9 @@
 
 The Hungarian BraiLab PC speech synthesizer, for today's computers.
 
+**History:** [the chips behind BraiLab](history-en.md), a cited timeline of the
+MEA8000 and the PCF8200 and the machines built on them.
+
 This project provides a small native wrapper around the classic **BraiLab PC**
 TTS engine so it can be used cleanly from **NVDA** via **nvwave**, and an
 emulator of the BraiLab PC itself.
@@ -135,6 +138,9 @@ cmake --build build-x86
 ## Magyarul
 
 A magyar BraiLab PC beszédszintetizátor a mai számítógépekre.
+
+**Történet:** [a BraiLab mögötti chipek](history-hu.md), forrásokkal ellátott
+időrend a MEA8000-ről, a PCF8200-ról és a rájuk épült gépekről.
 
 A projekt egy kis natív burkolót (wrappert) ad a klasszikus **BraiLab PC**
 beszédmotor köré, hogy az **NVDA** a saját hangkezelésén (**nvwave**) keresztül
