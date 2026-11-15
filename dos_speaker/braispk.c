@@ -230,6 +230,13 @@ static unsigned n_swallowed;                    /* start pitches that fell into 
 static unsigned long drain_tick;                /* tick at which everything synthesised so far has played */
 static unsigned long tick_rate;                 /* ticks a second, whole number                 */
 static unsigned long frame_tick;                /* tick at which the last frame came            */
+/* What TALKHUN writes, as it writes it: the only way to see on a real PC what it does when a key
+ * cuts it off.  3.2 KB of the resident copy. */
+#define WLOG_N 400
+static struct wlog_entry { unsigned dt; unsigned char len; unsigned char b[5]; } wlog[WLOG_N];
+static unsigned wlog_pos, wlog_count;
+static unsigned long wlog_last;
+static double reg_low = 1e9, reg_high = -1e9;   /* how far the pitch register has been since loading */
 static unsigned utter_frames;                   /* frames since the utterance began             */
 static unsigned char badstop;                   /* at rest because it ran dry, not because of a STOP */
 static unsigned char run_dry;                   /* 0 = the self-stop is OFF (0.57).  It was a wrong turn:
@@ -1101,6 +1108,8 @@ static void synth_frame(const unsigned char *f)
     }
     S.lw = wt;
     S.pitch = pt;
+    if (pt < reg_low) reg_low = pt;
+    if (pt > reg_high) reg_high = pt;
     for (i = 0; i < nf; i++) { S.prev_fc[i] = fc[i]; S.prev_bw[i] = bw[i]; }
     S.prev_amp = amp;
     S.prev_noise = noise;
@@ -1115,6 +1124,16 @@ static void transaction_done(void)
     const unsigned char *body = w_cur + 1;     /* drop the 0x20 device address */
     int len = (int)w_ncur - 1;
     if (len <= 0) return;
+    {   /* the wire log: BRAISPK /1 prints the last WLOG_N writes, each with the time since the one before */
+        unsigned long now = tick_count, d = now - wlog_last;
+        unsigned i = wlog_pos, k;
+        wlog[i].dt = d > 0xFFFFUL ? 0xFFFFU : (unsigned)d;
+        wlog[i].len = (unsigned char)(len > 5 ? 5 : len);
+        for (k = 0; k < 5; k++) wlog[i].b[k] = (unsigned char)(k < (unsigned)len ? body[k] : 0);
+        wlog_last = now;
+        wlog_pos = (i + 1) % WLOG_N;
+        if (wlog_count < WLOG_N) wlog_count++;
+    }
     if (clock_mode == CLOCK_CARD) {            /* the real chip gets the bytes */
         int k;
         if (len == 1 && !(singles & 1) && dac_override >= 0) card_write((unsigned char)dac_override);
@@ -1672,6 +1691,38 @@ static int uninstall(void)
     return 0;
 }
 
+/* /1: the wire log.  Every write TALKHUN made, oldest first: the time since the write before it,
+ * what it was, and for a frame its loudness, pitch-increment code and length code. */
+static int wire_dump(void)
+{
+    unsigned ds, n, pos, i;
+    unsigned long rate;
+    struct wlog_entry far *w;
+    if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    n = *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count);
+    pos = *(unsigned far *)MK_FP(ds, (unsigned)&wlog_pos);
+    rate = *(unsigned long far *)MK_FP(ds, (unsigned)&tick_rate);
+    if (!rate) rate = 19886UL;
+    w = (struct wlog_entry far *)MK_FP(ds, (unsigned)&wlog[0]);
+    printf("braispk wire log: the last %u writes, oldest first (ms since the write before; a frame's AM, PI, FD)\r\n", n);
+    for (i = 0; i < n; i++) {
+        struct wlog_entry far *e = &w[(pos + WLOG_N - n + i) % WLOG_N];
+        unsigned long tenths = (unsigned long)e->dt * 10000UL / rate;
+        printf("%4u +%4lu.%lu ms  ", i, tenths / 10, tenths % 10);
+        if (e->dt == 0xFFFFU) printf("(or more) ");
+        if (e->len == 5)
+            printf("frame %02X %02X %02X %02X %02X  AM%u PI%u FD%u\r\n", e->b[0], e->b[1], e->b[2], e->b[3], e->b[4],
+                   e->b[2] & 15, e->b[1] & 31, ((e->b[2] >> 7) << 1) | (e->b[3] >> 7));
+        else if (e->len == 2)
+            printf("command %02X %02X  %s\r\n", e->b[0], e->b[1], (e->b[1] & 0x20) ? "STOP" : "start: speed and voice");
+        else if (e->len == 1)
+            printf("single byte %02X\r\n", e->b[0]);
+        else
+            printf("%u bytes %02X %02X %02X %02X\r\n", e->len, e->b[0], e->b[1], e->b[2], e->b[3]);
+    }
+    return 0;
+}
+
 /* /P: a vowel through the whole path -- start sequence, 40 frames, STOP -- fed
  * over INT 61h exactly as TALKHUNS feeds it, with the busy handshake.  Proves
  * the synth and this machine's x87 without loading TALKHUN. */
@@ -1949,10 +2000,12 @@ static int report(void)
            *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_sw));
     /* Where the pitch stands: the last start byte, and that plus every frame's increment since.
      * When utterances are cut short one after another the second number walks away from the first. */
-    printf("         pitch register %ld Hz, last start byte %ld Hz; speed bits %d\r\n",
+    printf("         pitch register %ld Hz, last start byte %ld Hz; speed bits %d; since loading the register went from %ld to %ld Hz\r\n",
            (long)*(double far *)MK_FP(ds, (unsigned)&S.pitch),
            (long)*(double far *)MK_FP(ds, (unsigned)&S.anchor),
-           *(int far *)MK_FP(ds, (unsigned)&S.fs));
+           *(int far *)MK_FP(ds, (unsigned)&S.fs),
+           (long)*(double far *)MK_FP(ds, (unsigned)&reg_low),
+           (long)*(double far *)MK_FP(ds, (unsigned)&reg_high));
     {   /* how soon after a STOP the next start pitch came, in tenths of a millisecond */
         unsigned long rate = (unsigned long)*(double far *)MK_FP(ds, (unsigned)&fs_hz) * *(unsigned char far *)MK_FP(ds, (unsigned)&ticks_per_sample);
         unsigned long gl = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_last), gm = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_min);
@@ -2007,6 +2060,7 @@ int main(int argc, char **argv)
             case 'U': return uninstall();
             case 'C': chip_timing = (unsigned char)(argv[i][2] != '0'); break;
             case '9': stop_tail = 0; break;     /* the handshake as before 0.54; every letter is taken */
+            case '1': return wire_dump();
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
@@ -2067,7 +2121,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.57: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.58: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
