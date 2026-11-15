@@ -129,6 +129,12 @@ and TALKHUN reads `ver`, `dir` and the games' prompts. ANSI.SYS consults the
 same bit. `/T` leaves DOS alone. All of this was read out of the machine's own
 IO.SYS and ANSI.SYS with capstone.
 
+From 0.51 BRAISPK touches that byte only when DOS says it is version 7 and made
+by Microsoft (INT 21h function 30h returns FFh in BH; function 3306h gives the
+true version). PC DOS 7 and FreeDOS also report version 7, and Windows Me's DOS
+reports 8; offset 86h means something else there, and earlier versions of
+BRAISPK wrote to it anyway.
+
 ## Through a Sound Blaster DAC instead (`/B`, 0.24)
 
 `BRAISPK /B` sends the same samples to a Sound Blaster-compatible DAC at 220h

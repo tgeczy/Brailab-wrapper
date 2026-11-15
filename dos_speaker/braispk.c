@@ -271,6 +271,7 @@ static unsigned char v86;                       /* virtual-8086 mode (EMM386/Jem
 static unsigned char fifo_frames = 3;           /* /Mn: frames queued before "busy"; the chip holds ~1 */
 static unsigned dos_ds;                         /* DOS 7 data segment (INT 21h AH=52h)     */
 static unsigned char dos_con_saved;             /* its console flag byte as found          */
+static unsigned char dos_con_other;             /* not Microsoft's DOS 7: no such flag, dos_ds stays 0 */
 static unsigned char dos_con_touch = 1;         /* /T: leave that flag alone               */
 #define DOS_CON_FLAG 0x86                       /* IO.SYS 7.1: bit 4 = fast path armed, bit 3 = never arm it */
 /* /DMA: auto-init 8-bit DMA instead of direct DAC.  The DSP is told the rate
@@ -1410,8 +1411,21 @@ static unsigned char far *dos_con_flag(void)
 {
     union REGS r;
     struct SREGS s;
-    if (_osmajor < 7) return 0;
+    /* Only Microsoft's DOS 7 (Windows 95 and 98) is known to keep the flag there.  PC DOS 7 and
+     * FreeDOS also report version 7, and Windows Me's DOS is 8: on those, offset 86h is some
+     * other byte.  BH from function 30h names the maker, FFh = Microsoft; function 3306h gives
+     * the true version, which SETVER cannot change. */
+    if (dos_con_other) return 0;
     if (!dos_ds) {
+        unsigned major, oem;
+        r.x.ax = 0x3000;
+        int86(0x21, &r, &r);
+        major = r.h.al; oem = r.h.bh;
+        r.x.ax = 0x3306;
+        r.x.bx = 0;
+        int86(0x21, &r, &r);
+        if (r.h.al != 0xFF && r.h.bl >= 5) major = r.h.bl;
+        if (major != 7 || oem != 0xFF) { dos_con_other = 1; return 0; }
         segread(&s);
         r.h.ah = 0x52;
         int86x(0x21, &r, &r, &s);
@@ -1932,7 +1946,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.50: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.51: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
