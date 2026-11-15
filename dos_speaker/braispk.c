@@ -207,6 +207,22 @@ static unsigned char w_cur[16];
 static unsigned char w_ncur;
 static unsigned char armed = 1;
 static unsigned singles;
+/* The stop tail.  After a STOP the chip goes on for about two frames before it is at rest, and
+ * what it is sent in that time it does not take as a start sequence.  A real BraiLab PC shows
+ * it when Enter is pressed again and again while it speaks: TALKHUN stops the chip and at once
+ * starts the next utterance, the start pitch is NOT loaded, and the pitch moves by the step that
+ * the start pitch byte's low five bits name as a frame's pitch increment (2Ah: code 10, +13.4 Hz).
+ * Measured on the box: 13.4 Hz a press, in a straight line from 116 Hz to past 4500 Hz. */
+static unsigned long stop_tick;                 /* tick_count at the last STOP                  */
+static unsigned char stop_pending;              /* a STOP has come and no start pitch since     */
+static unsigned char stop_tail;                 /* /9 turns the rule on.  Off by default: under DOSBox-X
+                                                 * TALKHUN sends its start 176-184 ms after every STOP, cut
+                                                 * short or not, so nothing ever falls into the tail there,
+                                                 * and until the timing on a real PC is known a rule that
+                                                 * fired in ordinary reading would stop the pitch from ever
+                                                 * being loaded.  The count in /S is kept either way. */
+static unsigned n_swallowed;                    /* start pitches that fell into the tail        */
+static unsigned long gap_last, gap_min = 0xFFFFFFFFUL;  /* ticks from a STOP to the next start pitch */
 
 /* counters for the /S report */
 static unsigned n_frames, n_ctrls, n_pitches, n_polls_busy, n_polls_ready;
@@ -1099,6 +1115,7 @@ static void transaction_done(void)
         if (c & 0x80) {
             if (c & 0x20) {                    /* STOP: back at rest            */
                 armed = 1;
+                stop_tick = tick_count; stop_pending = 1;
             } else {
                 S.furcsa = (c & 0x10) != 0;    /* M/F: female table, 4 formants */
                 S.fs = c & 3;
@@ -1106,8 +1123,23 @@ static void transaction_done(void)
         }
     } else if (len == 1) {
         if (singles & 1) {                     /* settings nibble, then pitch   */
+            unsigned char in_tail = 0;
             n_pitches++;
-            S.anchor = S.pitch = body[0] * PITCH_HZ_PER_UNIT;
+            if (stop_pending) {
+                unsigned long gap = tick_count - stop_tick;
+                /* two frames at the speed in force, in ticks */
+                unsigned long tail = 2UL * (unsigned long)FS_MS10[S.fs & 3] * (unsigned long)fs_hz * ticks_per_sample / 10000UL;
+                stop_pending = 0;
+                gap_last = gap;
+                if (gap < gap_min) gap_min = gap;
+                in_tail = (unsigned char)(gap < tail);
+            }
+            if (in_tail && stop_tail) {
+                n_swallowed++;
+                S.pitch += PI_TAB[body[0] & 31];
+            } else {
+                S.anchor = S.pitch = body[0] * PITCH_HZ_PER_UNIT;
+            }
         }
         singles++;
     }
@@ -1862,6 +1894,22 @@ static int report(void)
            *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_n),
            (long)*(double far *)MK_FP(ds, (unsigned)&fs_hz),
            *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_sw));
+    /* Where the pitch stands: the last start byte, and that plus every frame's increment since.
+     * When utterances are cut short one after another the second number walks away from the first. */
+    printf("         pitch register %ld Hz, last start byte %ld Hz; speed bits %d\r\n",
+           (long)*(double far *)MK_FP(ds, (unsigned)&S.pitch),
+           (long)*(double far *)MK_FP(ds, (unsigned)&S.anchor),
+           *(int far *)MK_FP(ds, (unsigned)&S.fs));
+    {   /* how soon after a STOP the next start pitch came, in tenths of a millisecond */
+        unsigned long rate = (unsigned long)*(double far *)MK_FP(ds, (unsigned)&fs_hz) * *(unsigned char far *)MK_FP(ds, (unsigned)&ticks_per_sample);
+        unsigned long gl = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_last), gm = *(unsigned long far *)MK_FP(ds, (unsigned)&gap_min);
+        if (!rate) rate = 1;
+        if (gm == 0xFFFFFFFFUL) gm = gl = 0;
+        printf("         start pitch after a STOP: last %lu.%lu ms, soonest %lu.%lu ms; fell into the stop tail %u times (tail = 2 frames); rule %s\r\n",
+               gl * 1000UL / rate, gl * 10000UL / rate % 10, gm * 1000UL / rate, gm * 10000UL / rate % 10,
+               *(unsigned far *)MK_FP(ds, (unsigned)&n_swallowed),
+               *(unsigned char far *)MK_FP(ds, (unsigned)&stop_tail) ? "on (/9)" : "off (/9 turns it on)");
+    }
     return 0;
 }
 
@@ -1903,6 +1951,7 @@ int main(int argc, char **argv)
             switch (sw) {
             case 'U': return uninstall();
             case 'C': chip_timing = (unsigned char)(argv[i][2] != '0'); break;
+            case '9': stop_tail = 1; break;     /* the stop-tail rule on; every letter is taken */
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
@@ -1963,7 +2012,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.52: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.53: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1983,6 +2032,7 @@ int main(int argc, char **argv)
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C0    old timing: every frame 12.8 ms, whatever speed TALKHUN asks for\r\n"
+                       "  BRAISPK /9     experiment: a start within two frames of a STOP moves the pitch, as on the chip\r\n"
                        "  BRAISPK /Vn    output level 0..9 (8 = default x8, 2 = the NVDA voice's level)\r\n"
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"

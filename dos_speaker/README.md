@@ -125,10 +125,22 @@ past 1100 Hz, and when the increments take it below zero it comes back up the
 other side: where the sum says -365 Hz the box sounds 347 Hz, at -907 Hz it
 sounds 891. This matters when Enter is pressed quickly many times: on the real
 box the pitch then keeps climbing, drops very low and climbs again, round and
-round, while BRAISPK stopped at 400 Hz. Beyond 2 kHz nothing was measured;
-there BRAISPK lets the value go round at the chip's 10 kHz sample rate, which is
-an inference from the mirror at zero. Whether 0.52 now goes round the way the
-box does has not been heard on a real PC yet.
+round, while BRAISPK stopped at 400 Hz. The chip's internal pitch is the start
+byte times 16, a 16-bit count of the 10 kHz sample rate, so it goes round at
+10 kHz and a negative value sounds like the same positive one; BRAISPK does the
+same.
+
+What makes the real box climb was measured from a recording of it: each press
+of Enter while it speaks raises the pitch by 13.4 Hz, in a straight line from
+116 Hz to past 4500 Hz. 13.4 Hz is the pitch increment that the start pitch
+byte, 2Ah, names in its low five bits. The chip is still finishing the
+utterance that was cut off, takes the next start sequence for a frame, and
+never loads the start pitch. BRAISPK does not climb this way yet: under
+DOSBox-X, TALKHUN sends its start about 180 ms after every STOP, long after the
+chip's two frames of wind-down, and the timing on a real PC is not known.
+`BRAISPK /S` (0.53) shows the pitch register and that timing; `/9` turns on an
+experimental rule that treats a start within two frames of a STOP as the chip
+does.
 
 ## Making Windows 98's DOS readable (0.26)
 
