@@ -122,7 +122,8 @@ static const float AMPL[16]  = {0.0f,0.0078125f,0.01171875f,0.015625f,0.02148437
 static const float PI_TAB[32] = {0.0f,1.2f,2.4f,3.7f,4.9f,6.1f,7.3f,8.5f,9.8f,11.0f,13.4f,15.9f,19.5f,25.6f,34.2f,45.2f,0.0f,-45.2f,-34.2f,-25.6f,-19.5f,-15.9f,-13.4f,-11.0f,-9.8f,-8.5f,-7.3f,-6.1f,-4.9f,-3.7f,-2.4f,-1.2f};
 static const int FD_MULT[4]  = {1, 2, 3, 5};
 #define PITCH_HZ_PER_UNIT (10000.0 / 4096.0)
-#define PITCH_REG_HALF 5000.0       /* half the chip's sample rate: where the pitch register goes round */
+#define BLEP_FULL_HZ 400.0          /* up to here the sawtooth is cleaned of aliasing, as tuned     */
+#define BLEP_OFF_HZ  800.0          /* from here it is the chip's plain counter, aliasing and all  */
 #define PI_NOISE 16
 
 /* ---- the ear-matched output stage (chip_synth.py) ------------------------ */
@@ -231,6 +232,12 @@ static unsigned long tick_rate;                 /* ticks a second, whole number 
 static unsigned long frame_tick;                /* tick at which the last frame came            */
 static unsigned utter_frames;                   /* frames since the utterance began             */
 static unsigned char badstop;                   /* at rest because it ran dry, not because of a STOP */
+static unsigned char run_dry;                   /* 0 = the self-stop is OFF (0.57).  It was a wrong turn:
+                                                 * on a Pentium 166 it fired once in a whole session of
+                                                 * Enter pressed again and again (TALKHUN does not pause
+                                                 * there), and under DOSBox-X it fired in ordinary speech,
+                                                 * after which TALKHUN reads 10h as a dead adapter and
+                                                 * drops the rest of the sentence.  Kept for the record. */
 static unsigned n_badstop;
 static unsigned long gap_last, gap_min = 0xFFFFFFFFUL;  /* ticks from a STOP to the next start pitch */
 
@@ -994,13 +1001,11 @@ static void synth_frame(const unsigned char *f)
      * round and round; until 0.52 the value was held between 40 and 400 Hz here and
      * topped out. */
     pt = S.pitch + pi * FD_MULT[fd];
-    /* Not measured beyond 2 kHz either way.  The start byte counts in units of the
-     * chip's 10 kHz sample rate / 4096, which is what a 12-bit phase counter gives;
-     * such a counter cannot tell 10000 - f from -f, and -f sounding as f is the
-     * mirror that was measured.  So the register goes round at 10 kHz: past +5000
-     * it continues from -5000.  An inference, and it only matters far outside speech. */
-    if (pt > PITCH_REG_HALF)       { pt -= 2.0 * PITCH_REG_HALF; S.pitch -= 2.0 * PITCH_REG_HALF; S.cp -= 2.0 * PITCH_REG_HALF; }
-    else if (pt < -PITCH_REG_HALF) { pt += 2.0 * PITCH_REG_HALF; S.pitch += 2.0 * PITCH_REG_HALF; S.cp += 2.0 * PITCH_REG_HALF; }
+    /* 0.57: the going round is no longer done here.  The source below is a phase counter, as in
+     * the chip, and a counter stepped by more than half its range comes back down by itself.
+     * This only keeps the number small: a whole sample rate more or less is the same step. */
+    if (pt > FS)       { pt -= FS; S.pitch -= FS; S.cp -= FS; }
+    else if (pt < -FS) { pt += FS; S.pitch += FS; S.cp += FS; }
 
     /* Coefficients, amplitude and pitch are computed at each block's END and
      * ramped to it sample by sample from wherever the previous block left
@@ -1032,17 +1037,27 @@ static void synth_frame(const unsigned char *f)
             double dt;
             S.ca += da; S.can += dn; S.cp += dp;
             p = S.cp < 0.0 ? -S.cp : S.cp;     /* below zero it mirrors */
-            if (p > 0.47 * FS) p = 0.47 * FS;  /* the sawtooth's own limit */
             /* both sources run on every sample, whichever is heard */
             S.rng = S.rng * 1103515245UL + 12345UL;
             z = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5) * S.noise_k;
             S.nl0 = S.noise_c * z + S.noise_a * S.nl0;
             S.nl1 = S.noise_c * S.nl0 + S.noise_a * S.nl1;
             S.nl2 = S.noise_c * S.nl1 + S.noise_a * S.nl2;
-            dt = p / FS;
+            /* The chip's voiced source is a counter stepped once a sample, read as it stands:
+             * nothing in it guards against aliasing.  A recording of a real BraiLab PC with the
+             * pitch walking from 0 to 5000 Hz and back shows every harmonic folding at 0 and at
+             * half the sample rate, line for line what a plain sampled sawtooth gives (spectrogram
+             * against simulation, November 2026).  That folding is what one hears there: under
+             * the rising tone a "voice" that falls to the bottom and climbs again, each time a
+             * harmonic passes a multiple of the sample rate.  The correction that removes it
+             * stays whole up to 400 Hz, where speech lives and the voice was tuned, and is faded
+             * out by 800 Hz; above that the sawtooth is the chip's own, folds and all. */
+            dt = p / FS;                       /* up to 1: more than half a turn a sample comes back down */
             S.phase += dt;
-            if (S.phase >= 1.0) S.phase -= 1.0;
-            v = (2.0 * S.phase - 1.0) - polyblep(S.phase, dt);
+            while (S.phase >= 1.0) S.phase -= 1.0;
+            v = 2.0 * S.phase - 1.0;
+            if (p < BLEP_OFF_HZ)
+                v -= (p <= BLEP_FULL_HZ ? 1.0 : (BLEP_OFF_HZ - p) / (BLEP_OFF_HZ - BLEP_FULL_HZ)) * polyblep(S.phase, dt);
             v = -0.5 * v;
             S.tilt_y = (1.0 - S.tilt_a) * v + S.tilt_a * S.tilt_y;
             v = S.tilt_y * S.ca + S.nl2 * S.can;
@@ -1272,7 +1287,7 @@ static unsigned char poll_status(void)
     }
     if (stop_tail) {
         /* run dry for half a frame inside an utterance and the chip has stopped itself */
-        if (!armed && utter_frames && tick_rate) {
+        if (run_dry && !armed && utter_frames && tick_rate) {
             /* The chip holds one frame and gives up when the next is half a frame late.  BRAISPK
              * keeps fifo_frames of them queued, so the same lateness shows as the queue having
              * stood below its "ready" level for half a frame: 0.55 waited for the queue to empty,
@@ -2052,7 +2067,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.56: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.57: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;

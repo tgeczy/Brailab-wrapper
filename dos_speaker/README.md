@@ -130,6 +130,16 @@ byte times 16, a 16-bit count of the 10 kHz sample rate, so it goes round at
 10 kHz and a negative value sounds like the same positive one; BRAISPK does the
 same.
 
+Since 0.57 the voiced source also folds the way the chip's does. The chip reads
+its pitch counter once a sample and does nothing against aliasing, so when the
+pitch walks up to 5000 Hz and back, every harmonic folds at 0 and at half the
+sample rate: under the rising tone there is a "voice" that falls to the bottom
+and climbs again, over and over. A spectrogram of the real box and one of a
+plain sawtooth sampled at 10 kHz with the same pitch walk agree line for line.
+BRAISPK's sawtooth was cleaned of aliasing, which left one thin rising tone; it
+is now cleaned only up to 400 Hz, where speech lives, and is the chip's plain
+counter from 800 Hz up. Not heard on a real PC yet.
+
 What makes the real box climb was measured from a recording of it: each press
 of Enter while it speaks raises the pitch by 13.4 Hz, in a straight line from
 116 Hz to past 4500 Hz. 13.4 Hz is the pitch increment that the start pitch
@@ -138,9 +148,10 @@ utterance that was cut off, takes the next start sequence for a frame, and
 never loads the start pitch. Until 0.54 BRAISPK did not climb this way: it
 never left an utterance by itself, so TALKHUN kept streaming frames into it and
 sent no start at all (a Pentium 166's counters: 11 starts for 4892 frames).
-Since 0.55 BRAISPK does what the chip does (`/9` is the old handshake): it stops
-when the next frame is half a frame late (0.56; 0.55 waited for its own
-three-frame queue to empty, which hardly ever happens), answers "at rest" with status 10h so
+0.55 and 0.56 tried to do what the chip does (`/9` is the old handshake): stop
+when the next frame is late (switched off again in 0.57: on the Pentium it
+fired once in a whole session, and under DOSBox-X it cut ordinary speech),
+answer "at rest" with status 10h so
 that TALKHUN starts the next utterance at once and not after its 170 ms
 time-out, and lets the start after such a stop move the pitch without loading
 it. Under DOSBox-X this also cures lost speech: four sentences in a row arrive
