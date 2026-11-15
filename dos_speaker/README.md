@@ -135,17 +135,17 @@ of Enter while it speaks raises the pitch by 13.4 Hz, in a straight line from
 116 Hz to past 4500 Hz. 13.4 Hz is the pitch increment that the start pitch
 byte, 2Ah, names in its low five bits. The chip is still finishing the
 utterance that was cut off, takes the next start sequence for a frame, and
-never loads the start pitch. Without a switch BRAISPK does not climb this way:
-it never leaves an utterance by itself, so TALKHUN keeps streaming frames into
-it and sends no start at all (a Pentium 166's counters: 11 starts for 4892
-frames). `BRAISPK /9` (0.54, an experiment) does what the chip does: it stops
+never loads the start pitch. Until 0.54 BRAISPK did not climb this way: it
+never left an utterance by itself, so TALKHUN kept streaming frames into it and
+sent no start at all (a Pentium 166's counters: 11 starts for 4892 frames).
+Since 0.55 BRAISPK does what the chip does (`/9` is the old handshake): it stops
 when the frames run dry for half a frame, answers "at rest" with status 10h so
 that TALKHUN starts the next utterance at once and not after its 170 ms
 time-out, and lets the start after such a stop move the pitch without loading
-it. Under DOSBox-X `/9` also cures lost speech: four sentences in a row arrive
-whole (676 frames, against 242 without it). The run-dry case does not occur in
-DOSBox-X and has not been heard on a real PC. `BRAISPK /S` shows the pitch
-register, the timing and the counts.
+it. Under DOSBox-X this also cures lost speech: four sentences in a row arrive
+whole (676 frames, against 242 with the old handshake). The run-dry case was
+seen once in DOSBox-X and has not been heard on a real PC. `BRAISPK /S` shows
+the pitch register, the timing and the counts.
 
 ## Making Windows 98's DOS readable (0.26)
 

@@ -215,19 +215,17 @@ static unsigned singles;
  * Measured on the box: 13.4 Hz a press, in a straight line from 116 Hz to past 4500 Hz. */
 static unsigned long stop_tick;                 /* tick_count at the last STOP                  */
 static unsigned char stop_pending;              /* a STOP has come and no start pitch since     */
-static unsigned char stop_tail;                 /* /9 turns the rule on.  Off by default: under DOSBox-X
-                                                 * TALKHUN sends its start 176-184 ms after every STOP, cut
-                                                 * short or not, so nothing ever falls into the tail there,
-                                                 * and until the timing on a real PC is known a rule that
-                                                 * fired in ordinary reading would stop the pitch from ever
-                                                 * being loaded.  The count in /S is kept either way. */
+static unsigned char stop_tail = 1;             /* the chip's behaviour at rest and when run dry (see
+                                                 * "Running dry" below); on since 0.55, /9 turns it off.
+                                                 * Checked under DOSBox-X only; the run-dry case does not
+                                                 * occur there. */
 static unsigned n_swallowed;                    /* start pitches that fell into the tail        */
 /* Running dry.  The chip stops by itself when the next frame does not come within half a frame
  * (its BADSTOP) and then stands at rest.  On a PC, a real BraiLab shows what follows: TALKHUN
  * sees the adapter at rest and sends a start sequence, and the chip does not load that start
  * pitch but moves by the byte's low five bits.  BRAISPK used to stay "in the utterance" for
  * ever, so TALKHUN kept streaming frames and sent no start at all (the Pentium's own counters:
- * 11 starts for 4892 frames of Enter pressed again and again).  With /9: */
+ * 11 starts for 4892 frames of Enter pressed again and again).  Unless /9 is given: */
 static unsigned long drain_tick;                /* tick at which everything synthesised so far has played */
 static unsigned long tick_rate;                 /* ticks a second, whole number                 */
 static unsigned utter_frames;                   /* frames since the utterance began             */
@@ -1271,7 +1269,7 @@ static unsigned char poll_status(void)
         return STATUS_READY;
     }
     if (stop_tail) {
-        /* /9: run dry for half a frame inside an utterance and the chip has stopped itself */
+        /* run dry for half a frame inside an utterance and the chip has stopped itself */
         if (!armed && utter_frames && tick_rate) {
             unsigned long half = (unsigned long)FS_MS10[S.fs & 3] * tick_rate / 20000UL;
             if ((long)(tick_count - drain_tick) > (long)half) { armed = 1; badstop = 1; n_badstop++; utter_frames = 0; }
@@ -1938,8 +1936,8 @@ static int report(void)
         if (gm == 0xFFFFFFFFUL) gm = gl = 0;
         printf("         start pitch after a STOP: last %lu.%lu ms, soonest %lu.%lu ms\r\n",
                gl * 1000UL / rate, gl * 10000UL / rate % 10, gm * 1000UL / rate, gm * 10000UL / rate % 10);
-        printf("         chip experiment %s: ran dry and stopped itself %u times, start pitches not loaded %u\r\n",
-               *(unsigned char far *)MK_FP(ds, (unsigned)&stop_tail) ? "ON (/9)" : "off (/9 turns it on)",
+        printf("         chip handshake %s: ran dry and stopped itself %u times, start pitches not loaded %u\r\n",
+               *(unsigned char far *)MK_FP(ds, (unsigned)&stop_tail) ? "on" : "OFF (/9)",
                *(unsigned far *)MK_FP(ds, (unsigned)&n_badstop),
                *(unsigned far *)MK_FP(ds, (unsigned)&n_swallowed));
     }
@@ -1984,7 +1982,7 @@ int main(int argc, char **argv)
             switch (sw) {
             case 'U': return uninstall();
             case 'C': chip_timing = (unsigned char)(argv[i][2] != '0'); break;
-            case '9': stop_tail = 1; break;     /* the stop-tail rule on; every letter is taken */
+            case '9': stop_tail = 0; break;     /* the handshake as before 0.54; every letter is taken */
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
@@ -2045,7 +2043,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.54: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.55: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -2065,8 +2063,7 @@ int main(int argc, char **argv)
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
                        "  BRAISPK /C0    old timing: every frame 12.8 ms, whatever speed TALKHUN asks for\r\n"
-                       "  BRAISPK /9     experiment: stop when the frames run dry, as the chip does; the start that\r\n"
-                       "                 follows moves the pitch (Enter pressed again and again climbs, as on the box)\r\n"
+                       "  BRAISPK /9     the handshake as before 0.54: never stops by itself, answers 30h at rest\r\n"
                        "  BRAISPK /Vn    output level 0..9 (8 = default x8, 2 = the NVDA voice's level)\r\n"
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
