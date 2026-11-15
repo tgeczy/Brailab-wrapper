@@ -24,8 +24,10 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 
 - **MEA8000.** A formant speech synthesizer on one chip, by Philips; data sheets carry the Mullard and
   Signetics names [3]. It has no built-in voice and no microprocessor: the host sends it 32-bit frames,
-  so the same chip can speak any language its host has data for [4]. MAME's model describes four
-  formant filters working at 8 kHz and frames of 8, 16, 32 or 64 ms [5].
+  so the same chip can speak any language its host has data for [4]. Philips' own description: an
+  8th-order filter "with three programmable formant frequencies and four programmable bandwidths",
+  NMOS, a 4 kHz speech band [24]. MAME's model has four formant filters working at 8 kHz and frames
+  of 8, 16, 32 or 64 ms [5].
 - **PCF8200.** Philips' CMOS successor: "Like its predecessor the MEA8000, the PCF8200 uses vocal
   formant synthesis" [1]. It has five formant filters (male speech uses five, female four), a speech
   band of 0 to 5 kHz, frames from 8.8 to 88 ms, a bit rate of 455 to 4545 bits a second, a parallel bus
@@ -48,10 +50,17 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 
 ## 1982 to 1984: the MEA8000 arrives
 
-- **When the MEA8000 appeared** is not settled by anything we have read. The museum says Philips put
-  it on the market in 1983 [14b]. CPCWiki lists a Philips publication of that year, "MEA8000 voice
-  synthesizer: principles and interfacing" (Technical Publication 101), and a 1982 article on the
-  underlying work in *Philips Technisch Tijdschrift* [4]. We have seen neither.
+- **February 1982: Philips announces the MEA8000** (maker). Philips' journal presents "our newly
+  developed, totally digital integrated voice synthesiser MEA8000", and explains it with a Dutch
+  street organ: the chip is the instrument, and the speech data is the punched-card score [24]. The
+  article on the PCF8200 four years later uses the same organ [1].
+- **24 February 1982: a talking-characters patent** (maker). A Philips patent with that priority
+  date, by Johannes N. Kroon, describes a device that speaks characters, and makes a capital letter
+  sound different from a small one by changing the voice instead of adding words. It names its
+  synthesizer as the "PHILIPS MEA 8000" [25]. Screen readers still mark capitals by pitch today.
+- **1983, in other accounts.** The museum says Philips put the chip on the market in 1983 [14b].
+  CPCWiki lists a Philips publication of that year, "MEA8000 voice synthesizer: principles and
+  interfacing" (Technical Publication 101), which we have not seen [4].
 - **1982: work on Scriptovox begins** (museum). The speech group of the Technical University of
   Budapest, led by Gordos Géza, starts on machine speech with the Academy's Phonetics Laboratory;
   Olaszy Gábor develops the phonetic control, Takács György the development software. The circuit
@@ -147,6 +156,10 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   the CIBERVEU or CIBERVOZ of the telecommunications engineer Andrés Ursueguía Balbuena, and calls it
   the first speech synthesis made in Spain, built to add intelligibility and languages, Catalan among
   them [18].
+- **MULTIVOX at the first speech synthesis workshop** (paper). Olaszy, Gordos and Németh Géza describe
+  it at the first ESCA workshop on speech synthesis: Hungarian, German, Finnish, Italian and
+  Esperanto on IBM PCs, with Spanish, French and Portuguese on the way, speaking through the "Philips
+  PCF8200 free programmable formant synthesizer chip" [26].
 - **1990 to 1991: MULTIVOX learns Italian** (paper). The Italian version is derived from the Esperanto
   one, whose sounds and word stress are close to it [11].
 
@@ -157,6 +170,10 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 - **The oldest BraiLab PC software we have** (program). The BraiLab PC collection on the Internet
   Archive, published with its authors' permission, holds versions from 1991 to 2003. Its earliest
   build is from 1991 [20]. The institute's history page also puts the BraiLab PC at 1991 [22].
+- **The PCF8200 in communication aids** (paper). At Eurospeech 1991, R. W. King describes tools for
+  building low-cost text-to-speech for communication aids, with several accents and male and female
+  voices: an editor for a phoneme set's formant and excitation data, written for the "Philips
+  PCF8200 single chip serial formant synthesizer device" [27].
 
 ## 1992
 
@@ -236,6 +253,17 @@ to the Multivox family, whose chips the museum names as the MEA8000 and then the
 own page does not say which chip is on the card [14f], but the card we have worked with holds a
 PCF8200 (see 1994). If you know of another product, please open an issue.
 
+Three more traces, all found through SpeechChips.com, Scott Savage's museum of speech chips [28],
+whose reference lists also led us to the 1982 article and patent above [24][25]:
+
+- **Communication aids:** King's 1991 tools were written for the chip (see 1991) [27]. We do not know
+  which aids, if any, shipped with it.
+- **A car** (later account). SpeechChips.com lists the navigation unit of the BMW E38 as a machine
+  that gave its spoken directions through a PCF8200 [28]. The page gives no year and no source. It
+  would fit the data sheet, whose list of uses begins with "automotive" [2].
+- **A 1988 chip.** The PCF8200P photographed there carries the code 8814, the 14th week of 1988 if
+  it reads like other Philips date codes [28]. The marking is read from a small photograph.
+
 ## Ciber232 and this project
 
 Ciber232 is on this timeline because a paper names its chip. That does not make it part of this
@@ -244,7 +272,8 @@ and its place on this page is not a plan to include it.
 
 ## What we could not settle
 
-- **The MEA8000's first year.** 1983 in the museum's account [14b]; possibly earlier.
+- **When the MEA8000 could first be bought.** Philips called it newly developed in February 1982
+  [24]; the museum says it reached the market in 1983 [14b].
 - **BraiLab Basic: 1984 or 1985.** MAME says 1984 [6]; Arató says 1985 [7].
 - **How many BraiLabs.** 95 installed by 1987 [8]. The institute's history page says 400 BraiLab
   Basics "were manufactured and sold over the years" [22]. The museum speaks of several hundred of the
@@ -321,3 +350,18 @@ and its place on this page is not a plan to include it.
     Physics. The page is no longer served; an archived copy:
     <https://web.archive.org/web/20231203004727/https://rehab.wigner.hu/en/node/36>
 23. *Multivox 4*, Internet Archive. <https://archive.org/details/multivox-4>
+24. H. E. van Brück, D. J. A. Teuling, "Integrated voice synthesiser", *Electronic Components and
+    Applications*, vol. 4, no. 2, February 1982, pp. 72–79. Philips.
+    <https://www.worldradiohistory.com/Archive-Company-Publications/Philips-Technical-Review/Electronic-Compoinents/Electronic-Components-&-Apps-Vol-4-No-2.pdf>
+25. Johannes N. Kroon, "Device for generating the audio information of a set of characters", US
+    patent 4,783,810, U.S. Philips Corp., priority 24 February 1982, granted 8 November 1988.
+    <https://patents.google.com/patent/US4783810A/en>
+26. Gábor Olaszy, Géza Gordos, Géza Németh, "Phonetic aspects of the MULTIVOX text-to-speech system",
+    First ESCA Workshop on Speech Synthesis, 1990, pp. 277–280.
+    <https://www.isca-archive.org/ssw_1990/olaszy90_ssw.html>
+27. R. W. King, "Tools and processes for developing low-cost and high-quality text-to-speech synthesis
+    for communication aids", *Eurospeech 1991*, pp. 325–329.
+    <https://www.isca-archive.org/eurospeech_1991/king91_eurospeech.html>
+28. SpeechChips.com (Scott Savage), "Philips PCF8200" and "BMW E38 Navigation System unit".
+    <https://speechchips.com/chips/pcf8200.html>,
+    <https://speechchips.com/devices/bmw-navigation.html>

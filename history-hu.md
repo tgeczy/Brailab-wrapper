@@ -25,8 +25,10 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 - **MEA8000.** Egyetlen chipre épített formáns beszédszintetizátor a Philipstől; az adatlapjai a Mullard
   és a Signetics nevét viselik [3]. Nincs beépített hangja, és nincs benne mikroprocesszor: a gazdagép
   32 bites kereteket (frame-eket) küld neki, így ugyanaz a chip bármilyen nyelven megszólal, amelyhez
-  a gazdagépnek van adata [4]. A MAME modellje négy, 8 kHz-en dolgozó formánsszűrőt és 8, 16, 32 vagy
-  64 ms hosszú kereteket ír le [5].
+  a gazdagépnek van adata [4]. A Philips saját leírása szerint nyolcadrendű szűrő három programozható
+  formánsfrekvenciával és négy programozható sávszélességgel, NMOS technológiával, 4 kHz-es
+  beszédsávval [24]. A MAME modelljében négy, 8 kHz-en dolgozó formánsszűrő és 8, 16, 32 vagy 64 ms
+  hosszú keretek vannak [5].
 - **PCF8200.** A Philips CMOS utódja: „elődjéhez, a MEA8000-hez hasonlóan a PCF8200 is formáns
   szintézist használ” (saját fordítás) [1]. Öt formánsszűrője van (a férfihang ötöt használ, a női
   négyet), a beszédsávja 0-tól 5 kHz-ig tart, a keretei 8,8 és 88 ms közöttiek, az adatsebessége 455
@@ -51,10 +53,19 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 
 ## 1982-től 1984-ig: megérkezik a MEA8000
 
-- **Hogy a MEA8000 mikor jelent meg,** azt semmi sem dönti el, amit olvastunk. A múzeum szerint a
-  Philips 1983-ban dobta piacra [14b]. A CPCWiki egy ugyanabban az évben megjelent Philips-kiadványt
-  említ („MEA8000 voice synthesizer: principles and interfacing”, Technical Publication 101), és egy
-  1982-es cikket az alapkutatásról a *Philips Technisch Tijdschrift*-ben [4]. Egyiket sem láttuk.
+- **1982. február: a Philips bejelenti a MEA8000-et** (gyártó). A Philips folyóirata bemutatja az
+  „újonnan kifejlesztett, teljesen digitális integrált beszédszintetizátort”, a MEA8000-et (saját
+  fordítás), és egy holland verklivel magyarázza el: a chip a hangszer, a beszédadat pedig a
+  lyukkártyás kotta [24]. A PCF8200-ról négy évvel később megjelent cikk ugyanezt a verklit
+  használja [1].
+- **1982. február 24.: szabadalom a felolvasott betűkről** (gyártó). Egy ilyen elsőbbségi napú
+  Philips-szabadalom, Johannes N. Kroon munkája, olyan eszközt ír le, amely karaktereket mond ki, és
+  a nagybetűt nem plusz szavakkal, hanem a hang megváltoztatásával különbözteti meg a kisbetűtől. A
+  szintetizátorát meg is nevezi: „PHILIPS MEA 8000” [25]. A képernyőolvasók ma is hangmagassággal
+  jelzik a nagybetűt.
+- **1983, más források szerint.** A múzeum szerint a Philips 1983-ban dobta piacra a chipet [14b].
+  A CPCWiki egy abban az évben megjelent Philips-kiadványt említ („MEA8000 voice synthesizer:
+  principles and interfacing”, Technical Publication 101), amelyet nem láttunk [4].
 - **1982: elkezdődik a Scriptovox munkája** (múzeum). A Budapesti Műszaki Egyetem beszédkutató
   csoportja Gordos Géza vezetésével gépi beszéddel kezd foglalkozni, együtt az MTA Fonetikai
   Laboratóriumával; a fonetikai vezérlést Olaszy Gábor, a fejlesztői szoftvert Takács György készíti.
@@ -152,6 +163,10 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   Andrés Ursueguía Balbuena távközlési mérnök CIBERVEU vagy CIBERVOZ nevű rendszerét, és az első
   Spanyolországban gyártott beszédszintézisnek nevezi; célja a jobb érthetőség és a több nyelv volt,
   köztük a katalán [18].
+- **A MULTIVOX az első beszédszintézis-műhelyen** (közlemény). Olaszy, Gordos és Németh Géza az első
+  ESCA beszédszintézis-műhelyen mutatja be: magyar, német, finn, olasz és eszperantó IBM PC-n, a
+  spanyol, a francia és a portugál készülőben, a „szabadon programozható Philips PCF8200 formáns
+  szintetizátor chipen” (saját fordítás) [26].
 - **1990-től 1991-ig: a MULTIVOX megtanul olaszul** (közlemény). Az olasz változat az eszperantóból
   készül, mert annak hangkészlete és szóhangsúlya közel áll hozzá [11].
 
@@ -162,6 +177,11 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 - **A legrégebbi BraiLab PC szoftver, amelyünk van** (program). Az Internet Archive-on a szerzők
   engedélyével közzétett BraiLab PC gyűjtemény 1991 és 2003 közötti változatokat őriz. A legkorábbi
   1991-es [20]. Az intézet történeti oldala a BraiLab PC-t szintén 1991-hez írja [22].
+- **A PCF8200 kommunikációs segédeszközökben** (közlemény). Az Eurospeech 1991-en R. W. King olyan
+  eszközöket ír le, amelyekkel olcsó szöveg-beszéd átalakító építhető kommunikációs segédeszközökbe,
+  többféle akcentussal, férfi- és női hanggal: egy szerkesztőt egy fonémakészlet formáns- és
+  gerjesztési adataihoz, amely a Philips PCF8200 egychipes soros formáns szintetizátorhoz készült
+  [27].
 
 ## 1992
 
@@ -248,6 +268,18 @@ a PCF8200-at nevezi meg [14d]; a saját oldala nem írja le, melyik chip van a k
 a kártyán, amellyel dolgoztunk, PCF8200 van (lásd 1994-nél). Ha tudsz még egy termékről, kérlek,
 nyiss egy issue-t.
 
+Még három nyom, mind a SpeechChips.com-ról, Scott Savage beszédchip-múzeumából [28], amelynek
+irodalomjegyzéke a fenti 1982-es cikkhez és szabadalomhoz is elvezetett [24][25]:
+
+- **Kommunikációs segédeszközök:** King 1991-es eszközei erre a chipre készültek (lásd 1991-nél)
+  [27]. Nem tudjuk, hogy melyik segédeszköz került vele forgalomba, ha egyáltalán.
+- **Egy autó** (későbbi beszámoló). A SpeechChips.com a BMW E38 navigációs egységét olyan gépként
+  sorolja fel, amely PCF8200-on keresztül mondta be az útirányt [28]. Az oldal sem évszámot, sem
+  forrást nem ad. Az adatlaphoz illene, amelynek alkalmazási listája az autóipari felhasználással
+  kezdődik [2].
+- **Egy 1988-as chip.** Az ott lefényképezett PCF8200P-n a 8814-es kód áll, ami 1988 14. hete, ha
+  úgy olvasandó, mint a többi Philips dátumkód [28]. A feliratot egy kis fényképről olvastuk le.
+
 ## A Ciber232 és ez a projekt
 
 A Ciber232 azért szerepel ezen az időrenden, mert egy cikk megnevezi a chipjét. Ettől még nem része
@@ -256,7 +288,8 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
 
 ## Amit nem tudtunk eldönteni
 
-- **A MEA8000 első éve.** A múzeum szerint 1983 [14b]; lehet, hogy korábbi.
+- **Mikortól lehetett megvenni a MEA8000-et.** A Philips 1982 februárjában újonnan kifejlesztettnek
+  nevezte [24]; a múzeum szerint 1983-ban került piacra [14b].
 - **BraiLab Basic: 1984 vagy 1985.** A MAME 1984-et mond [6], Arató 1985-öt [7].
 - **Hány BraiLab készült.** 1987-ig 95 darabot helyeztek üzembe [8]. Az intézet történeti oldala
   szerint a BraiLab Basicből az évek során 400 darabot gyártottak és adtak el [22]. A múzeum az első
@@ -335,3 +368,18 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
     Kutatóközpont. Az oldal már nem érhető el; archivált példány:
     <https://web.archive.org/web/20231203004727/https://rehab.wigner.hu/en/node/36>
 23. *Multivox 4*, Internet Archive. <https://archive.org/details/multivox-4>
+24. H. E. van Brück, D. J. A. Teuling, „Integrated voice synthesiser”, *Electronic Components and
+    Applications*, 4. évf. 2. szám, 1982. február, 72–79. o. Philips.
+    <https://www.worldradiohistory.com/Archive-Company-Publications/Philips-Technical-Review/Electronic-Compoinents/Electronic-Components-&-Apps-Vol-4-No-2.pdf>
+25. Johannes N. Kroon, „Device for generating the audio information of a set of characters”, 4 783 810
+    számú amerikai szabadalom, U.S. Philips Corp., elsőbbség: 1982. február 24., megadva: 1988.
+    november 8. <https://patents.google.com/patent/US4783810A/en>
+26. Olaszy Gábor, Gordos Géza, Németh Géza, „Phonetic aspects of the MULTIVOX text-to-speech system”,
+    First ESCA Workshop on Speech Synthesis, 1990, 277–280. o.
+    <https://www.isca-archive.org/ssw_1990/olaszy90_ssw.html>
+27. R. W. King, „Tools and processes for developing low-cost and high-quality text-to-speech synthesis
+    for communication aids”, *Eurospeech 1991*, 325–329. o.
+    <https://www.isca-archive.org/eurospeech_1991/king91_eurospeech.html>
+28. SpeechChips.com (Scott Savage), „Philips PCF8200” és „BMW E38 Navigation System unit”.
+    <https://speechchips.com/chips/pcf8200.html>,
+    <https://speechchips.com/devices/bmw-navigation.html>
