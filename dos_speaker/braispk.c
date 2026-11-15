@@ -122,6 +122,7 @@ static const float AMPL[16]  = {0.0f,0.0078125f,0.01171875f,0.015625f,0.02148437
 static const float PI_TAB[32] = {0.0f,1.2f,2.4f,3.7f,4.9f,6.1f,7.3f,8.5f,9.8f,11.0f,13.4f,15.9f,19.5f,25.6f,34.2f,45.2f,0.0f,-45.2f,-34.2f,-25.6f,-19.5f,-15.9f,-13.4f,-11.0f,-9.8f,-8.5f,-7.3f,-6.1f,-4.9f,-3.7f,-2.4f,-1.2f};
 static const int FD_MULT[4]  = {1, 2, 3, 5};
 #define PITCH_HZ_PER_UNIT (10000.0 / 4096.0)
+#define PITCH_REG_MAX 4000.0        /* only keeps the number finite; measured straight to 1100 Hz */
 #define PI_NOISE 16
 
 /* ---- the ear-matched output stage (chip_synth.py) ------------------------ */
@@ -239,7 +240,8 @@ static struct {
     double tilt_a, hp_a;
     int fs;
 } S;
-static unsigned char chip_timing;                /* /C: honour FS bits */
+static unsigned char chip_timing = 1;            /* the FS bits set the frame length, as on the chip (0.52);
+                                                  * /C0: every standard frame 12.8 ms, as before */
 static double out_gain = 8.0;                   /* /Vn below; default /V8 = x8: a cone wants drive */
 static const double GAIN_TAB[10] = {0.5, 0.71, 1.0, 1.41, 2.0, 2.83, 4.0, 5.66, 8.0, 11.3};
 static unsigned char full_range;                /* /F: keep the fundamental (no 300 Hz cut) */
@@ -957,8 +959,16 @@ static void synth_frame(const unsigned char *f)
      * 2 ms) -- the "click at the head of the s". */
     wt = noise ? 1.0 : 0.0;
     dw = (wt - S.lw) / n;
+    /* The pitch register has no floor and no ceiling at 40 and 400 Hz.  On a real
+     * BraiLab PC (the CHIP1 sweep, line output, November 2026) the pitch follows the
+     * start byte plus the increments in a straight line from 200 Hz up past 1100 Hz,
+     * and when the increments take the register below zero the pitch comes back up
+     * the other side: -365 Hz sounds as 347, -907 as 891.  On the real box, Enter
+     * pressed quickly many times makes the pitch climb, drop very low and climb again,
+     * round and round; until 0.52 the value was held between 40 and 400 Hz here and
+     * topped out. */
     pt = S.pitch + pi * FD_MULT[fd];
-    if (pt < 40.0) pt = 40.0; else if (pt > 400.0) pt = 400.0;
+    if (pt > PITCH_REG_MAX) pt = PITCH_REG_MAX; else if (pt < -PITCH_REG_MAX) pt = -PITCH_REG_MAX;
 
     /* Coefficients, amplitude and pitch are computed at each block's END and
      * ramped to it sample by sample from wherever the previous block left
@@ -989,7 +999,8 @@ static void synth_frame(const unsigned char *f)
         for (k = 0; k < m; k++) {
             double dt;
             S.ca += da; S.can += dn; S.cp += dp;
-            p = S.cp;
+            p = S.cp < 0.0 ? -S.cp : S.cp;     /* below zero it mirrors */
+            if (p > 0.4 * FS) p = 0.4 * FS;    /* the sawtooth's own limit */
             /* both sources run on every sample, whichever is heard */
             S.rng = S.rng * 1103515245UL + 12345UL;
             z = ((double)((S.rng >> 8) & 0xFFFF) / 65536.0 - 0.5) * S.noise_k;
@@ -1839,7 +1850,7 @@ static int report(void)
            *(unsigned far *)MK_FP(ds, (unsigned)&min_synth_sp),
            *(unsigned far *)MK_FP(ds, (unsigned)&ring_head),
            *(unsigned far *)MK_FP(ds, (unsigned)&ring_tail));
-    printf("         samples/frame n: last %d, min %u, max %u (want 128); fs %ld Hz; x87 SW on entry %04X\r\n",
+    printf("         samples/frame n: last %d, min %u, max %u (a standard frame is 88 at TALKHUN's default speed, 128 with /C0); fs %ld Hz; x87 SW on entry %04X\r\n",
            (int)*(unsigned far *)MK_FP(ds, (unsigned)&last_synth_n),
            *(unsigned far *)MK_FP(ds, (unsigned)&min_synth_n),
            *(unsigned far *)MK_FP(ds, (unsigned)&max_synth_n),
@@ -1885,7 +1896,7 @@ int main(int argc, char **argv)
             if (sw >= 'a' && sw <= 'z') sw -= 32;  /* not "& 0xDF": that turned '8' into 18h and /8 never matched */
             switch (sw) {
             case 'U': return uninstall();
-            case 'C': chip_timing = 1; break;
+            case 'C': chip_timing = (unsigned char)(argv[i][2] != '0'); break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
             case 'T': dos_con_touch = 0; break;
@@ -1946,7 +1957,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.51: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.52: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -1965,7 +1976,7 @@ int main(int argc, char **argv)
             default:
                 printf("BRAISPK -- BraiLab speech adapter on the PC speaker\r\n"
                        "  BRAISPK        install (then load TALKHUNS.COM)\r\n"
-                       "  BRAISPK /C     chip timing: frame length from the FS bits (8.8 ms at ESC S6)\r\n"
+                       "  BRAISPK /C0    old timing: every frame 12.8 ms, whatever speed TALKHUN asks for\r\n"
                        "  BRAISPK /Vn    output level 0..9 (8 = default x8, 2 = the NVDA voice's level)\r\n"
                        "  BRAISPK /F     full range: keep the voice fundamental instead of the 300 Hz cut\r\n"
                        "  BRAISPK /P     self-test: a vowel through the synth, no TALKHUN needed\r\n"
@@ -2234,18 +2245,18 @@ resident:
     else if (out_dev == OUT_LPT)
     printf("braispk: resident, %u KB, %s -> printer-port DAC at %03Xh, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
-           lpt_port, API_INT, (int)out_gain, (int)(out_gain * 100) % 100, chip_timing ? ", chip frame timing" : "");
+           lpt_port, API_INT, (int)out_gain, (int)(out_gain * 100) % 100, chip_timing ? "" : ", every frame 12.8 ms (/C0)");
     else if (out_dev == OUT_SB)
     printf("braispk: resident, %u KB, %s -> Sound Blaster DAC at %03Xh (DSP %u.%02u)%s%s, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
            sb_port, sb_ver_hi, sb_ver_lo, dac_wide ? ", pairs every tick" : "", keep_filter ? ", filter as found" : "",
            API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
-           chip_timing ? ", chip frame timing" : "");
+           chip_timing ? "" : ", every frame 12.8 ms (/C0)");
     else
     printf("braispk: resident, %u KB, %s PWM on the PC speaker, API INT %02Xh, level x%d.%02d%s\r\n",
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
            API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
-           chip_timing ? ", chip frame timing" : "");
+           chip_timing ? "" : ", every frame 12.8 ms (/C0)");
     fflush(stdout);                            /* _dos_keep does not flush     */
     _dos_keep(0, paras);
     return 0;

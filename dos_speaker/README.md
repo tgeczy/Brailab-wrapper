@@ -90,7 +90,7 @@ version of it. See [`NOTICE.md`](../NOTICE.md).
 
 ## Use
 
-    BRAISPK              install (BRAISPK /C for chip frame timing, see below)
+    BRAISPK              install (BRAISPK /C0 for the old frame timing, see below)
     TALKHUNS 1           the patched screen reader, on "LPT1"
     SAY /C               the configuration HUN.BAT used to send with COPY ... COM4
     SAY Jó napot.        speak
@@ -110,10 +110,22 @@ Then TALKHUNS loads, SAY /C's "configured" is spoken, and `SAY Kesz.` says
 Kész. No chirp: BRAISPK. Chirp but no speech: TALKHUNS or SAY. Speech but
 wrong: the synth.
 
-`/C` honours the chip's FS bits: TALKHUN's default speed (ESC S6) sets FS=1,
-which on real silicon means 8.8 ms frames rather than 12.8. The emulator the
-NVDA voice was tuned on ignores FS, so the default here does too; the switch is
-for the ear to decide.
+Since 0.52 the chip's FS bits set the frame length, as they do on the chip:
+TALKHUN's default speed (ESC S6) sets FS=1, which means 8.8 ms frames rather
+than 12.8. Before 0.52 every frame was 12.8 ms unless BRAISPK was started with
+`/C`, and beside a real BraiLab PC that was plainly too slow: at the default
+speed every frame, pauses included, ran 45 % long, and TALKHUN's speed 8
+sounded like the real box's speed 5 or 6. `/C0` brings the old timing back.
+
+Since 0.52 the pitch also has no floor at 40 Hz and no ceiling at 400 Hz. On
+the real box (the CHIP1 sweep, recorded from its line output) the pitch follows
+the start byte plus the frames' increments in a straight line from 200 Hz to
+past 1100 Hz, and when the increments take it below zero it comes back up the
+other side: where the sum says -365 Hz the box sounds 347 Hz, at -907 Hz it
+sounds 891. This matters when Enter is pressed quickly many times: on the real
+box the pitch then keeps climbing, drops very low and climbs again, round and
+round, while BRAISPK stopped at 400 Hz. Whether 0.52 now goes round the same
+way has not been heard on a real PC yet.
 
 ## Making Windows 98's DOS readable (0.26)
 
@@ -232,7 +244,7 @@ egyértelműen ennek módosított változata. Lásd: [`NOTICE.md`](../NOTICE.md)
 
 ### Használat
 
-    BRAISPK              telepítés (BRAISPK /C: a chip saját keretidőzítésével)
+    BRAISPK              telepítés (BRAISPK /C0: a régi, lassabb keretidőzítéssel)
     TALKHUNS 1           a módosított képernyőolvasó, az „LPT1”-en
     SAY /C               a beállítás, amelyet régen a HUN.BAT küldött COPY ... COM4-gyel
     SAY Jó napot.        beszéd
@@ -249,6 +261,15 @@ hogy az INT 61h-t más program foglalja, ezért nem települt. Ezután betöltő
 TALKHUNS, a SAY /C kimondja, hogy „configured”, a `SAY Kesz.` pedig azt, hogy
 „Kész”. Nincs csippanás: a BRAISPK a hibás. Van csippanás, de nincs beszéd: a
 TALKHUNS vagy a SAY. Van beszéd, de rosszul szól: a szintézis.
+
+A 0.52 óta a tempó úgy működik, mint a valódi BraiLab PC-n: a keretek hosszát a
+chip sebességbitjei adják (a TALKHUN alapsebességén 8,8 ms, nem 12,8). Addig
+alapsebességen minden keret, a szünetekkel együtt, 45 %-kal hosszabb volt, a
+8-as tempó pedig a valódi doboz 5-ös vagy 6-os tempójának hangzott. A régi
+időzítés: `/C0`. A hangmagasságnak sincs többé 400 Hz-es felső határa: a valódi
+dobozon, ha gyorsan egymás után sokszor nyomjuk meg az Entert, a hang egyre
+emelkedik, majd nagyon mélyre esik, és újra emelkedik; a BRAISPK eddig 400
+Hz-nél megállt. Valódi gépen a 0.52-t még nem hallottuk.
 
 A többi kapcsoló (`/I`, `/8`, `/DMA`, `/E`, `/A`, `/L`, `/D`) és a részletek a
 fenti angol részben és a `NOTES.md` fájlban olvashatók.
