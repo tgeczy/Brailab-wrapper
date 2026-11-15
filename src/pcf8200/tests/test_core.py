@@ -137,3 +137,36 @@ def test_the_two_version_numbers_agree():
     path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pyproject.toml")
     with open(path, encoding="utf-8") as f:
         assert 'version = "%s"' % pcf8200.__version__ in f.read()
+
+
+def test_a_boundary_between_hiss_and_voice_is_a_crossfade():
+    """The incoming source rises from nothing, slowly; the outgoing one falls in a
+    straight line; a frame after its own kind holds its level."""
+    from pcf8200 import PCF8200
+    chip = PCF8200()
+    chip.pitch(46)
+    for pi, am in ((16, 10), (16, 10), (0, 11), (0, 11)):       # hiss, hiss, voice, voice
+        chip.frame_codes(F1=20, F2=20, AM=am, PI=pi)
+    fc, bw, voice, noise, p = chip.source_tracks()
+    n = len(voice) // 4
+    frac = (np.arange(n) + 0.5) / n
+    hiss, full = noise[0], voice[-1]
+    assert hiss > 0 and full > 0
+    assert not voice[:2 * n].any() and (noise[:2 * n] == hiss).all()
+    assert np.array_equal(voice[2 * n:3 * n], 0.0 + (full - 0.0) * (frac * frac * frac))
+    assert np.array_equal(noise[2 * n:3 * n], hiss + (0.0 - hiss) * frac)
+    assert (voice[3 * n:] == full).all() and not noise[3 * n:].any()
+    # the first sample of the voice is far below a straight rise
+    assert voice[2 * n] < 0.001 * full
+    # the frames as they state themselves are still there, unchanged
+    fc, bw, amp, p, voiced = chip.tracks()
+    assert not voiced[:2 * n].any() and voiced[2 * n:].all()
+    assert len(chip.render()) == len(amp)
+
+
+def test_one_amplitude_is_two_with_the_other_at_zero():
+    fc, bw, amp, p, voiced = _tracks()
+    a = core.Core(len(fc)).run(amp, p, voiced, fc, bw)
+    b = core.Core(len(fc)).run(np.where(voiced, amp, 0.0), p, None, fc, bw,
+                               noise_amp=np.where(voiced, 0.0, amp))
+    assert np.array_equal(a, b)

@@ -76,8 +76,8 @@ static double soft_knee(double v, double knee)
     return v < 0.0 ? -a : a;
 }
 
-void pcf8200_run(pcf8200_core *c, const double *amp, const double *pitch,
-                 const uint8_t *voiced, const double *fc, const double *bw,
+void pcf8200_run(pcf8200_core *c, const double *voice_amp, const double *noise_amp,
+                 const double *pitch, const double *fc, const double *bw,
                  int n, double *out)
 {
     const pcf8200_params *q = &c->p;
@@ -109,7 +109,7 @@ void pcf8200_run(pcf8200_core *c, const double *amp, const double *pitch,
             c->nz[i] = (1.0 - c->na[i]) * noise + c->na[i] * c->nz[i];
             noise = c->nz[i];
         }
-        v = (voiced[s] ? src : noise) * amp[s];
+        v = src * voice_amp[s] + noise * noise_amp[s];
 
         for (i = 0; i < nf; i++) {
             double bc = exp(-PI * bw[i * n + s] / rate);
@@ -200,8 +200,16 @@ int pcf8200_tracker_length(const pcf8200_tracker *t, const uint8_t *f)
     return n < MIN_SAMPLES ? MIN_SAMPLES : n;
 }
 
-int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, double *pitch,
-                          uint8_t *voiced, double *fc, double *bw, int stride)
+/* One source's amplitude across a frame: fade() in pcf8200_core.py. */
+static double fade(double a, double b, double frac)
+{
+    if (a == 0.0 && b > 0.0)
+        return a + (b - a) * (frac * frac * frac);
+    return a + (b - a) * frac;
+}
+
+int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *voice_amp,
+                          double *noise_amp, double *pitch, double *fc, double *bw, int stride)
 {
     const int f1 = f[0] & 0x1F, b1 = (f[0] >> 5) & 7;
     const int pi = f[1] & 0x1F, b5 = (f[1] >> 5) & 3, f5 = (f[1] >> 7) & 1;
@@ -210,7 +218,9 @@ int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, dou
     const int b2 = f[4] & 7, f4 = (f[4] >> 3) & 7, b4 = (f[4] >> 6) & 3;
     const int nf = t->nf, n = pcf8200_tracker_length(t, f);
     const double cur_amp = PCF8200_AMPL[am];
+    const int cur_noise = pi == PCF8200_PI_NOISE;
     double cur_fc[PCF8200_MAX_FORMANTS], cur_bw[PCF8200_MAX_FORMANTS], target;
+    double pv, pn, cv, cn;
     int i, s;
 
     if (t->female) {
@@ -227,6 +237,7 @@ int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, dou
     }
     if (!t->have_prev) {
         t->prev_amp = cur_amp;
+        t->prev_noise = cur_noise;
         for (i = 0; i < nf; i++) {
             t->prev_fc[i] = cur_fc[i];
             t->prev_bw[i] = cur_bw[i];
@@ -244,11 +255,15 @@ int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, dou
             target = t->pitch_max_hz;
     }
 
+    pv = t->prev_noise ? 0.0 : t->prev_amp;
+    pn = t->prev_noise ? t->prev_amp : 0.0;
+    cv = cur_noise ? 0.0 : cur_amp;
+    cn = cur_noise ? cur_amp : 0.0;
     for (s = 0; s < n; s++) {
         const double frac = (s + 0.5) / n;
-        amp[s] = t->prev_amp + (cur_amp - t->prev_amp) * frac;
+        voice_amp[s] = fade(pv, cv, frac);
+        noise_amp[s] = fade(pn, cn, frac);
         pitch[s] = t->pitch + (target - t->pitch) * frac;
-        voiced[s] = pi != PCF8200_PI_NOISE;
         for (i = 0; i < nf; i++) {
             fc[i * stride + s] = t->prev_fc[i] + (cur_fc[i] - t->prev_fc[i]) * frac;
             bw[i * stride + s] = t->prev_bw[i] + (cur_bw[i] - t->prev_bw[i]) * frac;
@@ -257,6 +272,7 @@ int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *amp, dou
 
     t->pitch = target;
     t->prev_amp = cur_amp;
+    t->prev_noise = cur_noise;
     for (i = 0; i < nf; i++) {
         t->prev_fc[i] = cur_fc[i];
         t->prev_bw[i] = cur_bw[i];

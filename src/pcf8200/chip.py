@@ -60,7 +60,7 @@ def _apply_highpass(sig, fc, rate):
 
 def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
            lowpass=LOWPASS_HZ, highpass=HIGHPASS_HZ, noise_gain=NOISE_GAIN,
-           seed=SEED, noise_lowpass=NOISE_LOWPASS_HZ):
+           seed=SEED, noise_lowpass=NOISE_LOWPASS_HZ, noise_amp=None):
     """Render formant tracks to a float waveform (roughly -1..1).
 
     Parameters
@@ -70,6 +70,8 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     amp : array (N,) or scalar      linear amplitude envelope
     pitch : array (N,) or scalar    F0 in Hz
     voiced : array (N,) bool        True = voiced (pulse), False = noise/fricative
+    noise_amp : array (N,)          the hiss's own amplitude; `amp` is then the voice's
+                                    and `voiced` is not looked at
     rate : int                      output sample rate (resampled from 10 kHz)
     lowpass : hertz                 output low-pass; 0, the default, for none
     noise_lowpass : hertz, ...      one-pole low-passes on the noise source; () for white
@@ -96,7 +98,9 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
                      noise_lowpass=noise_lowpass,
                      lowpass=lp, highpass=highpass if hp else 0,
                      gain=HIGHPASS_MAKEUP if hp else 1.0, knee=SOFTKNEE if hp else 0.0)
-    sig = core.run(amp, pitch, voiced, fc, bw)
+    if noise_amp is not None:
+        noise_amp = np.broadcast_to(np.asarray(noise_amp, dtype=float), (N,)).astype(float)
+    sig = core.run(amp, pitch, voiced, fc, bw, noise_amp=noise_amp)
     if lowpass and not lp:
         # Any other cutoff: needs scipy (optional); the paths above are
         # scipy-free.  This filters the cascade OUTPUT.  It used to be handed

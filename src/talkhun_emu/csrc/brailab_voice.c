@@ -35,7 +35,7 @@ struct brailab_voice {
     pcf8200_tracker tracker;
 
     double amp[MAX_FRAME], hz[MAX_FRAME], out[MAX_FRAME];     /* the frame */
-    uint8_t voiced[MAX_FRAME];
+    double noise_amp[MAX_FRAME];
     double fc[PCF8200_MAX_FORMANTS * MAX_FRAME], bw[PCF8200_MAX_FORMANTS * MAX_FRAME];
     int frame_len, frame_pos;
 
@@ -126,15 +126,15 @@ static int next_frame(brailab_voice *v)
             }
             pcf8200_tracker_pitch(&v->tracker, byte);
         } else if (it->kind == TALKHUN_FRAME) {
-            const int n = pcf8200_tracker_frame(&v->tracker, it->data, v->amp, v->hz, v->voiced,
-                                                v->fc, v->bw, MAX_FRAME);
+            const int n = pcf8200_tracker_frame(&v->tracker, it->data, v->amp, v->noise_amp,
+                                                v->hz, v->fc, v->bw, MAX_FRAME);
             /* pcf8200_run wants its rows n apart */
             int i;
             for (i = 1; i < v->tracker.nf; i++) {
                 memmove(v->fc + i * n, v->fc + i * MAX_FRAME, (size_t)n * sizeof(double));
                 memmove(v->bw + i * n, v->bw + i * MAX_FRAME, (size_t)n * sizeof(double));
             }
-            pcf8200_run(&v->core, v->amp, v->hz, v->voiced, v->fc, v->bw, n, v->out);
+            pcf8200_run(&v->core, v->amp, v->noise_amp, v->hz, v->fc, v->bw, n, v->out);
             v->frame_len = n;
             v->frame_pos = 0;
             return 1;

@@ -120,6 +120,38 @@ def soft_knee(sig, knee):
                     sig)
 
 
+#: [box] The two sources and the fade between them.
+#:
+#: The voice and the hiss each have an amplitude of their own.  Across a frame each
+#: moves from where it was to where the frame puts it, and the source a frame does
+#: not use goes to zero: a boundary between hiss and voice is a crossfade.  One
+#: amplitude switched from one source to the other at the frame's first sample
+#: brings the new source in at full level and cuts the sawtooth in mid-cycle.  That
+#: step was heard as a small pop where a stop's burst meets its vowel, in "kettes"
+#: and "este".
+#:
+#: A source rising from zero follows the cube of the frame's fraction.  On a real
+#: PCF8200 the incoming source stays near the floor for the first half of the
+#: frame: over 29 burst-to-vowel boundaries of TALKHUN's own speech the first
+#: voiced frame was 16 dB under the steady vowel, where a straight rise gives 14
+#: and the one-step switch 11.  The cube is not the chip's law, which is not known;
+#: it is the simplest curve that starts as late.  Every other move, between two
+#: levels or down to zero, is a straight line.
+def fade(a, b, frac):
+    """One source's amplitude across a frame: from `a` to `b`, with `frac` the
+    frame's fraction at each sample."""
+    if a == 0.0 and b > 0.0:
+        return a + (b - a) * (frac * frac * frac)
+    return a + (b - a) * frac
+
+
+def source_amps(prev_amp, prev_noise, cur_amp, cur_noise, frac):
+    """(voice, hiss) amplitudes across a frame of amplitude cur_amp, hiss if
+    cur_noise, that follows a frame of prev_amp and prev_noise."""
+    return (fade(0.0 if prev_noise else prev_amp, 0.0 if cur_noise else cur_amp, frac),
+            fade(prev_amp if prev_noise else 0.0, cur_amp if cur_noise else 0.0, frac))
+
+
 def make_core(nf, **kw):
     """A Core: in C if the native library is here, otherwise this module's.  The
     PCF8200_BACKEND environment variable forces one: python, or native."""
@@ -256,12 +288,17 @@ class Core:
             self.nz[i] = yp
         return np.asarray(nl)
 
-    def run(self, amp, pitch, voiced, fc, bw):
+    def run(self, amp, pitch, voiced, fc, bw, noise_amp=None):
         """Audio for the next block.  amp, pitch (Hz) and voiced (bool) are arrays
         of one length; fc and bw hold one such array per formant, in hertz.
 
-        Both sources run on every sample, whichever one is heard: the phase and
-        the tilt advance through noise, and the noise and its low-passes through
+        With noise_amp, an array of that length too, each source has its own
+        amplitude: `amp` is the voice's, noise_amp the hiss's, and `voiced` is not
+        looked at.  Without it the one amplitude goes to the source `voiced` names,
+        switching in one step.
+
+        Both sources run on every sample, whichever is heard: the phase and the
+        tilt advance through noise, and the noise and its low-passes through
         voicing."""
         n = len(amp)
         if n == 0:
@@ -270,7 +307,11 @@ class Core:
         p = np.clip(pitch, PITCH_MIN_HZ, PITCH_MAX_HZ)
         vsrc = self._voiced(p)
         noise = self._noise(n)
-        xl = (np.where(voiced, vsrc, noise) * amp).tolist()
+        if noise_amp is None:
+            voiced = np.asarray(voiced, bool)
+            noise_amp = np.where(voiced, 0.0, amp)
+            amp = np.where(voiced, amp, 0.0)
+        xl = (vsrc * amp + noise * noise_amp).tolist()
 
         # ---- five-formant cascade (+ low-pass, high-pass), per-sample loop ----
         B1 = []

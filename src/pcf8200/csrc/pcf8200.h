@@ -64,6 +64,7 @@ typedef struct {
     double time_scale;
     double anchor, pitch;
     int have_prev;
+    int prev_noise;         /* the frame before was hiss */
     double prev_amp, prev_fc[PCF8200_MAX_FORMANTS], prev_bw[PCF8200_MAX_FORMANTS];
 } pcf8200_tracker;
 
@@ -85,19 +86,22 @@ PCF8200_API void pcf8200_tracker_pitch(pcf8200_tracker *t, int pitch_byte);
 PCF8200_API void pcf8200_tracker_speed(pcf8200_tracker *t, int fs);
 /* How many samples this frame will give. */
 PCF8200_API int pcf8200_tracker_length(const pcf8200_tracker *t, const uint8_t *frame);
-/* Write the frame's parameters and return their length.  amp, pitch, voiced: one value
- * per sample.  fc, bw: nf rows, each `stride` values apart. */
-PCF8200_API int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *frame, double *amp,
-                                      double *pitch, uint8_t *voiced, double *fc, double *bw,
-                                      int stride);
+/* Write the frame's parameters and return their length.  voice_amp, noise_amp, pitch: one
+ * value per sample.  fc, bw: nf rows, each `stride` values apart.  Each source has its own
+ * amplitude, and the one the frame does not use fades to zero across it: see fade() in
+ * pcf8200_core.py. */
+PCF8200_API int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *frame,
+                                      double *voice_amp, double *noise_amp, double *pitch,
+                                      double *fc, double *bw, int stride);
 
 /* Returns 0, or -1 if nf is out of range. */
 PCF8200_API int pcf8200_init(pcf8200_core *c, int nf, const pcf8200_params *p);
 
-/* Audio for the next n samples.  amp, pitch (Hz), voiced: n values each.  fc, bw:
- * nf rows of n values, in hertz.  out: n values. */
-PCF8200_API void pcf8200_run(pcf8200_core *c, const double *amp, const double *pitch,
-                             const uint8_t *voiced, const double *fc, const double *bw,
+/* Audio for the next n samples.  voice_amp, noise_amp, pitch (Hz): n values each; the
+ * excitation is the voice at voice_amp plus the hiss at noise_amp.  fc, bw: nf rows of n
+ * values, in hertz.  out: n values. */
+PCF8200_API void pcf8200_run(pcf8200_core *c, const double *voice_amp, const double *noise_amp,
+                             const double *pitch, const double *fc, const double *bw,
                              int n, double *out);
 
 /* For the tests: the two states that must match the reference exactly. */

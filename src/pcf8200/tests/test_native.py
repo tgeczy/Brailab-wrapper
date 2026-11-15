@@ -72,8 +72,12 @@ def test_c_matches_the_reference(kw, nf):
         for _ in range(r.randint(1, 6)):
             n = r.choice([1, 2, 17, 128, 640, 1500])
             args = _block(r, nf, n)
-            a = py.run(*args)
-            b = c.run(*args)
+            kw2 = {}
+            if r.random() < 0.5:            # two amplitudes, both sources sounding at once
+                x = np.arange(n) / max(n, 1)
+                kw2["noise_amp"] = r.uniform(0, 1) + (r.uniform(0, 1) - r.uniform(0, 1)) * x * 0.5
+            a = py.run(*args, **kw2)
+            b = c.run(*args, **kw2)
             assert c.noise_state == py.noise.x
             assert c.phase == py.phase
             assert np.max(np.abs(a - b)) <= AUDIO_TOL * max(1.0, np.max(np.abs(a)))
@@ -126,12 +130,12 @@ def test_frames_match_the_library_exactly(female, time_scale):
             else:
                 chip.frame(val)
                 got.append(t.frame(val))
-        fc, bw, amp, p, voiced = chip.tracks()
+        fc, bw, voice_amp, noise_amp, p = chip.source_tracks()
         if fc is None:
             continue
-        assert np.array_equal(np.concatenate([g[0] for g in got]), amp)
+        assert np.array_equal(np.concatenate([g[0] for g in got]), voice_amp)
         assert np.array_equal(np.concatenate([g[1] for g in got]), p)
-        assert np.array_equal(np.concatenate([g[2] for g in got]), voiced)
+        assert np.array_equal(np.concatenate([g[2] for g in got]), noise_amp)
         for i in range(t.nf):
             assert np.array_equal(np.concatenate([g[3][i] for g in got]), fc[i])
             assert np.array_equal(np.concatenate([g[4][i] for g in got]), bw[i])

@@ -222,7 +222,8 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
     """Shared cheap front half: per-sample parameter trajectories (pass 1).  The
     expensive per-harmonic excitation is NOT built here -- it is streamed per block
     in _render_blocks, so first-audio stays ~one block even for a long paragraph.
-    Returns (amp, p, noise, fc, bw, nf, N); N == 0 => empty."""
+    Returns (amp, p, noise, fc, bw, nf, N); N == 0 => empty.  amp is the voice's
+    amplitude and noise the hiss's: each source has its own (core.source_amps)."""
     FS = CHIP_RATE
     r = pcf8200.REAL_TABLES if real is None else real
     tables = active_tables(r)
@@ -259,9 +260,10 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
         else:
             pt = min(max(anchor + cur['pi'], 40.0), 400.0)
         frac = (np.arange(n) + 0.5) / n
-        a_amp.append(prev['ampl'] + (cur['ampl'] - prev['ampl']) * frac)
+        va, na = core.source_amps(prev['ampl'], prev['noise'], cur['ampl'], cur['noise'], frac)
+        a_amp.append(va)
         a_p.append(pitch + (pt - pitch) * frac)
-        a_noise.append(np.full(n, bool(cur['noise'])))
+        a_noise.append(na)
         for i in range(nf):
             pf, pbw = prev['formants'][i] if i < len(prev['formants']) else cur['formants'][i]
             cf, cbw = cur['formants'][i]
@@ -295,13 +297,12 @@ def _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt, seed,
                        lowpass=lp_default, highpass=highpass,
                        gain=scale * (CHIP_HIGHPASS_MAKEUP if highpass else 1.0),
                        knee=CHIP_SOFTKNEE if highpass else 0.0)
-    voiced = ~noise
     step = block if (block and block > 0) else N
     a = 0
     while a < N:
         b = min(a + step, N)
-        yield c.run(amp[a:b], p[a:b], voiced[a:b],
-                    [t[a:b] for t in fc], [t[a:b] for t in bw])
+        yield c.run(amp[a:b], p[a:b], None,
+                    [t[a:b] for t in fc], [t[a:b] for t in bw], noise_amp=noise[a:b])
         a = b
 
 

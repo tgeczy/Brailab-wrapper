@@ -19,7 +19,6 @@ except ImportError:
 
 MAX_FORMANTS = 5
 _c_double_p = ctypes.POINTER(ctypes.c_double)
-_c_ubyte_p = ctypes.POINTER(ctypes.c_ubyte)
 
 
 class _Params(ctypes.Structure):
@@ -77,7 +76,7 @@ def load():
             return None
         lib = ctypes.CDLL(path)
         lib.pcf8200_init.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(_Params)]
-        lib.pcf8200_run.argtypes = [ctypes.c_void_p, _c_double_p, _c_double_p, _c_ubyte_p,
+        lib.pcf8200_run.argtypes = [ctypes.c_void_p, _c_double_p, _c_double_p, _c_double_p,
                                     _c_double_p, _c_double_p, ctypes.c_int, _c_double_p]
         lib.pcf8200_run.restype = None
         lib.pcf8200_phase.argtypes = [ctypes.c_void_p]
@@ -94,7 +93,7 @@ def load():
         lib.pcf8200_tracker_speed.restype = None
         lib.pcf8200_tracker_length.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         lib.pcf8200_tracker_frame.argtypes = [ctypes.c_void_p, ctypes.c_char_p, _c_double_p,
-                                              _c_double_p, _c_ubyte_p, _c_double_p, _c_double_p,
+                                              _c_double_p, _c_double_p, _c_double_p, _c_double_p,
                                               ctypes.c_int]
         _lib = lib
     return _lib
@@ -124,18 +123,18 @@ class NativeTracker:
         self.lib.pcf8200_tracker_speed(self._state, fs)
 
     def frame(self, data):
-        """(amp, pitch, voiced, fc, bw) for one 5-byte frame."""
+        """(voice_amp, pitch, noise_amp, fc, bw) for one 5-byte frame."""
         data = bytes(data)
         n = self.lib.pcf8200_tracker_length(self._state, data)
-        amp = np.empty(n)
+        voice_amp = np.empty(n)
+        noise_amp = np.empty(n)
         pitch = np.empty(n)
-        voiced = np.empty(n, np.uint8)
         fc = np.empty((self.nf, n))
         bw = np.empty((self.nf, n))
-        self.lib.pcf8200_tracker_frame(self._state, data, _doubles(amp), _doubles(pitch),
-                                       voiced.ctypes.data_as(_c_ubyte_p), _doubles(fc),
+        self.lib.pcf8200_tracker_frame(self._state, data, _doubles(voice_amp),
+                                       _doubles(noise_amp), _doubles(pitch), _doubles(fc),
                                        _doubles(bw), n)
-        return amp, pitch, voiced.astype(bool), fc, bw
+        return voice_amp, pitch, noise_amp, fc, bw
 
 
 class NativeCore:
@@ -159,17 +158,20 @@ class NativeCore:
     def noise_state(self):
         return self.lib.pcf8200_noise_state(self._state)
 
-    def run(self, amp, pitch, voiced, fc, bw):
+    def run(self, amp, pitch, voiced, fc, bw, noise_amp=None):
         n = len(amp)
         if n == 0:
             return np.zeros(0)
+        if noise_amp is None:               # one amplitude, for the source `voiced` names
+            voiced = np.asarray(voiced, bool)
+            noise_amp = np.where(voiced, 0.0, amp)
+            amp = np.where(voiced, amp, 0.0)
         amp = np.ascontiguousarray(amp, dtype=float)
+        noise_amp = np.ascontiguousarray(noise_amp, dtype=float)
         pitch = np.ascontiguousarray(pitch, dtype=float)
-        voiced = np.ascontiguousarray(voiced, dtype=np.uint8)
         fc = np.ascontiguousarray(fc, dtype=float)
         bw = np.ascontiguousarray(bw, dtype=float)
         out = np.empty(n)
-        self.lib.pcf8200_run(self._state, _doubles(amp), _doubles(pitch),
-                             voiced.ctypes.data_as(_c_ubyte_p), _doubles(fc), _doubles(bw),
-                             n, _doubles(out))
+        self.lib.pcf8200_run(self._state, _doubles(amp), _doubles(noise_amp), _doubles(pitch),
+                             _doubles(fc), _doubles(bw), n, _doubles(out))
         return out

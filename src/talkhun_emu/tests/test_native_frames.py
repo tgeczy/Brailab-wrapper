@@ -47,7 +47,7 @@ def test_frames_match_the_addon_exactly(furcsa, flat, time_scale):
         assert t.nf == nf
         assert np.array_equal(np.concatenate([g[0] for g in got]), amp)
         assert np.array_equal(np.concatenate([g[1] for g in got]), p)
-        assert np.array_equal(np.concatenate([g[2] for g in got]), ~noise)
+        assert np.array_equal(np.concatenate([g[2] for g in got]), noise)
         for i in range(nf):
             assert np.array_equal(np.concatenate([g[3][i] for g in got]), fc[i])
             assert np.array_equal(np.concatenate([g[4][i] for g in got]), bw[i])

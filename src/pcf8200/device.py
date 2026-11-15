@@ -17,6 +17,7 @@ import numpy as np
 from . import protocol as P
 from . import tables as T
 from .chip import render, RATE, TILT_HZ, LOWPASS_HZ
+from .pcf8200_core import source_amps
 
 STD = int(round(0.0128 * RATE))          # standard frame = 128 samples at 10 kHz
 
@@ -85,7 +86,19 @@ class PCF8200:
 
     # ---- render the accumulated command stream ----
     def tracks(self):
-        """Decode the command stream to per-sample (fc, bw, amp, pitch, voiced)."""
+        """Decode the command stream to per-sample (fc, bw, amp, pitch, voiced): the
+        frames as they state themselves, one amplitude and the source it goes to."""
+        fc, bw, amp, p, voiced, _, _ = self._decode()
+        return fc, bw, amp, p, voiced
+
+    def source_tracks(self):
+        """Decode the command stream to per-sample (fc, bw, voice_amp, noise_amp,
+        pitch): what render() plays.  Each source has its own amplitude, and the one
+        a frame does not use fades to zero across it."""
+        fc, bw, _, p, _, voice_amp, noise_amp = self._decode()
+        return fc, bw, voice_amp, noise_amp, p
+
+    def _decode(self):
         # M/F comes off the wire like FS does.  It is not an ordinary
         # parameter: it switches the chip between the five- and four-formant
         # quantization tables, so it changes how many tracks exist, not just
@@ -95,7 +108,7 @@ class PCF8200:
         # silently decoded against the wrong table.
         female = self._female0
         nf = 4 if female else 5
-        a_amp, a_p, a_noise = [], [], []
+        a_amp, a_p, a_noise, a_va, a_na = [], [], [], [], []
         a_fc = [[] for _ in range(nf)]
         a_bw = [[] for _ in range(nf)]
         anchor = self._pitch_byte * T.PITCH_HZ_PER_UNIT
@@ -134,6 +147,9 @@ class PCF8200:
             a_amp.append(prev['ampl'] + (cur['ampl'] - prev['ampl']) * frac)
             a_p.append(pitch + (pt - pitch) * frac)
             a_noise.append(np.full(n, bool(cur['noise'])))
+            va, na = source_amps(prev['ampl'], prev['noise'], cur['ampl'], cur['noise'], frac)
+            a_va.append(va)
+            a_na.append(na)
             for i in range(nf):
                 pf, pbw = prev['formants'][i] if i < len(prev['formants']) else cur['formants'][i]
                 cf, cbw = cur['formants'][i]
@@ -141,19 +157,19 @@ class PCF8200:
                 a_bw[i].append(pbw + (cbw - pbw) * frac)
             pitch = pt; prev = cur
         if not a_amp:
-            return None, None, None, None, None
+            return None, None, None, None, None, None, None
         amp = np.concatenate(a_amp); p = np.concatenate(a_p)
         noise = np.concatenate(a_noise)
         fc = [np.concatenate(a_fc[i]) for i in range(nf)]
         bw = [np.concatenate(a_bw[i]) for i in range(nf)]
-        return fc, bw, amp, p, ~noise
+        return fc, bw, amp, p, ~noise, np.concatenate(a_va), np.concatenate(a_na)
 
     def render(self):
         """Synthesise the accumulated command stream to a float waveform."""
-        fc, bw, amp, p, voiced = self.tracks()
+        fc, bw, voice_amp, noise_amp, p = self.source_tracks()
         if fc is None:
             return np.zeros(0)
-        return render(fc, bw, amp, p, voiced, rate=self.rate,
+        return render(fc, bw, voice_amp, p, noise_amp=noise_amp, rate=self.rate,
                       source_tilt=self.source_tilt, lowpass=self.lowpass)
 
     def to_wav(self, path, audio=None, normalize=True):
