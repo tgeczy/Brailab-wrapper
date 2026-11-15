@@ -26,8 +26,8 @@ class _Params(ctypes.Structure):
     _fields_ = [("rate", ctypes.c_double), ("source_tilt_hz", ctypes.c_double),
                 ("noise_gain", ctypes.c_double),
                 ("noise_lowpass_hz", ctypes.c_double * core.NOISE_POLES),
-                ("pitch_min_hz", ctypes.c_double),
-                ("pitch_max_hz", ctypes.c_double), ("harmonic_fade", ctypes.c_double),
+                ("clean_from_hz", ctypes.c_double),
+                ("clean_to_hz", ctypes.c_double), ("harmonic_fade", ctypes.c_double),
                 ("lowpass", ctypes.c_double), ("lp_sos", ctypes.c_double * 10),
                 ("highpass_hz", ctypes.c_double), ("gain", ctypes.c_double),
                 ("knee", ctypes.c_double), ("seed", ctypes.c_double)]
@@ -45,8 +45,8 @@ def params(source_tilt=core.TILT_HZ, noise_gain=core.NOISE_GAIN, seed=core.SEED,
     if len(corners) > core.NOISE_POLES:
         raise ValueError("noise_lowpass: at most %d corners" % core.NOISE_POLES)
     p.noise_lowpass_hz[:] = corners + [0.0] * (core.NOISE_POLES - len(corners))
-    p.pitch_min_hz = core.PITCH_MIN_HZ
-    p.pitch_max_hz = core.PITCH_MAX_HZ
+    p.clean_from_hz = core.CLEAN_FROM_HZ
+    p.clean_to_hz = core.CLEAN_TO_HZ
     p.harmonic_fade = core.HARMONIC_FADE
     p.lowpass = 1.0 if lowpass else 0.0
     p.lp_sos[:] = core.LP_SOS[0] + core.LP_SOS[1]

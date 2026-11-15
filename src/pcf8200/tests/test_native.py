@@ -44,7 +44,7 @@ OPTIONS = [
 
 
 def _block(r, nf, n):
-    """A stretch of speech-like parameters, with pitches past both limits."""
+    """A stretch of speech-like parameters, with pitches far outside speech too."""
     x = np.arange(n) / max(n, 1)
 
     def glide(lo, hi):
@@ -54,7 +54,10 @@ def _block(r, nf, n):
     fc = np.array([glide(100, 1450), glide(500, 2450), glide(1500, 3450),
                    glide(2550, 4500), glide(3900, 4600)][:nf])
     bw = np.array([glide(10, 3000) for _ in range(nf)])
-    pitch = glide(*r.choice([(20, 60), (80, 180), (150, 420)]))
+    # speech, the two stretches where the sources are mixed, through zero and below it,
+    # past half the sample rate, past the whole of it, and standing at zero
+    pitch = glide(*r.choice([(20, 60), (80, 180), (150, 420), (-60, 60), (300, 900),
+                             (700, 5200), (4000, 12000), (0, 0)]))
     amp = glide(0, 1) if r.random() < 0.8 else np.zeros(n)
     voiced = np.array([r.random() < 0.7] * n)
     if n > 3 and r.random() < 0.3:

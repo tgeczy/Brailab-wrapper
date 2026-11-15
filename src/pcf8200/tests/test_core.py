@@ -98,15 +98,67 @@ def test_more_noise_corners_than_the_c_core_holds_are_refused():
         core.Core(1, noise_lowpass=(900.0,) * (core.NOISE_POLES + 1))
 
 
-def test_pitch_outside_the_range_is_held_to_it():
-    n = 2000
-    fc = [np.full(n, 700.0)]
-    bw = [np.full(n, 90.0)]
-    amp = np.full(n, 0.5)
-    voiced = np.ones(n, bool)
-    wild = core.Core(1).run(amp, np.full(n, 900.0), voiced, fc, bw)
-    top = core.Core(1).run(amp, np.full(n, core.PITCH_MAX_HZ), voiced, fc, bw)
-    assert np.array_equal(wild, top)
+def _steady(hz, n=4000, core_kw=None):
+    """A steady pitch through the bare source: no tilt, no formants to speak of."""
+    c = core.Core(1, **(core_kw or {}))
+    return c._voiced(np.full(n, float(abs(hz))))
+
+
+def _line_db(x, hz):
+    """Level of the spectral line nearest hz, against the strongest line."""
+    spec = np.abs(np.fft.rfft(x * np.hanning(len(x))))
+    k = int(round(hz * len(x) / core.RATE))
+    return 20 * np.log10(spec[max(0, k - 2):k + 3].max() / spec.max())
+
+
+def test_inside_the_range_of_speech_the_source_is_the_band_limited_sawtooth():
+    # sample for sample what it was before the plain counter came in
+    n = 3000
+    p = np.linspace(core.CLEAN_FROM_HZ, core.CLEAN_TO_HZ, n)
+    got = core.Core(1, source_tilt=0)._voiced(p)
+    phase = np.cumsum(p / core.RATE)
+    phase = phase - np.floor(phase)
+    edge = core.RATE * 0.5
+    want = np.zeros(n)
+    for k in range(1, int(edge / p.min()) + 1):
+        w = np.clip((edge - p * k) / (edge * core.HARMONIC_FADE), 0.0, 1.0)
+        w = w * w * (3.0 - 2.0 * w)
+        want += np.sin(2.0 * np.pi * phase * k) * (w / k)
+    want *= -(2.0 / np.pi)
+    assert np.array_equal(got, want)
+
+
+def test_far_above_speech_the_source_folds_as_the_chip_does():
+    # At 2630 Hz the fourth harmonic, 10520 Hz, folds to 520 Hz: the voice heard
+    # under the rising tone on a real BraiLab PC.  A band-limited source has
+    # nothing there.
+    x = _steady(2630.0, core_kw=dict(source_tilt=0))
+    assert _line_db(x, 2630.0) > -1.0
+    assert _line_db(x, 520.0) > -16.0            # a sawtooth's fourth harmonic: 12 dB down
+    assert _line_db(x, 4740.0) > -10.0           # the second, 5260 Hz, folded
+
+
+def test_past_half_the_sample_rate_the_tone_comes_back_down():
+    a = _steady(6000.0, core_kw=dict(source_tilt=0))
+    assert _line_db(a, 4000.0) > -1.0            # 10000 - 6000
+    # a whole sample rate more is no step at all, and a negative pitch is the positive one
+    b = core.Core(1).run(np.full(2000, 0.5), np.full(2000, 10150.0), np.ones(2000, bool),
+                         [np.full(2000, 700.0)], [np.full(2000, 90.0)])
+    c = core.Core(1).run(np.full(2000, 0.5), np.full(2000, -10150.0), np.ones(2000, bool),
+                         [np.full(2000, 700.0)], [np.full(2000, 90.0)])
+    assert np.array_equal(b, c)
+    assert _line_db(b[500:], 150.0) > -1.0
+
+
+def test_a_pitch_of_zero_is_silent_and_does_not_hang():
+    n = 3000
+    y = core.Core(1).run(np.full(n, 0.5), np.zeros(n), np.ones(n, bool),
+                         [np.full(n, 700.0)], [np.full(n, 90.0)])
+    assert np.abs(y[1500:]).max() < 1e-3
+    # through zero and out the other side, as when the increments take it there
+    p = np.linspace(60.0, -60.0, n)
+    y = core.Core(1).run(np.full(n, 0.5), p, np.ones(n, bool), [np.full(n, 700.0)], [np.full(n, 90.0)])
+    assert np.isfinite(y).all()
 
 
 def test_an_empty_block_changes_nothing():

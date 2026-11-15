@@ -26,8 +26,8 @@ typedef struct {
     double source_tilt_hz;  /* 0 = no glottal tilt */
     double noise_gain;
     double noise_lowpass_hz[PCF8200_NOISE_POLES];   /* one-pole low-passes on the noise; 0 = unused */
-    double pitch_min_hz;
-    double pitch_max_hz;
+    double clean_from_hz;   /* between these two pitches the source is the band-limited sawtooth; */
+    double clean_to_hz;     /* below half the first and above twice the second, the chip's plain counter */
     double harmonic_fade;
     double lowpass;         /* non-zero runs lp_sos in the loop */
     double lp_sos[10];      /* two sections: b0 b1 b2 a1 a2 */
@@ -55,7 +55,7 @@ typedef struct {
 /* Turns the chip's 5-byte frames into the per-sample parameters pcf8200_run takes:
  * each frame glides from the one before it. */
 typedef struct {
-    double rate, pitch_min_hz, pitch_max_hz;
+    double rate;
     int female;             /* the four-formant table */
     int nf;
     int honour_fs;          /* 0: every standard frame is 12.8 ms, whatever the FS bits say */

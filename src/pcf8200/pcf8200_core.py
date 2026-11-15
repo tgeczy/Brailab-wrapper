@@ -49,8 +49,27 @@ NOISE_GAIN = 1.70
 NOISE_LOWPASS_HZ = (900.0, 900.0, 900.0)
 NOISE_POLES = 3              # as many as the C core holds
 SEED = 12345                 # [model] where the noise source starts
-PITCH_MIN_HZ = 40.0          # [model] floor of the pitch the source will follow
-PITCH_MAX_HZ = 400.0         # [model] ceiling of the same
+#: [box] and [model] The voiced source outside the range of speech.
+#:
+#: The chip's voiced source is a counter stepped by the pitch once a sample and
+#: read as it stands: a sawtooth with nothing done against aliasing.  A real
+#: BraiLab PC whose pitch was walked from 0 to 5000 Hz and back (Enter pressed
+#: again and again while it spoke, 13.4 Hz a press) shows it: every harmonic folds
+#: at 0 and at half the sample rate, and under the rising tone a voice falls to a
+#: creak and climbs again each time a folded harmonic passes zero.  A plain
+#: sawtooth sampled at 10 kHz with the same pitch walk gives the same spectrogram
+#: line for line.  The pitch itself has no floor and no ceiling: the chip keeps a
+#: 16-bit count of its sample rate, so past 5000 Hz the tone comes back down, a
+#: step of 10000 Hz is no step at all, and a negative pitch sounds like the same
+#: positive one.  All of that falls out of reading the counter as it stands.
+#:
+#: Between these two pitches the source is the band-limited sawtooth this voice
+#: was tuned with, sample for sample what it was before 2.3.0 [model].  Below
+#: half the first and above twice the second it is the chip's plain counter [box];
+#: in between the two are mixed in a straight line.  Speech stays inside: only a
+#: pitch that has walked far off, or a start pitch set very high, leaves it.
+CLEAN_FROM_HZ = 40.0
+CLEAN_TO_HZ = 400.0
 HARMONIC_FADE = 0.16         # [model] top harmonics fade over this fraction of the band
 
 #: [device] Output high-pass, in hertz, and how many one-pole stages of it.
@@ -239,7 +258,9 @@ class Core:
         self.hy = [0.0] * HIGHPASS_POLES
 
     def _voiced(self, p):
-        """The band-limited sawtooth for pitch track `p`, tilted.
+        """The voiced source for pitch track `p` (hertz, not negative), tilted:
+        the band-limited sawtooth inside the range of speech, the chip's plain
+        counter outside it (see CLEAN_FROM_HZ).
 
         One harmonic at a time, accumulated in order.  The same sum as a
         (samples x harmonics) matrix reduced along the harmonics -- but that
@@ -252,14 +273,28 @@ class Core:
         phase = np.cumsum(np.concatenate(([self.phase], p / RATE)))[1:]
         self.phase = float(phase[-1])
         phase = phase - np.floor(phase)
-        edge = RATE * 0.5
-        kmax = max(1, int(edge / max(float(p.min()), 1e-6)))
-        vsrc = np.zeros(len(p))
-        for k in range(1, kmax + 1):
-            w = np.clip((edge - p * k) / (edge * HARMONIC_FADE), 0.0, 1.0)
-            w = w * w * (3.0 - 2.0 * w)
-            vsrc += np.sin(2.0 * np.pi * phase * k) * (w / k)
-        vsrc *= -(2.0 / np.pi)
+        plain = 2.0 * phase - 1.0                # the chip's counter, read as it stands
+        half, top = CLEAN_FROM_HZ * 0.5, CLEAN_TO_HZ * 2.0
+        mix = np.where(p <= half, 0.0,           # how much of the band-limited sawtooth
+              np.where(p < CLEAN_FROM_HZ, (p - half) / half,
+              np.where(p <= CLEAN_TO_HZ, 1.0,
+              np.where(p < top, (top - p) / CLEAN_TO_HZ, 0.0))))
+        clean = mix > 0.0
+        if clean.any():
+            edge = RATE * 0.5
+            # the harmonic count is set by the lowest pitch that uses the sum at all:
+            # a pitch near zero would ask for millions, and its sum is thrown away
+            kmax = max(1, int(edge / float(p[clean].min())))
+            pc = np.where(clean, p, edge)        # past the edge: every weight an exact zero
+            vsrc = np.zeros(len(p))
+            for k in range(1, kmax + 1):
+                w = np.clip((edge - pc * k) / (edge * HARMONIC_FADE), 0.0, 1.0)
+                w = w * w * (3.0 - 2.0 * w)
+                vsrc += np.sin(2.0 * np.pi * phase * k) * (w / k)
+            vsrc *= -(2.0 / np.pi)
+            vsrc = mix * vsrc + (1.0 - mix) * plain
+        else:
+            vsrc = plain
         if self.tilt is not None:                # one-pole glottal tilt
             ta = self.tilt
             c0 = 1.0 - ta
@@ -303,7 +338,7 @@ class Core:
         if n == 0:
             return np.zeros(0)
         nf = self.nf
-        p = np.clip(pitch, PITCH_MIN_HZ, PITCH_MAX_HZ)
+        p = np.abs(np.asarray(pitch, dtype=np.float64))    # a negative pitch sounds as the positive one
         vsrc = self._voiced(p)
         noise = self._noise(n)
         if noise_amp is None:

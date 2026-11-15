@@ -56,6 +56,34 @@ static double sawtooth(double phase, double p, double fade_width)
     return sum * -(2.0 / PI);
 }
 
+/* The voiced source at pitch p (not negative), before the tilt.  The chip's own is a
+ * counter stepped by the pitch once a sample and read as it stands: a sawtooth with
+ * nothing done against aliasing, which is what a real one sounds like once its pitch
+ * has walked far from speech (pcf8200_core.py, CLEAN_FROM_HZ, has the measurement).
+ * Between `from` and `to` this is the band-limited sawtooth the voice was tuned with;
+ * below half of `from` and above twice `to` it is the plain counter; in between the
+ * two are mixed in a straight line.  A pitch of zero never reaches the harmonic sum,
+ * which would not end. */
+static double voiced_source(double wrapped, double p, double fade_width, double from, double to)
+{
+    const double plain = 2.0 * wrapped - 1.0;
+    const double half = from * 0.5, top = to * 2.0;
+    double mix;
+    if (p <= half)
+        mix = 0.0;
+    else if (p < from)
+        mix = (p - half) / half;
+    else if (p <= to)
+        mix = 1.0;
+    else if (p < top)
+        mix = (top - p) / to;
+    else
+        mix = 0.0;
+    if (mix > 0.0)
+        return mix * sawtooth(wrapped, p, fade_width) + (1.0 - mix) * plain;
+    return plain;
+}
+
 static double next_noise(pcf8200_core *c, double scale, double gain)
 {
     uint32_t x = c->noise;
@@ -89,17 +117,13 @@ void pcf8200_run(pcf8200_core *c, const double *voice_amp, const double *noise_a
     int s, i;
 
     for (s = 0; s < n; s++) {
-        double p = pitch[s], src, noise, wrapped, v;
-
-        if (p < q->pitch_min_hz)
-            p = q->pitch_min_hz;
-        if (p > q->pitch_max_hz)
-            p = q->pitch_max_hz;
+        /* no floor and no ceiling; a negative pitch sounds as the positive one */
+        double p = fabs(pitch[s]), src, noise, wrapped, v;
 
         /* both sources run on every sample, whichever one is heard */
         c->phase += p / rate;
         wrapped = c->phase - floor(c->phase);
-        src = sawtooth(wrapped, p, fade_width);
+        src = voiced_source(wrapped, p, fade_width, q->clean_from_hz, q->clean_to_hz);
         if (q->source_tilt_hz != 0.0) {
             c->ty = (1.0 - c->tilt) * src + c->tilt * c->ty;
             src = c->ty;
@@ -159,8 +183,6 @@ void pcf8200_tracker_init(pcf8200_tracker *t, const pcf8200_params *p, int femal
 {
     memset(t, 0, sizeof *t);
     t->rate = p->rate;
-    t->pitch_min_hz = p->pitch_min_hz;
-    t->pitch_max_hz = p->pitch_max_hz;
     t->female = female;
     t->nf = female ? 4 : 5;
     t->honour_fs = honour_fs;
@@ -246,11 +268,8 @@ int pcf8200_tracker_frame(pcf8200_tracker *t, const uint8_t *f, double *voice_am
     if (t->flat_pitch) {
         target = t->anchor;
     } else {
+        /* the chip's pitch register has no floor and no ceiling */
         target = t->pitch + PCF8200_PI[pi] * PCF8200_FD_MULT[field_fd(f)];
-        if (target < t->pitch_min_hz)
-            target = t->pitch_min_hz;
-        if (target > t->pitch_max_hz)
-            target = t->pitch_max_hz;
     }
 
     pv = t->prev_noise ? 0.0 : t->prev_amp;

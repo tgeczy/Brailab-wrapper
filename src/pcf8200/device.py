@@ -142,7 +142,7 @@ class PCF8200:
             if prev is None:
                 prev = dict(cur)
             n = max(1, int(round(std * P.FD_MULT[d['FD']])))
-            pt = min(max(pitch + cur['pi'] * P.FD_MULT[d['FD']], 40.0), 400.0)
+            pt = pitch + cur['pi'] * P.FD_MULT[d['FD']]     # no floor, no ceiling: see core.CLEAN_FROM_HZ
             frac = (np.arange(n) + 0.5) / n
             a_amp.append(prev['ampl'] + (cur['ampl'] - prev['ampl']) * frac)
             a_p.append(pitch + (pt - pitch) * frac)

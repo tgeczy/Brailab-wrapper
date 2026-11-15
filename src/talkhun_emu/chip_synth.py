@@ -112,9 +112,9 @@ def render_chip(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,
         if flat_pitch:
             pt = anchor                                    # intonation off: pin F0
         elif pitch_mode == 'cumulative':
-            pt = min(max(pitch + cur['pi'] * FD_MULT[d['FD']], 40.0), 400.0)
+            pt = pitch + cur['pi'] * FD_MULT[d['FD']]       # the chip's register has no floor or ceiling
         else:
-            pt = min(max(anchor + cur['pi'], 40.0), 400.0)
+            pt = anchor + cur['pi']
 
         block = STEP if staircase else max(1, smooth_block)  # continuous-interp granularity
         pos = 0
@@ -256,9 +256,9 @@ def _render_prep(seq, ampl_compress=1.0, time_scale=1.0, real=None, pitch_byte=4
         if flat_pitch:
             pt = anchor
         elif pitch_mode == 'cumulative':
-            pt = min(max(pitch + cur['pi'] * FD_MULT[d['FD']], 40.0), 400.0)
+            pt = pitch + cur['pi'] * FD_MULT[d['FD']]       # the chip's register has no floor or ceiling
         else:
-            pt = min(max(anchor + cur['pi'], 40.0), 400.0)
+            pt = anchor + cur['pi']
         frac = (np.arange(n) + 0.5) / n
         va, na = core.source_amps(prev['ampl'], prev['noise'], cur['ampl'], cur['noise'], frac)
         a_amp.append(va)
