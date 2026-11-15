@@ -2290,14 +2290,13 @@ int main(int argc, char **argv)
         if (box_port == 0xFFFF) box_port = *bda_lpt1 ? *bda_lpt1 : 0x378;
         _disable(); outp(0x43, 0x34); outp(0x40, 0); outp(0x40, 0); _enable();     /* timer 0 in mode 2, still 18.2 Hz: a clock for the log */
         /* The port is NOT touched here: nothing of BRAISPK's reaches the box before TALKHUN's
-         * first byte.  0.59 set both lines to rest at this point and read the status.  What is
-         * known from a real BraiLab PC: after 0.59's box mode had been loaded, even when it was
-         * unloaded again and the unpatched TALKHUN started, the box ended every piece of speech
-         * with a STOP, paused between "c" and the backslash and never walked its pitch; started
-         * without it, the box behaves as its users have always known it.  What is NOT known is
-         * which of 0.59's actions does that: the same two writes typed by hand in DEBUG did not
-         * (the commit that introduced this said they did; that was written too soon).  /4 is box
-         * mode with the early write, to compare. */
+         * first byte.  0.59 set both lines to rest at this point and read the status; /4 still
+         * does, to compare.  That write was suspected of changing how a real BraiLab PC behaves
+         * (with BRAISPK loaded the unpatched TALKHUN paused between "c" and the backslash and
+         * Enter held down no longer walked the pitch).  It does not: the cause is the DOS 7
+         * console flag that BRAISPK sets when it goes resident (see dos_con_flag, and /T).
+         * Shown on the machine: with the walk audible, CON10 alone, which sets that flag and
+         * does nothing else, ends it at once.  The box has no two states. */
         if (box_prewrite) { outp(box_port, 3); outp(box_port + 2, 1); }
         _dos_setvect(API_INT, isr61);
         lg("3 INT 61h hooked, box mode");
