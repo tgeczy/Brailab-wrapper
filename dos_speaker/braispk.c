@@ -245,6 +245,7 @@ static unsigned wlog_count;                     /* the log holds the FIRST WLOG_
  * lines.  Rides on the card mode's plumbing (no timer, no sound device). */
 static unsigned box_port;
 static unsigned char box_st_last = 0xFF;
+static unsigned char box_prewrite;              /* /4: box mode with the early port write of 0.59 */
 
 /* PIT channel 0 (put in mode 2 at install in box mode) with the BIOS tick count: 0.838 us a unit */
 static unsigned long now_pit(void)
@@ -2121,6 +2122,9 @@ int main(int argc, char **argv)
             case '9': stop_tail = 0; break;     /* the handshake as before 0.54; every letter is taken */
             case '1': return wire_dump(0);
             case '3': return wire_dump(1);
+            case '4': clock_mode = CLOCK_CARD; box_prewrite = 1;   /* box mode as 0.59 had it: the port set to rest first */
+                      box_port = argv[i][2] ? (unsigned)strtoul(argv[i] + 2, 0, 16) : 0xFFFF;
+                      break;
             case '2': clock_mode = CLOCK_CARD;         /* the box: pass everything on to a real BraiLab PC */
                       box_port = argv[i][2] ? (unsigned)strtoul(argv[i] + 2, 0, 16) : 0xFFFF;
                       break;
@@ -2184,7 +2188,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.59: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.60: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -2285,7 +2289,13 @@ int main(int argc, char **argv)
     if (box_port) {
         if (box_port == 0xFFFF) box_port = *bda_lpt1 ? *bda_lpt1 : 0x378;
         _disable(); outp(0x43, 0x34); outp(0x40, 0); outp(0x40, 0); _enable();     /* timer 0 in mode 2, still 18.2 Hz: a clock for the log */
-        outp(box_port, 3); outp(box_port + 2, 1);   /* both lines at rest, as TALKHUN leaves them */
+        /* The port is NOT touched here.  0.59 set both lines to rest at this point, and that one
+         * early write changed the box for the whole session: with it (even after BRAISPK was
+         * unloaded again, and with the unpatched TALKHUN) a real BraiLab PC ends every piece of
+         * speech with a STOP, pauses between "c" and the backslash, and never walks its pitch;
+         * without it, TALKHUN's own first transaction is the first thing the box sees, and it
+         * behaves as its users have always known it.  /4 does the early write on purpose. */
+        if (box_prewrite) { outp(box_port, 3); outp(box_port + 2, 1); }
         _dos_setvect(API_INT, isr61);
         lg("3 INT 61h hooked, box mode");
         beeps(1);
