@@ -74,7 +74,8 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   Arató András egy Intel SDK-85 készletet kötött szavas, angolul beszélő rendszerré alakított, hogy
   vakok is használhassák. Ezt braille-klaviatúrával és MEA8000-rel egészíti ki, és Kiss Gábor
   segítségével egy második, Commodore 64-re épülő MEA8000-es fejlesztőrendszert is készít, a magyar
-  formánsparaméterek kialakítására [7]. A Commodore-os rendszerről külön cikk szól [9].
+  formánsparaméterek kialakítására [7]. A Commodore-os rendszerről külön cikk szól [9]. A kötött
+  szavas készletben egy 144 szavas Digitalker szintetizátor volt [15].
 - **1984, a MAME keltezése szerint: „Brailab 4”** (emulátor). A MAME Lukács József és Endre HomeLab
   gépeit emuláló meghajtójában szerepel egy Brailab 4-nek nevezett, 1984-re keltezett gép, amelyben a
   MEA8000 az F8h és F9h porton ül, 3,84 MHz-es órajellel [6]. A név és az évszám a MAME-é. Arató saját
@@ -87,7 +88,9 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   változatban 64 kilobájt RAM és öt darab 4 kilobájtos EPROM van, és a BASIC-je, az assemblere és a
   monitora is beszél [7]. A MEA8000 teljes magyar hangadatbázisa 4 kilobájt alatt maradt [7]. Az
   intézet saját történeti oldala ugyanezt az évet adja meg, és azt írja, hogy ez volt az első eszköz,
-  amellyel a magyar vakok megismerkedhettek a számítástechnikával [22].
+  amellyel a magyar vakok megismerkedhettek a számítástechnikával [22]. A fejlesztők 1994-es
+  áttekintése szerint 1985 nyarán készült el, oktatási célra, és 48 kilobájt maradt szabadon a
+  felhasználó programjainak [15].
 - **1985. szeptember 18.: a szabadalmi bejelentés** (közlemény). Az értekezés hivatkozik egy aznap
   Budapesten benyújtott szabadalmi bejelentésre: eljárás és berendezés hang szintetizálására,
   előnyösen „beszéd és/vagy ének” szótár nélküli, a vezérléssel azonos idejű előállítására [7].
@@ -112,7 +115,8 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   hardvert és a CP/M-kompatibilis alapszoftvert Lukács József és Endre tervezte. A Basichez hasonlóan
   Z80 és MEA8000 van benne. Beszélő szövegszerkesztőt, terminálkezelőt és adatbázis-kezelőt kap, és
   braille fordító- és nyomtatórendszert; az értekezés szerint ez a gép már valós munkarehabilitációs
-  elvárásoknak is megfelel [7].
+  elvárásoknak is megfelel [7]. Az 1994-es áttekintés szerint 1987 végére készült el, és német
+  nyelvű text-to-speech rendszert is kapott [15].
 - **95 gép** (közlemény). Kiss, Arató, Lukács, Sulyán és Vaspöri abban az évben megjelent cikke
   bemutatja a „Braille-Lab”-ot és a „Braille-Lab+”-t, közli, hogy a vakok országos szövetsége
   jóváhagyta és átvette a gépet, és meg is számolja: eddig 95 darabot helyeztek üzembe [8]. A hangot
@@ -123,7 +127,10 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   beszédtechnológiai konferencián mutatja be [13]. A Commodore 64 párhuzamos portjára csatlakoztatva
   Microvox-64 néven került forgalomba, a sorozatgyártást a Magamicro szövetkezet végezte; évszámot a
   múzeum ehhez nem ad. Azt viszont hozzáteszi, hogy a kereskedelmi változat már a PCF8200-at
-  használta [14c]. Ez az egyik a két magyar vonal közül, amely az egyik chipről átlép a másikra.
+  használta [14c]. Ez az egyik a két magyar vonal közül, amely az egyik chipről átlép a másikra. A
+  BraiLab fejlesztői Mikro-vox néven emlékeznek rá, amelynek Basic-vox szoftvere a vakoknak segített
+  megtanulni a BASIC-et, és hozzáteszik: ezekből az eszközökből csak ötöt vásároltak meg [15]. A
+  múzeum szerint sokan vásárolták [14c]; lehet, hogy a két forrás más vevőket számol.
 - **Elindul a Multivox család** (múzeum). A múzeum a családot 1987-től 2002-ig keltezi, a mögötte álló
   közös munkát pedig 1983-tól: a Műszaki Egyetem adta a hardvert és a szoftvert, az MTA Fonetikai
   Laboratóriuma a fonetikai adatokat, a szabályokat és a nyelvi adaptációkat [14d].
@@ -176,7 +183,9 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   német vállalat veszi meg [14e].
 - **A legrégebbi BraiLab PC szoftver, amelyünk van** (program). Az Internet Archive-on a szerzők
   engedélyével közzétett BraiLab PC gyűjtemény 1991 és 2003 közötti változatokat őriz. A legkorábbi
-  1991-es [20]. Az intézet történeti oldala a BraiLab PC-t szintén 1991-hez írja [22].
+  1991-es [20]. Az intézet történeti oldala a BraiLab PC-t szintén 1991-hez írja [22], és a fejlesztők
+  1994-es áttekintése is: 1991-ben készítették el a BraiLab PC-t, egy PCF-8200 szintetizátor chipre
+  épülő külső beszédkimeneti adaptert [15].
 - **A PCF8200 kommunikációs segédeszközökben** (közlemény). Az Eurospeech 1991-en R. W. King olyan
   eszközöket ír le, amelyekkel olcsó szöveg-beszéd átalakító építhető kommunikációs segédeszközökbe,
   többféle akcentussal, férfi- és női hanggal: egy szerkesztőt egy fonémakészlet formáns- és
@@ -218,9 +227,17 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   elsősorban a BRAILAB-PC beszélő adaptert támogatja, „amelyet a magyar vakok széles körben
   használnak” (saját fordítás) [19]. Az intézet saját történeti oldala később azt írta, hogy az
   MS-DOS éveiben szinte minden magyar vak a BraiLab PC segítségével használta a számítógépét [22].
-- **Tíz év, visszatekintve** (közlemény). Arató András és Vaspöri Teréz, a BraiLab beszélő
-  számítógépcsalád fejlesztői, áttekintik a magyarországi vakok számítógép-használatának egy
-  évtizedét [15].
+- **Tíz év, visszatekintve** (közlemény). 1994 júliusában Vaspöri Teréz és Arató András, a BraiLab
+  fejlesztői, áttekintik a magyarországi vakok számítógép-használatának egy évtizedét. A számaik:
+  1993 végéig négyszáz BraiLab Basic, hetven BraiLab Plus és több mint kétszáz BraiLab PC adapter
+  kelt el. Mintegy hatszáz tanulót számolnak a speciális iskolákban, 125-öt a középiskolákban és
+  ötvenet a felsőoktatásban, és azt írják, hogy mindannyian beszélő számítógépet használnak [15].
+- **A többi hang, ahogy a BraiLab készítői hallották** (közlemény). Ugyanez az áttekintés azt írja,
+  hogy a Mikro-vox fejlesztői általános célú magyar text-to-speech programot készítettek a
+  PCF8200-ra, amely mintegy 150 kilobájt rezidens memóriát igényel, képernyőolvasóval nem
+  foglalkoztak, később pedig további nyelveket fejlesztettek hozzá. Megemlíti Király József PC
+  Talkerét is, amely Sound Blaster hardveren szólt: a beszéde tisztább volt a PCF8200-énál, többe
+  került, és sokkal több rezidens memóriát igényelt [15].
 - **Ciber 232P** (későbbi beszámoló). Ugyanaz a spanyol történet egy 1994-re keltezett Ciber 232P-t
   mutat a CIBERVEU-t követő „javított változatok” között [18]. Arról, hogy mi van benne, semmit sem
   találtunk nyomtatásban.
@@ -291,11 +308,13 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
 - **Mikortól lehetett megvenni a MEA8000-et.** A Philips 1982 februárjában újonnan kifejlesztettnek
   nevezte [24]; a múzeum szerint 1983-ban került piacra [14b].
 - **BraiLab Basic: 1984 vagy 1985.** A MAME 1984-et mond [6], Arató 1985-öt [7].
-- **Hány BraiLab készült.** 1987-ig 95 darabot helyeztek üzembe [8]. Az intézet történeti oldala
-  szerint a BraiLab Basicből az évek során 400 darabot gyártottak és adtak el [22]. A múzeum az első
-  gépekből több százról, a 90-es évekre pedig több ezer, felhasználóknál lévő BraiLab PC-ről ír
-  [14b]. Az 1994-es áttekintés [15] saját számokat közöl; ennek az oldalnak az írásakor nem tudtuk
-  újraolvasni, ezért itt egyet sem idézünk belőle.
+- **Hány BraiLab készült.** 1987-ig 95 darabot helyeztek üzembe [8]. 1993 végéig 400 BraiLab Basic,
+  70 BraiLab Plus és több mint 200 BraiLab PC adapter kelt el [15]; az intézet történeti oldala
+  megismétli a 400-at [22]. A múzeum az első gépekből több százról, a 90-es évekre pedig több ezer,
+  felhasználóknál lévő BraiLab PC-ről ír [14b].
+- **BraiLab PC: 1990 vagy 1991.** Az értekezés szerint a rendszer 1990-ben készült el [7]. Az 1994-es
+  áttekintés és az intézet oldala 1991-et mond [15][22], és a legrégebbi változat, amelyünk van,
+  1991-es [20].
 - **A PC-ROBOT első éve.** A múzeum szerint a NIKOL 1994-től gyártotta [14f]. Az Internet Archive-on
   lévő leírás, amelyet ez a projekt írt, 1990-től 1995-ig mondja [21]; a korábbi évszámra nincs
   keltezett dokumentumunk. Az általunk látott kártyán lévő chip 1993 tavaszán készült.
@@ -347,8 +366,8 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
     - e. MULTIVOX: <https://www.magyarbeszed.hu/tts-multivox/multivox_01/>
     - f. PC-robot: <https://www.magyarbeszed.hu/tts-multivox/pcrobot_02/>
     - g. MULTIVOX 4: <https://www.magyarbeszed.hu/tts-multivox/multivox_03/>
-15. Arató András, Vaspöri Teréz, „Ten Years of Computer Use by Visually Impaired People in Hungary”,
-    *Information Technology and Disabilities*, 1. évf. 3. szám (1994). A folyóirat saját címe ma a
+15. Vaspöri Teréz, Arató András, „Ten Years of Computer Use by Visually Impaired People in Hungary”,
+    *Information Technology and Disabilities*, 1. évf. 3. szám, 1994. július. A folyóirat saját címe ma a
     kezdőlapjára vezet; archivált példány:
     <https://web.archive.org/web/20241004235239/https://easi.cc/itd/volume1/number3/arato.html>
 16. `stargame.cpp` és `bus/thomson/speech.cpp`, MAME projekt.

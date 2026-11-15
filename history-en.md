@@ -69,7 +69,8 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   Physics (KFKI), Arató András had made an Intel SDK-85 kit talk in fixed English words so that blind
   people could use it. He adds a braille keyboard and a MEA8000 to it, and builds a second
   MEA8000 development system on a Commodore 64, with Kiss Gábor, to work out the Hungarian formant
-  data [7]. The Commodore system is described in a paper of its own [9].
+  data [7]. The Commodore system is described in a paper of its own [9]. The fixed-word kit used a
+  Digitalker synthesizer with 144 words [15].
 - **1984, by MAME's dating: "Brailab 4"** (emulator). MAME's driver for the HomeLab computers of Lukács
   József and Endre includes a machine it calls Brailab 4, dated 1984, with a MEA8000 at ports F8h and
   F9h clocked at 3.84 MHz [6]. The name and the year are MAME's. Arató's own account gives 1985 (see
@@ -82,7 +83,8 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   version has 64 KB of RAM and five 4 KB EPROMs, and its BASIC, assembler and monitor all speak [7].
   The whole Hungarian sound database for the MEA8000 stayed under 4 KB [7]. The institute's own
   history page gives the same year, and calls it the first device that let blind Hungarians get to
-  know computers [22].
+  know computers [22]. The developers' 1994 survey says it "was built in the summer of 1985", for
+  teaching, with 48 KB left free for the user's programs [15].
 - **18 September 1985: the patent application** (paper). The dissertation cites a patent application
   filed in Budapest on that day, for a method and device that synthesize speech "and/or singing" (our
   translation) with no dictionary, in real time [7].
@@ -106,7 +108,8 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   hardware and the CP/M-compatible system are by Lukács József and Endre. Like the Basic it has a Z80
   and a MEA8000. It adds a talking word processor, terminal program and database, and a braille
   translation and printing system; the dissertation says this machine already meets the demands of
-  real work [7].
+  real work [7]. The 1994 survey has it ready "by the end of 1987", and supplied with a German
+  text-to-speech system as well [15].
 - **95 machines** (paper). A paper of that year by Kiss, Arató, Lukács, Sulyán and Vaspöri introduces
   "Braille-Lab" and "Braille-Lab+", states that the Hungarian federation of the blind has approved and
   adopted the machine, and counts: "95 sets have been installed so far" [8]. It also describes the
@@ -116,7 +119,10 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   Conference on Speech Technology in Edinburgh [13]. Attached to the Commodore 64's parallel port it
   was sold as the Microvox-64, made in series by the Magamicro cooperative; the museum gives no year
   for that. It adds that the commercial version already used the PCF8200 [14c]. That is one of the
-  two Hungarian lines crossing from one chip to the other.
+  two Hungarian lines crossing from one chip to the other. BraiLab's developers remember it as the
+  Mikro-vox, whose Basic-vox software helped blind people learn BASIC, and add: "Only five of these
+  devices were purchased" [15]. The museum says many people bought it [14c]; the two may be counting
+  different buyers.
 - **The Multivox family begins** (museum). The museum dates the family 1987 to 2002, and the joint
   work behind it, between the Technical University (hardware and software) and the Academy's Phonetics
   Laboratory (phonetic data, rules, languages), from 1983 [14d].
@@ -169,7 +175,9 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   German-language system [14e].
 - **The oldest BraiLab PC software we have** (program). The BraiLab PC collection on the Internet
   Archive, published with its authors' permission, holds versions from 1991 to 2003. Its earliest
-  build is from 1991 [20]. The institute's history page also puts the BraiLab PC at 1991 [22].
+  build is from 1991 [20]. The institute's history page also puts the BraiLab PC at 1991 [22], and
+  so does the developers' 1994 survey: "in 1991 we created BraiLab PC, an external speech output
+  adapter built with PCF-8200 synthesizer chip" [15].
 - **The PCF8200 in communication aids** (paper). At Eurospeech 1991, R. W. King describes tools for
   building low-cost text-to-speech for communication aids, with several accents and male and female
   voices: an editor for a phoneme set's formant and excitation data, written for the "Philips
@@ -208,8 +216,16 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   after 1994, "primarily supports the BRAILAB-PC speaking adaptor which is widely used by the
   Hungarian blinds" [19]. The institute's own history page later said that in the MS-DOS years
   nearly all blind Hungarians used their computers through BraiLab PC [22].
-- **Ten years, looked back on** (paper). Arató and Vaspöri Teréz, the developers of BraiLab, survey a
-  decade of computer use by blind people in Hungary [15].
+- **Ten years, looked back on** (paper). In July 1994 Vaspöri Teréz and Arató András, the developers
+  of BraiLab, survey a decade of computer use by blind people in Hungary. Their count: "four hundred
+  BraiLab Basic, seventy BraiLab Plus and more than two hundred BraiLab PC adapters sold by the end
+  of 1993". They count about six hundred pupils in the special schools, 125 in secondary schools and
+  fifty in higher education, and write: "All of these students use talking computers" [15].
+- **The other voices, as BraiLab's makers heard them** (paper). The same survey says the Mikro-vox
+  developers wrote a general Hungarian text-to-speech program for the PCF8200 that needs about 150 KB
+  of resident memory, did not deal with screen readers, and later gained more languages. It also
+  mentions Király József's PC Talker, on Sound Blaster hardware, whose speech "was purer than
+  PCF8200's, cost more and required much more resident memory" [15].
 - **Ciber 232P** (later account). The same Spanish history shows a Ciber 232P dated 1994, among the
   "improved versions" that followed CIBERVEU [18]. We have found nothing in print about what is
   inside it.
@@ -275,10 +291,12 @@ and its place on this page is not a plan to include it.
 - **When the MEA8000 could first be bought.** Philips called it newly developed in February 1982
   [24]; the museum says it reached the market in 1983 [14b].
 - **BraiLab Basic: 1984 or 1985.** MAME says 1984 [6]; Arató says 1985 [7].
-- **How many BraiLabs.** 95 installed by 1987 [8]. The institute's history page says 400 BraiLab
-  Basics "were manufactured and sold over the years" [22]. The museum speaks of several hundred of the
-  first machines and of several thousand BraiLab PCs with users by the 1990s [14b]. The 1994 survey [15]
-  gives counts of its own; we could not re-read it while writing this, so none are quoted here.
+- **How many BraiLabs.** 95 installed by 1987 [8]. By the end of 1993: 400 BraiLab Basics, 70
+  BraiLab Plus machines and more than 200 BraiLab PC adapters sold [15]; the institute's history page
+  repeats the 400 [22]. The museum speaks of several hundred of the first machines and of several
+  thousand BraiLab PCs with users by the 1990s [14b].
+- **BraiLab PC: 1990 or 1991.** The dissertation says the system was finished in 1990 [7]. The 1994
+  survey and the institute's page say 1991 [15][22], and the oldest build we have is from 1991 [20].
 - **PC-ROBOT's first year.** The museum says NIKOL made it from 1994 [14f]. The description on its
   Internet Archive page, which this project wrote, says 1990 to 1995 [21]; we have no dated document
   for the earlier year. The chip on the card we have seen was made in the spring of 1993.
@@ -329,8 +347,8 @@ and its place on this page is not a plan to include it.
     - e. MULTIVOX: <https://www.magyarbeszed.hu/tts-multivox/multivox_01/>
     - f. PC-robot: <https://www.magyarbeszed.hu/tts-multivox/pcrobot_02/>
     - g. MULTIVOX 4: <https://www.magyarbeszed.hu/tts-multivox/multivox_03/>
-15. Arató András, Vaspöri Teréz, "Ten Years of Computer Use by Visually Impaired People in Hungary",
-    *Information Technology and Disabilities*, vol. 1, no. 3 (1994). The journal's own address now
+15. Vaspöri Teréz, Arató András, "Ten Years of Computer Use by Visually Impaired People in Hungary",
+    *Information Technology and Disabilities*, vol. 1, no. 3, July 1994. The journal's own address now
     leads to its front page; an archived copy:
     <https://web.archive.org/web/20241004235239/https://easi.cc/itd/volume1/number3/arato.html>
 16. `stargame.cpp` and `bus/thomson/speech.cpp`, the MAME project.
