@@ -36,6 +36,11 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 - **What both leave to the host.** Neither chip knows any language. Each product below had to bring
   its own table of sounds and its own rules for joining them, and that is why two machines with the
   same chip can sound so different.
+- **Where they came from.** Sieb Nooteboom's history of speech synthesis at the Institute for
+  Perception Research (IPO) in Eindhoven says the MEA8000 "was developed in the early eighties by
+  Philips ELCOMA", the components division, as an integrated version of an earlier "voice response
+  unit", and that the PCF8200 followed as its successor. The chip's own Dutch demonstration there
+  calls it "the talking chip, developed by IPO, Nat. lab. and ELCOMA" (our translation) [30].
 
 ## Before the chips
 
@@ -88,6 +93,13 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 - **18 September 1985: the patent application** (paper). The dissertation cites a patent application
   filed in Budapest on that day, for a method and device that synthesize speech "and/or singing" (our
   translation) with no dictionary, in real time [7].
+- **A development system on a personal computer** (maker). Philips' journal describes a system for
+  the IBM PC and the HP 9816S that analyses recorded speech, shows its parameters as a picture, and
+  codes it, around a "speech adapter box" that "uses an MEA8000 formant synthesizer" and "can be
+  upgraded as new synthesizers become available" [31]. A year later it is the OM8210 for the PCF8200
+  [1]. The article opens with what such chips are for: "For the visually handicapped, telephones
+  that speak the numbers dialled and talking typewriters and ovens greatly assist day-to-day life",
+  and looks ahead to speech in a navigation system that reads its maps from a compact disc [31].
 
 ## 1986
 
@@ -168,6 +180,12 @@ Where two sources disagree, both are given. Everything here can be checked in a 
   PCF8200 free programmable formant synthesizer chip" [26].
 - **1990 to 1991: MULTIVOX learns Italian** (paper). The Italian version is derived from the Esperanto
   one, whose sounds and word stress are close to it [11].
+- **An American primer** (paper). At the RESNA conference in Washington (15 to 20 June 1990), Craig
+  Gruber, Robert Cecil and Jeri Lynn Hoffman of Innocomp, of Solon, Ohio, present "The PCF8200
+  Formant Speech Synthesizer: A Primer" to people who build communication aids. Their conclusion:
+  "The PCF8200 with its low power consumption, high degree of speech data compression and low cost
+  will prove to be a superior solution to the portable speech synthesis problem." They cite Philips'
+  own application report for the chip, by H. W. Zelle and M. ten Have (report EDP8807) [32].
 
 ## 1991
 
@@ -255,7 +273,8 @@ Where two sources disagree, both are given. Everything here can be checked in a 
 
 ## The MEA8000 elsewhere
 
-The MEA8000 had a second life in France, where home computers got speech add-ons built on it.
+Outside Hungary the MEA8000 lived mostly in France, where home computers got speech add-ons built
+on it, and at home in the Netherlands.
 
 - **TMPI** (Techni-musique & parole informatique) "provided speech extensions for several 8-bit
   computers (Thomson, Amstrad, Oric)", and the chip "was quite popular in France because of its
@@ -264,6 +283,13 @@ The MEA8000 had a second life in France, where home computers got speech add-ons
   MEA8000 [16], and CPCWiki keeps a recording of the chip made on a Thomson TO8 [4].
 - **A book.** *Parole et micros: synthèse vocale* (1985), in French, on the chip and its use [4].
 - **Stargame's pinball machines:** see 1986.
+- **The Netherlands: a voice for people who cannot speak** (later account). The Tiepstem ("typing
+  voice"), described by Deliege in 1989, was a keyboard-to-speech system for people who had lost
+  their speech; its diphones were made at IPO and re-coded for the MEA8000. It could also prepare
+  utterances for a smaller portable aid, the Pocketstem (Waterham, 1989) [30].
+- **France: a teaching system for blind and sighted children** (paper). At the same 1990 RESNA
+  conference, Burger, Beltrando, Liard and Sagot (INSERM, Paris) describe a board for IBM PC
+  compatibles on which "spoken fragments are produced ... from a Philips RTC MEA 8000" [32].
 
 ## The PCF8200 elsewhere
 
@@ -273,14 +299,19 @@ to the Multivox family, whose chips the museum names as the MEA8000 and then the
 own page does not say which chip is on the card [14f], but the card we have worked with holds a
 PCF8200 (see 1994). If you know of another product, please open an issue.
 
-Three more traces, all found through SpeechChips.com, Scott Savage's museum of speech chips [28],
+More traces. Several were found through SpeechChips.com, Scott Savage's museum of speech chips [28],
 whose reference lists also led us to the 1982 article and patent above [24][25]:
 
-- **Communication aids:** King's 1991 tools were written for the chip (see 1991) [27]. We do not know
-  which aids, if any, shipped with it.
+- **Communication aids:** King's 1991 tools were written for the chip (see 1991) [27], and so was
+  Innocomp's 1990 primer (see 1990) [32]. A maker of communication aids writing a primer on the chip
+  suggests its aids used it, but we have found no manual or board that says so.
 - **A car** (later account). SpeechChips.com lists the navigation unit of the BMW E38 as a machine
   that gave its spoken directions through a PCF8200 [28]. The page gives no year and no source. It
-  would fit the data sheet, whose list of uses begins with "automotive" [2].
+  would fit the data sheet, whose list of uses begins with "automotive" [2]. BMW's own training text
+  says its navigation systems "have been in use since the E38 in 1997" and that the system "is based
+  on the CARiN(tm) system developed by Philips Electronics" [34], and Philips' journal had imagined
+  speech in such a system in 1985 [31]. That makes a Philips speech chip in the unit likely. It does
+  not prove it.
 - **A 1988 chip.** The PCF8200P photographed there carries the code 8814, the 14th week of 1988 if
   it reads like other Philips date codes [28]. The marking is read from a small photograph.
 
@@ -304,7 +335,15 @@ and its place on this page is not a plan to include it.
 - **PC-ROBOT's first year.** The museum says NIKOL made it from 1994 [14f]. The description on its
   Internet Archive page, which this project wrote, says 1990 to 1995 [21]; we have no dated document
   for the earlier year. The chip on the card we have seen was made in the spring of 1993.
-- **When the PCF8200 stopped being made.**
+- **When the PCF8200 could first be bought.** The data sheet of July 1986 is marked "Development
+  data" [2]; Nooteboom writes that the MEA8000 got its successor "in 1988" [30]; the earliest date
+  code we have seen on a chip is from the spring of 1988 [28]. Announced in 1986 and sold in numbers
+  from 1988 would fit all three, but that is our guess.
+- **When the PCF8200 stopped being made.** Somewhere between 1993 and 2000. The chip on the PC-ROBOT
+  card was made in the spring of 1993 (see 1994). On 4 March 2000 Dale Grover wrote on Usenet: "Yes,
+  the PCF8200 is no longer available--add it to the long list of single-chip speech synthesizers no
+  longer with us", and that Philips had not answered when he asked, the year before, to make its
+  application report available [33].
 - **Ciber232's dates,** beyond the two above.
 
 ## Sources
@@ -389,3 +428,18 @@ and its place on this page is not a plan to include it.
     <https://speechchips.com/devices/bmw-navigation.html>
 29. *pctalker-nvda*: Király József's PC-TALKER as NVDA speech synthesizers, with its history in the
     README. <https://github.com/tgeczy/pctalker-nvda>
+30. Sieb Nooteboom, "A brief history of speech synthesis in the former Institute for Perception
+    Research (IPO), Eindhoven". <https://www.siebnooteboom.nl/index.php/history>
+31. M. ten Have, J. den Ouden, "Stand-alone speech development system using a personal computer",
+    *Electronic Components and Applications*, vol. 7, no. 1, 1985, pp. 2–6. Philips.
+    <https://www.worldradiohistory.com/Archive-Company-Publications/Philips-Technical-Review/Electronic-Compoinents/Electronic-Components-&-Apps-Vol-7-No-1.pdf>
+32. *RESNA '90: Proceedings of the 13th Annual Conference*, Washington, D.C., 15–20 June 1990 (ERIC
+    document ED 385 996): C. Gruber, R. Cecil, J. L. Hoffman, "The PCF8200 Formant Speech
+    Synthesizer: A Primer", pp. 335–336; D. Burger, E. Beltrando, C. Liard, J. Sagot, "A sound-based
+    computer system for teaching both blind and sighted children", from p. 135.
+    <https://files.eric.ed.gov/fulltext/ED385996.pdf>
+33. Dale Grover, in the thread "Speech Synthesizer module under development - help needed!",
+    comp.robotics.misc, 4 March 2000. <https://groups.google.com/g/comp.robotics.misc/c/Yai2gU_Ti74>
+34. BMW, "On Board Monitor and Navigation Systems: Overview" (service training text), as reproduced
+    at DiagnostData.
+    <https://diagnostdata.com/bmw/7-series/e38-1994-1998/remont/gauges-instrument-panels/on-board-monitor-and-navigation-systems-overview-e38-ee39-e46-e52-e65-e85/overview/>

@@ -38,6 +38,11 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 - **Amit mindkettő a gazdagépre hagy.** Egyik chip sem tud semmilyen nyelvet. Az alább felsorolt
   gépek mindegyikének magával kellett hoznia a saját hangtáblázatát és az összefűzés szabályait. Ezért
   szólhat két, azonos chipre épült gép ennyire másképp.
+- **Honnan származnak.** Sieb Nooteboom az eindhoveni Észleléskutató Intézet (IPO) beszédszintézisének
+  történetéről azt írja, hogy a MEA8000-et a nyolcvanas évek elején a Philips ELCOMA, az
+  alkatrészdivízió fejlesztette ki egy korábbi „voice response unit” integrált változataként, és
+  hogy a PCF8200 ennek az utódja lett. A chip ottani holland bemutatója így nevezi: „a beszélő
+  chip, amelyet az IPO, a Nat. lab. és az ELCOMA fejlesztett ki” (saját fordítás) [30].
 
 ## A chipek előtt
 
@@ -94,6 +99,14 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 - **1985. szeptember 18.: a szabadalmi bejelentés** (közlemény). Az értekezés hivatkozik egy aznap
   Budapesten benyújtott szabadalmi bejelentésre: eljárás és berendezés hang szintetizálására,
   előnyösen „beszéd és/vagy ének” szótár nélküli, a vezérléssel azonos idejű előállítására [7].
+- **Fejlesztőrendszer személyi számítógépen** (gyártó). A Philips folyóirata egy IBM PC-re és HP
+  9816S-re készült rendszert ír le, amely elemzi a felvett beszédet, képként mutatja a paramétereit,
+  és kódolja; a közepe egy „beszédadapter-doboz”, amely MEA8000 formáns szintetizátort használ, és
+  amely továbbfejleszthető, ahogy új szintetizátorok jelennek meg [31]. Egy évvel később ez a
+  PCF8200-hoz való OM8210 [1]. A cikk azzal kezdi, mire valók az ilyen chipek: a látássérülteknek a
+  tárcsázott számot kimondó telefon, a beszélő írógép és sütő nagy segítség a mindennapokban; és
+  előre tekint egy olyan navigációs rendszer beszédére, amely kompaktlemezről olvassa a térképeit
+  [31].
 
 ## 1986
 
@@ -176,6 +189,13 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
   szintetizátor chipen” (saját fordítás) [26].
 - **1990-től 1991-ig: a MULTIVOX megtanul olaszul** (közlemény). Az olasz változat az eszperantóból
   készül, mert annak hangkészlete és szóhangsúlya közel áll hozzá [11].
+- **Egy amerikai bevezető** (közlemény). A washingtoni RESNA-konferencián (1990. június 15–20.) Craig
+  Gruber, Robert Cecil és Jeri Lynn Hoffman, az ohiói Solonban működő Innocomp munkatársai „The
+  PCF8200 Formant Speech Synthesizer: A Primer” címmel mutatják be a chipet a kommunikációs
+  segédeszközök építőinek. A következtetésük: a PCF8200 az alacsony fogyasztásával, a beszédadatok
+  nagyfokú tömörítésével és az alacsony árával a hordozható beszédszintézis jobb megoldása lesz
+  (saját fordítás). Hivatkoznak a Philips saját alkalmazási jelentésére is, amelyet H. W. Zelle és
+  M. ten Have írt a chiphez (EDP8807 számú jelentés) [32].
 
 ## 1991
 
@@ -268,8 +288,8 @@ Ahol két forrás ellentmond egymásnak, mindkettő szerepel. Itt minden ellenő
 
 ## A MEA8000 máshol
 
-A MEA8000-nek volt egy második élete Franciaországban, ahol az otthoni számítógépek erre a chipre
-épülő beszédbővítőket kaptak.
+Magyarországon kívül a MEA8000 főleg Franciaországban élt, ahol az otthoni számítógépek erre a
+chipre épülő beszédbővítőket kaptak, és otthon, Hollandiában.
 
 - **A TMPI** (Techni-musique & parole informatique) több 8 bites géphez (Thomson, Amstrad, Oric)
   készített beszédbővítőt, és a chip azért volt népszerű Franciaországban, mert ki tudta mondani a
@@ -280,6 +300,14 @@ A MEA8000-nek volt egy második élete Franciaországban, ahol az otthoni szám�
 - **Egy könyv.** *Parole et micros: synthèse vocale* (1985), franciául, a chipről és a használatáról
   [4].
 - **A Stargame flipperei:** lásd 1986-nál.
+- **Hollandia: hang azoknak, akik nem tudnak beszélni** (későbbi beszámoló). A Tiepstem („gépelt
+  hang”), amelyet Deliege írt le 1989-ben, billentyűzetről beszédet előállító rendszer volt azoknak,
+  akik elvesztették a beszédképességüket; a diádjai az IPO-ban készültek, és a MEA8000
+  paramétereire kódolták át őket. Mondatokat is elő tudott készíteni egy kisebb, hordozható
+  segédeszköz, a Pocketstem számára (Waterham, 1989) [30].
+- **Franciaország: tanítórendszer vak és látó gyerekeknek** (közlemény). Ugyanazon az 1990-es
+  RESNA-konferencián Burger, Beltrando, Liard és Sagot (INSERM, Párizs) egy IBM PC kompatibilis
+  gépbe való kártyát ír le, amelyen a beszédrészleteket egy Philips RTC MEA 8000 állítja elő [32].
 
 ## A PCF8200 máshol
 
@@ -290,15 +318,20 @@ a PCF8200-at nevezi meg [14d]; a saját oldala nem írja le, melyik chip van a k
 a kártyán, amellyel dolgoztunk, PCF8200 van (lásd 1994-nél). Ha tudsz még egy termékről, kérlek,
 nyiss egy issue-t.
 
-Még három nyom, mind a SpeechChips.com-ról, Scott Savage beszédchip-múzeumából [28], amelynek
-irodalomjegyzéke a fenti 1982-es cikkhez és szabadalomhoz is elvezetett [24][25]:
+További nyomok. Többet a SpeechChips.com-on, Scott Savage beszédchip-múzeumában találtunk [28],
+amelynek irodalomjegyzéke a fenti 1982-es cikkhez és szabadalomhoz is elvezetett [24][25]:
 
 - **Kommunikációs segédeszközök:** King 1991-es eszközei erre a chipre készültek (lásd 1991-nél)
-  [27]. Nem tudjuk, hogy melyik segédeszköz került vele forgalomba, ha egyáltalán.
+  [27], és az Innocomp 1990-es bevezetője is (lásd 1990-nél) [32]. Ha egy segédeszközgyártó
+  bevezetőt ír a chipről, az arra utal, hogy az eszközei ezt használták, de nem találtunk
+  kézikönyvet vagy kártyát, amely ezt kimondaná.
 - **Egy autó** (későbbi beszámoló). A SpeechChips.com a BMW E38 navigációs egységét olyan gépként
   sorolja fel, amely PCF8200-on keresztül mondta be az útirányt [28]. Az oldal sem évszámot, sem
   forrást nem ad. Az adatlaphoz illene, amelynek alkalmazási listája az autóipari felhasználással
-  kezdődik [2].
+  kezdődik [2]. A BMW saját oktatási anyaga szerint a navigációs rendszerei az 1997-es E38 óta
+  vannak használatban, és a rendszer a Philips Electronics által fejlesztett CARiN-ra épül [34], a
+  Philips folyóirata pedig már 1985-ben elképzelte a beszédet egy ilyen rendszerben [31]. Ettől
+  valószínű, hogy az egységben Philips beszédchip van. Bizonyítani nem bizonyítja.
 - **Egy 1988-as chip.** Az ott lefényképezett PCF8200P-n a 8814-es kód áll, ami 1988 14. hete, ha
   úgy olvasandó, mint a többi Philips dátumkód [28]. A feliratot egy kis fényképről olvastuk le.
 
@@ -323,7 +356,15 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
 - **A PC-ROBOT első éve.** A múzeum szerint a NIKOL 1994-től gyártotta [14f]. Az Internet Archive-on
   lévő leírás, amelyet ez a projekt írt, 1990-től 1995-ig mondja [21]; a korábbi évszámra nincs
   keltezett dokumentumunk. Az általunk látott kártyán lévő chip 1993 tavaszán készült.
-- **Mikor szűnt meg a PCF8200 gyártása.**
+- **Mikortól lehetett megvenni a PCF8200-at.** Az 1986 júliusi adatlapon „Development data” áll
+  [2]; Nooteboom szerint a MEA8000 1988-ban kapta meg az utódját [30]; a legkorábbi dátumkód,
+  amelyet chipen láttunk, 1988 tavaszáról való [28]. Mindháromhoz illene, hogy 1986-ban jelentették
+  be, és 1988-tól adták el nagyobb számban, de ez csak a mi feltevésünk.
+- **Mikor szűnt meg a PCF8200 gyártása.** Valamikor 1993 és 2000 között. A PC-ROBOT kártyán lévő
+  chip 1993 tavaszán készült (lásd 1994-nél). 2000. március 4-én Dale Grover azt írta a Useneten,
+  hogy a PCF8200 már nem kapható, „add hozzá a már nem létező egychipes beszédszintetizátorok
+  hosszú listájához” (saját fordítás), és hogy a Philips nem válaszolt, amikor egy évvel korábban
+  azt kérte, tegyék elérhetővé az alkalmazási jelentést [33].
 - **A Ciber232 évszámai** a fenti kettőn túl.
 
 ## Források
@@ -409,3 +450,18 @@ kiadásaiban, és az, hogy itt szerepel, nem jelenti azt, hogy ezt tervezzük.
     <https://speechchips.com/devices/bmw-navigation.html>
 29. *pctalker-nvda*: Király József PC-TALKER-e NVDA beszédszintetizátorként, a történetével a
     README-ben. <https://github.com/tgeczy/pctalker-nvda>
+30. Sieb Nooteboom, „A brief history of speech synthesis in the former Institute for Perception
+    Research (IPO), Eindhoven”. <https://www.siebnooteboom.nl/index.php/history>
+31. M. ten Have, J. den Ouden, „Stand-alone speech development system using a personal computer”,
+    *Electronic Components and Applications*, 7. évf. 1. szám, 1985, 2–6. o. Philips.
+    <https://www.worldradiohistory.com/Archive-Company-Publications/Philips-Technical-Review/Electronic-Compoinents/Electronic-Components-&-Apps-Vol-7-No-1.pdf>
+32. *RESNA '90: Proceedings of the 13th Annual Conference*, Washington, D.C., 1990. június 15–20.
+    (ERIC-dokumentum: ED 385 996): C. Gruber, R. Cecil, J. L. Hoffman, „The PCF8200 Formant Speech
+    Synthesizer: A Primer”, 335–336. o.; D. Burger, E. Beltrando, C. Liard, J. Sagot, „A sound-based
+    computer system for teaching both blind and sighted children”, a 135. oldaltól.
+    <https://files.eric.ed.gov/fulltext/ED385996.pdf>
+33. Dale Grover, a „Speech Synthesizer module under development - help needed!” című szálban,
+    comp.robotics.misc, 2000. március 4. <https://groups.google.com/g/comp.robotics.misc/c/Yai2gU_Ti74>
+34. BMW, „On Board Monitor and Navigation Systems: Overview” (szervizoktatási anyag), a DiagnostData
+    oldalán közölt formában.
+    <https://diagnostdata.com/bmw/7-series/e38-1994-1998/remont/gauges-instrument-panels/on-board-monitor-and-navigation-systems-overview-e38-ee39-e46-e52-e65-e85/overview/>
