@@ -119,7 +119,10 @@ static const int FEM_B2[8]   = {3000,1000,626,391,245,153,96,60};
 static const int FEM_B3[4]   = {3000,700,265,100};
 static const int FEM_B4[4]   = {3000,800,322,130};
 static const float AMPL[16]  = {0.0f,0.0078125f,0.01171875f,0.015625f,0.021484375f,0.03125f,0.044921875f,0.0625f,0.087890625f,0.125f,0.17578125f,0.25f,0.353515625f,0.5f,0.70703125f,1.0f};
-static const float PI_TAB[32] = {0.0f,1.2f,2.4f,3.7f,4.9f,6.1f,7.3f,8.5f,9.8f,11.0f,13.4f,15.9f,19.5f,25.6f,34.2f,45.2f,0.0f,-45.2f,-34.2f,-25.6f,-19.5f,-15.9f,-13.4f,-11.0f,-9.8f,-8.5f,-7.3f,-6.1f,-4.9f,-3.7f,-2.4f,-1.2f};
+/* Pitch increments in Hz a standard frame: whole multiples of 8 of the chip's own count, 10000/65536 Hz
+ * (8 16 24 32 40 48 56 64 72 88 104 128 168 224 296), measured on a real BraiLab PC; the chip's document
+ * prints them rounded to one decimal (1.2 2.4 3.7 ... 45.2).  All of these are exact in a float. */
+static const float PI_TAB[32] = {0.0f,1.220703125f,2.44140625f,3.662109375f,4.8828125f,6.103515625f,7.32421875f,8.544921875f,9.765625f,10.986328125f,13.427734375f,15.869140625f,19.53125f,25.634765625f,34.1796875f,45.166015625f,0.0f,-45.166015625f,-34.1796875f,-25.634765625f,-19.53125f,-15.869140625f,-13.427734375f,-10.986328125f,-9.765625f,-8.544921875f,-7.32421875f,-6.103515625f,-4.8828125f,-3.662109375f,-2.44140625f,-1.220703125f};
 static const int FD_MULT[4]  = {1, 2, 3, 5};
 #define PITCH_HZ_PER_UNIT (10000.0 / 4096.0)
 #define BLEP_FULL_HZ 400.0          /* up to here the sawtooth is cleaned of aliasing, as tuned     */
@@ -2188,7 +2191,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.60: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.61: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
