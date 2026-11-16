@@ -87,13 +87,29 @@ AMPL = [
     0.70703125, 1.0,
 ]
 
-# Pitch increment (PT, 5-bit), Hz per standard frame.  Code 16 = 0 = unvoiced
-# flag (selects the noise source); 17..31 negate 15..1.
-PI = [
-    0.0, 1.2, 2.4, 3.7, 4.9, 6.1, 7.3, 8.5, 9.8, 11.0, 13.4, 15.9, 19.5, 25.6,
-    34.2, 45.2, 0.0, -45.2, -34.2, -25.6, -19.5, -15.9, -13.4, -11.0, -9.8,
-    -8.5, -7.3, -6.1, -4.9, -3.7, -2.4, -1.2,
+# The chip keeps its pitch as a 16-bit count of 10000/65536 Hz (0.1526 Hz): the
+# step by which its sample counter advances.  The start-pitch byte is 16 of
+# these, and every pitch increment is a whole multiple of 8.
+PITCH_COUNT_HZ = 10000.0 / 65536.0
+
+# Pitch increment (PT, 5-bit), in those counts per standard frame.  The chip's
+# document prints the column in hertz to one decimal (1.2, 2.4, 3.7, 4.9 ...
+# 45.2); these are the counts those figures were rounded from.  Seven of the
+# fifteen sizes were measured on a real BraiLab PC (2026-11-15: a steady vowel
+# walked through its whole range with one code, the fundamental followed frame
+# by frame): 8.00, 16.01, 32.01, 56.02, 88.01, 167.75 and 293-297 counts for
+# 8, 16, 32, 56, 88, 168 and 296.  The other eight are the multiples of 8 that
+# round to the printed figures.  The same step is taken per frame at every
+# frame length, and a frame of several standard frames takes that many.
+PI_COUNTS = [
+    0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 88, 104, 128, 168, 224, 296,
+    0, -296, -224, -168, -128, -104, -88, -72, -64, -56, -48, -40, -32, -24,
+    -16, -8,
 ]
+
+# The same in Hz per standard frame.  Code 16 = 0 = unvoiced flag (selects the
+# noise source); 17..31 negate 15..1.
+PI = [c * PITCH_COUNT_HZ for c in PI_COUNTS]
 
 # Start-pitch byte scale: byte = Hz * 0.4096, so Hz = byte * 10000/4096.
 PITCH_HZ_PER_UNIT = 10000.0 / 4096.0

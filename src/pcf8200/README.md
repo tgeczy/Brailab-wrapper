@@ -42,6 +42,13 @@ amplitudes, and `render(..., noise_amp=...)` and `Core.run(..., noise_amp=...)` 
 `tracks()` and a `render` call with `voiced` are unchanged. In C, `pcf8200_run` and
 `pcf8200_tracker_frame` take the two amplitudes in place of one amplitude and a flag.
 
+Version 2.4 has the pitch increments exact. The chip counts pitch in steps of
+10000/65536 Hz, and each increment code is a whole multiple of 8 of them; the chip's
+document prints that column rounded to one decimal (1.2, 2.4, 3.7 ... 45.2 Hz). Measured
+on a real BraiLab PC, the two smallest codes move 1.2207 and 2.4414 Hz a frame, not 1.2
+and 2.4. `tables.PI_COUNTS` holds the counts and `tables.PI` the hertz. In ordinary
+speech the pitch ends up within about 1 Hz of where 2.3 put it.
+
 ---
 
 ## 1. Drive the chip's command protocol (authentic)
