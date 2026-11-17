@@ -103,6 +103,17 @@ version of it. See [`NOTICE.md`](../NOTICE.md).
     BRAISPK /S           counters: frames, controls, pitches, queued samples, underruns, overruns
     BRAISPK /D           what the resident check sees (vector, handler bytes, identify)
     BRAISPK /U           unload (refused while TALKHUNS is loaded: reboot instead)
+    BRAISPK /BOX         no synthesis: pass TALKHUNS on to a real BraiLab PC on LPT1 (/BOX278 for another port)
+    BRAISPK /LOG         switch the wire log on: when installing, or in the copy already resident
+    BRAISPK /NOLOG       stop the wire log; /SHOW prints it, /CLEAR (or /CL) empties it
+
+The wire log is a record of what TALKHUN writes to the adapter, entry by entry
+with the time between entries (and, in box mode, the real chip's two handshake
+lines). It is off unless asked for (0.62; until 0.61 it ran from the moment of
+installing). `/LOG` starts it from that moment, also in a copy that has been
+resident for hours, so there is no need to reboot to look at something; it keeps
+the next 1500 entries and then stops. The digits of 0.58 to 0.61 still work:
+`/1` is `/SHOW`, `/2` is `/BOX`, `/3` is `/CLEAR`.
 
 What you should hear on a machine with no monitor: BRAISPK plays a two-tone
 chirp (440 then 660 Hz) the moment it goes resident; two short beeps mean it
@@ -303,6 +314,12 @@ időzítés: `/C0`. A hangmagasságnak sincs többé 400 Hz-es felső határa: a
 dobozon, ha gyorsan egymás után sokszor nyomjuk meg az Entert, a hang egyre
 emelkedik, majd nagyon mélyre esik, és újra emelkedik; a BRAISPK eddig 400
 Hz-nél megállt. Valódi gépen a 0.52-t még nem hallottuk.
+
+A 0.62 óta a „drótnapló” (amit a TALKHUN az adapternek ír, bejegyzésenként)
+alapból ki van kapcsolva. A `BRAISPK /LOG` kapcsolja be, telepítéskor vagy a már
+betöltött példányban is, újraindítás nélkül; a `/NOLOG` leállítja, a `/SHOW`
+kiírja, a `/CLEAR` (vagy `/CL`) kiüríti. A `/BOX` a valódi BraiLab PC-nek adja
+tovább a TALKHUNS kimenetét a nyomtatóporton.
 
 A többi kapcsoló (`/I`, `/8`, `/DMA`, `/E`, `/A`, `/L`, `/D`) és a részletek a
 fenti angol részben és a `NOTES.md` fájlban olvashatók.

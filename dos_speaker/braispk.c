@@ -233,22 +233,26 @@ static unsigned n_swallowed;                    /* start pitches that fell into 
 static unsigned long drain_tick;                /* tick at which everything synthesised so far has played */
 static unsigned long tick_rate;                 /* ticks a second, whole number                 */
 static unsigned long frame_tick;                /* tick at which the last frame came            */
-/* What TALKHUN writes, as it writes it: the only way to see on a real PC what it does when a key
- * cuts it off.  3.2 KB of the resident copy. */
+/* The wire log: what TALKHUN writes, as it writes it; the only way to see on a real PC what it
+ * does when a key cuts it off.  15 KB of the resident copy.  OFF unless asked for (0.62): /LOG
+ * switches it on, when installing or in a copy that is already resident, and from that moment it
+ * keeps the next WLOG_N entries; /NOLOG stops it, /SHOW prints it, /CLEAR empties it.  Until 0.61
+ * it ran from the moment of installing, always. */
 #define WLOG_N 1500
 #define WLOG_STATUS 0xFE                        /* len of an entry that is a change of the status lines */
 static struct wlog_entry { unsigned long t; unsigned char len; unsigned char b[5]; } wlog[WLOG_N];
+static unsigned char wlog_on;                   /* the resident copy looks at this before every entry;
+                                                 * a later BRAISPK /LOG or /NOLOG writes it from outside */
 static unsigned wlog_count;                     /* the log holds the FIRST WLOG_N entries since it was
-                                                 * armed (at install, or by /3) and then stops: typing
-                                                 * the command that prints it cannot push the part that
+                                                 * switched on or emptied and then stops: typing the
+                                                 * command that prints it cannot push the part that
                                                  * matters out */
-/* /2: the box.  Nothing is synthesised: every wire step TALKHUN makes goes straight on to a real
- * BraiLab PC on the printer port, the port's status goes straight back, and both are logged.  That
- * is the real TALKHUN driving the real chip, with a record of every byte and of the two handshake
- * lines.  Rides on the card mode's plumbing (no timer, no sound device). */
+/* /BOX (/2 until 0.61): the box.  Nothing is synthesised: every wire step TALKHUN makes goes
+ * straight on to a real BraiLab PC on the printer port, and the port's status goes straight back.
+ * That is the real TALKHUN driving the real chip; with /LOG there is a record of every byte and of
+ * the two handshake lines.  Rides on the card mode's plumbing (no timer, no sound device). */
 static unsigned box_port;
 static unsigned char box_st_last = 0xFF;
-static unsigned char box_prewrite;              /* /4: box mode with the early port write of 0.59 */
 
 /* PIT channel 0 (put in mode 2 at install in box mode) with the BIOS tick count: 0.838 us a unit */
 static unsigned long now_pit(void)
@@ -269,7 +273,7 @@ static unsigned long now_pit(void)
 static void wlog_put(unsigned char len, const unsigned char *b)
 {
     unsigned i = wlog_count, k;
-    if (i >= WLOG_N) return;
+    if (!wlog_on || i >= WLOG_N) return;
     wlog[i].t = box_port ? now_pit() : tick_count;
     wlog[i].len = len;
     for (k = 0; k < 5; k++) wlog[i].b[k] = (unsigned char)((len == WLOG_STATUS ? k < 1 : k < len) ? b[k] : 0);
@@ -1163,7 +1167,7 @@ static void transaction_done(void)
     const unsigned char *body = w_cur + 1;     /* drop the 0x20 device address */
     int len = (int)w_ncur - 1;
     if (len <= 0) return;
-    wlog_put((unsigned char)(len > 5 ? 5 : len), body);        /* the wire log: BRAISPK /1 prints it */
+    wlog_put((unsigned char)(len > 5 ? 5 : len), body);        /* the wire log, when /LOG has switched it on */
     if (box_port) {                            /* the box already has the bytes, step by step */
         if (len == 5) n_frames++;
         else if (len == 2) n_ctrls++;
@@ -1741,28 +1745,64 @@ static int uninstall(void)
     return 0;
 }
 
-/* /1: the wire log.  What TALKHUN wrote, oldest first, from the moment the log was armed until it
- * was full: the time since the entry before, what it was, and for a frame its loudness,
- * pitch-increment and length codes.  In box mode the changes of the real chip's two handshake
- * lines are in it too.  /3 empties it and arms it again. */
-static int wire_dump(int rearm)
+/* The wire log from outside, on a copy that is already resident.  The resident code reads
+ * wlog_on and wlog_count afresh at every entry, so writing them here is all it takes; the flag is
+ * a single byte and the count is set with interrupts off, so an entry cannot land half-way.
+ * WIRE_ON: empty the log and start it (if it is already running it is left as it is, so asking
+ * twice loses nothing).  WIRE_OFF: stop, keep what is there.  WIRE_CLEAR: empty, running or not. */
+#define WIRE_ON    1
+#define WIRE_OFF   2
+#define WIRE_CLEAR 3
+static int wire_switch(int what)
+{
+    unsigned ds, n;
+    unsigned char on;
+    if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
+    on = *(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on);
+    n = *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count);
+    if (what == WIRE_OFF) {
+        *(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on) = 0;
+        printf("braispk: wire log %s; it holds %u entries (/SHOW prints them, /CLEAR empties it)\r\n",
+               on ? "stopped" : "was not running", n);
+        return 0;
+    }
+    if (what == WIRE_ON && on) {
+        printf("braispk: wire log is already running, %u of %u entries so far (/CLEAR empties it)\r\n", n, WLOG_N);
+        return 0;
+    }
+    _disable();
+    *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count) = 0;
+    *(unsigned char far *)MK_FP(ds, (unsigned)&box_st_last) = 0xFF;
+    if (what == WIRE_ON) *(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on) = 1;
+    _enable();
+    if (what == WIRE_ON)
+        printf("braispk: wire log switched on in the resident copy; it keeps the next %u entries\r\n", WLOG_N);
+    else
+        printf("braispk: wire log emptied; it is %s\r\n", on ? "still running" : "not running (/LOG starts it)");
+    return 0;
+}
+
+/* /SHOW (/1 until 0.61): the wire log.  What TALKHUN wrote, oldest first, from the moment the log
+ * was switched on until it was full: the time since the entry before, what it was, and for a frame
+ * its loudness, pitch-increment and length codes.  In box mode the changes of the real chip's two
+ * handshake lines are in it too. */
+static int wire_dump(void)
 {
     unsigned ds, n, i, box;
     unsigned long rate, prev = 0;
     struct wlog_entry far *w;
     if (find_resident(&ds, 0, 0) != 1) { printf("braispk: not resident\r\n"); return 1; }
-    if (rearm) {
-        *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count) = 0;
-        *(unsigned char far *)MK_FP(ds, (unsigned)&box_st_last) = 0xFF;
-        printf("braispk: wire log emptied and armed; it keeps the next %u entries\r\n", WLOG_N);
-        return 0;
-    }
     n = *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count);
     box = *(unsigned far *)MK_FP(ds, (unsigned)&box_port);
     rate = box ? 1193182UL : *(unsigned long far *)MK_FP(ds, (unsigned)&tick_rate);
     if (!rate) rate = 19886UL;
     w = (struct wlog_entry far *)MK_FP(ds, (unsigned)&wlog[0]);
-    printf("braispk wire log: %u entries%s, oldest first.  +ms since the entry before; a frame's AM, PI, FD.%s\r\n",
+    if (!n && !*(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on)) {
+        printf("braispk wire log: empty and not running.  BRAISPK /LOG switches it on.\r\n");
+        return 0;
+    }
+    printf("braispk wire log (%s): %u entries%s, oldest first.  +ms since the entry before; a frame's AM, PI, FD.%s\r\n",
+           *(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on) ? "running" : "stopped",
            n, n >= WLOG_N ? " (full: it stopped there)" : "",
            box ? "  status: bit 4 set = the chip is not asking, bit 5 set = busy" : "");
     for (i = 0; i < n; i++) {
@@ -1985,6 +2025,9 @@ static int report(void)
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_PIT_HI ? "IRQ0 19886 Hz clock" :
            *(unsigned char far *)MK_FP(ds, (unsigned)&clock_mode) == CLOCK_CARD ? "PC-ROBOT card" : "RTC 8192 Hz clock",
            r.x.ax, r.x.bx, r.x.cx, r.x.dx);
+    printf("         wire log %s, %u of %u entries\r\n",
+           *(unsigned char far *)MK_FP(ds, (unsigned)&wlog_on) ? "ON (/NOLOG stops it)" : "off (/LOG starts it)",
+           *(unsigned far *)MK_FP(ds, (unsigned)&wlog_count), WLOG_N);
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&out_dev) == OUT_LPT)
         printf("         printer-port DAC at %03Xh\r\n", *(unsigned far *)MK_FP(ds, (unsigned)&lpt_port));
     if (*(unsigned char far *)MK_FP(ds, (unsigned)&dma_mode))
@@ -2107,29 +2150,62 @@ static unsigned clear_ts(void)
     return msw;
 }
 
+/* Switches that are whole words (0.62): every single letter is taken, and a word says what it does.
+ * sw_word: the switch text `s` begins with `word`, whatever the case; returns what follows it. */
+static const char *sw_word(const char *s, const char *word)
+{
+    for (; *word; s++, word++) {
+        char c = *s;
+        if (c >= 'a' && c <= 'z') c -= 32;
+        if (c != *word) return 0;
+    }
+    return s;
+}
+
+static int sw_is(const char *s, const char *word)
+{
+    const char *rest = sw_word(s, word);
+    return rest && !*rest;
+}
+
+static int hex_or_empty(const char *s)
+{
+    for (; *s; s++)
+        if (!((*s >= '0' && *s <= '9') || ((*s & 0xDF) >= 'A' && (*s & 0xDF) <= 'F'))) return 0;
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     unsigned sp_now, top, paras;
     unsigned far *bda_lpt1 = (unsigned far *)MK_FP(0x40, 0x08);
-    int i, j_idx = -1, y_idx = -1, m_idx = -1;
+    int i, j_idx = -1, y_idx = -1, m_idx = -1, want_log = 0;
 
     clear_ts();
     _control87(_MCW_EM, _MCW_EM);              /* no FPU traps, whatever Windows left */
     for (i = 1; i < argc; i++) {
         if (argv[i][0] == '/' || argv[i][0] == '-') {
             unsigned char sw = (unsigned char)argv[i][1];
+            const char *rest;
+            /* the words first: /BOX must not be read as /B with a port, nor /LOG as /L */
+            if ((rest = sw_word(argv[i] + 1, "BOX")) != 0 && hex_or_empty(rest)) {
+                clock_mode = CLOCK_CARD;               /* the box: pass everything on to a real BraiLab PC */
+                box_port = *rest ? (unsigned)strtoul(rest, 0, 16) : 0xFFFF;
+                continue;
+            }
+            if (sw_is(argv[i] + 1, "LOG") || sw_is(argv[i] + 1, "WRITE")) { want_log = 1; continue; }
+            if (sw_is(argv[i] + 1, "NOLOG")) return wire_switch(WIRE_OFF);
+            if (sw_is(argv[i] + 1, "SHOW")) return wire_dump();
+            if (sw_is(argv[i] + 1, "CLEAR") || sw_is(argv[i] + 1, "CL")) return wire_switch(WIRE_CLEAR);
             if (sw >= 'a' && sw <= 'z') sw -= 32;  /* not "& 0xDF": that turned '8' into 18h and /8 never matched */
             switch (sw) {
             case 'U': return uninstall();
             case 'C': chip_timing = (unsigned char)(argv[i][2] != '0'); break;
-            case '9': stop_tail = 0; break;     /* the handshake as before 0.54; every letter is taken */
-            case '1': return wire_dump(0);
-            case '3': return wire_dump(1);
-            case '4': clock_mode = CLOCK_CARD; box_prewrite = 1;   /* box mode as 0.59 had it: the port set to rest first */
-                      box_port = argv[i][2] ? (unsigned)strtoul(argv[i] + 2, 0, 16) : 0xFFFF;
-                      break;
-            case '2': clock_mode = CLOCK_CARD;         /* the box: pass everything on to a real BraiLab PC */
-                      box_port = argv[i][2] ? (unsigned)strtoul(argv[i] + 2, 0, 16) : 0xFFFF;
+            case '9': stop_tail = 0; break;     /* the handshake as before 0.54 */
+            case '1': return wire_dump();               /* the digits of 0.58-0.61 still work: /1 = /SHOW, */
+            case '3': return wire_switch(WIRE_CLEAR);   /* /3 = /CLEAR, /2 = /BOX.  /4 (the box with the port */
+            case '2': clock_mode = CLOCK_CARD;          /* set to rest first, an experiment of 0.60) is gone:  */
+                      box_port = argv[i][2] ? (unsigned)strtoul(argv[i] + 2, 0, 16) : 0xFFFF;   /* it changed nothing */
                       break;
             case 'V': if (argv[i][2] >= '0' && argv[i][2] <= '9') { out_gain = GAIN_TAB[argv[i][2] - '0']; gain_set = 1; } break;
             case 'W': dac_wide = 1; break;
@@ -2191,7 +2267,7 @@ int main(int argc, char **argv)
                 }
                 root = sqrt(two);
                 check = (long)(root * 1000.0);
-                sprintf(logbuf, "--- braispk 0.61: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
+                sprintf(logbuf, "--- braispk 0.62: %s  DOS %d.%02d  PSP %04X  MSW now %04X  FPU CW %04X SW %04X  sqrt2*1000=%ld (want 1414)",
                         argv[0], _osmajor, _osminor, _psp, msw, _control87(0, 0), _clear87(), check);
                 lg(logbuf);
                 break;
@@ -2232,6 +2308,10 @@ int main(int argc, char **argv)
                        "                 BRAISPK makes it go through INT 10h so TALKHUN hears ver, dir, prompts)\r\n"
                        "  BRAISPK /8     clock the samples from the RTC at 8192 Hz (audible carrier; safest)\r\n"
                        "  BRAISPK /A[p]  no speaker: feed the real PCF8200 on the PC-ROBOT card at port p (100)\r\n"
+                       "  BRAISPK /BOX[p] no synthesis: pass TALKHUNS on to a real BraiLab PC on printer port p (LPT1)\r\n"
+                       "  BRAISPK /LOG   the wire log (what TALKHUN writes, entry by entry): switch it on, when\r\n"
+                       "                 installing or in the copy already resident; it keeps the next 1500 entries\r\n"
+                       "  BRAISPK /NOLOG stop the wire log    /SHOW print it    /CLEAR (or /CL) empty it\r\n"
                        "  BRAISPK /Z     scan I/O 100h-3FFh into BRAISPK.LOG: where does anything answer\r\n"
                        "  BRAISPK /Gxx   card mode: DAC gain code instead of the driver's 70 (20 = 0 dB, 40 = -6 dB)\r\n"
                        "  BRAISPK /I     IRQ0 at 10027 Hz, one sample per tick\r\n"
@@ -2253,6 +2333,8 @@ int main(int argc, char **argv)
                 FP_SEG(_dos_getvect(8)), FP_OFF(_dos_getvect(8)), *bda_lpt1);
         lg(logbuf);
     }
+    if (i == 1 && want_log) return wire_switch(WIRE_ON);   /* already resident: it starts from this moment */
+    if (want_log) wlog_on = 1;                             /* installing: it starts with the first byte */
     if (i == 1 && (j_idx >= 0 || y_idx >= 0 || m_idx >= 0)) {
         /* The ear's loop: retune the resident copy instead of rebooting. */
         union REGS r;
@@ -2293,14 +2375,13 @@ int main(int argc, char **argv)
         if (box_port == 0xFFFF) box_port = *bda_lpt1 ? *bda_lpt1 : 0x378;
         _disable(); outp(0x43, 0x34); outp(0x40, 0); outp(0x40, 0); _enable();     /* timer 0 in mode 2, still 18.2 Hz: a clock for the log */
         /* The port is NOT touched here: nothing of BRAISPK's reaches the box before TALKHUN's
-         * first byte.  0.59 set both lines to rest at this point and read the status; /4 still
-         * does, to compare.  That write was suspected of changing how a real BraiLab PC behaves
+         * first byte.  0.59 set both lines to rest at this point and read the status (0.60 and
+         * 0.61 kept that as /4, to compare).  That write was suspected of changing how a real BraiLab PC behaves
          * (with BRAISPK loaded the unpatched TALKHUN paused between "c" and the backslash and
          * Enter held down no longer walked the pitch).  It does not: the cause is the DOS 7
          * console flag that BRAISPK sets when it goes resident (see dos_con_flag, and /T).
          * Shown on the machine: with the walk audible, CON10 alone, which sets that flag and
          * does nothing else, ends it at once.  The box has no two states. */
-        if (box_prewrite) { outp(box_port, 3); outp(box_port + 2, 1); }
         _dos_setvect(API_INT, isr61);
         lg("3 INT 61h hooked, box mode");
         beeps(1);
@@ -2493,8 +2574,8 @@ resident:
     paras = (unsigned)((((unsigned long)FP_SEG((void __far *)&ring_head) << 4) + top - ((unsigned long)_psp << 4) + 15) >> 4);
     if (box_port)
         /* no read of the port here either: nothing of BRAISPK's reaches the box before TALKHUN's first byte */
-        printf("braispk: resident, %u KB, BOX MODE: everything goes on to the real BraiLab PC at %03Xh and is logged, API INT %02Xh%s\r\n",
-               (paras + 63) / 64, box_port, API_INT, box_prewrite ? " (port set to rest first, /4)" : "");
+        printf("braispk: resident, %u KB, BOX MODE: everything goes on to the real BraiLab PC at %03Xh, API INT %02Xh\r\n",
+               (paras + 63) / 64, box_port, API_INT);
     else if (clock_mode == CLOCK_CARD)
         printf("braispk: resident, %u KB, PC-ROBOT card (PCF8200) at %03Xh, API INT %02Xh\r\n",
                (paras + 63) / 64, card_port, API_INT);
@@ -2513,6 +2594,7 @@ resident:
            (paras + 63) / 64, clock_mode == CLOCK_PIT ? "10027 Hz IRQ0" : clock_mode == CLOCK_PIT_HI ? "19886 Hz IRQ0" : "8192 Hz RTC",
            API_INT, (int)out_gain, (int)(out_gain * 100) % 100,
            chip_timing ? "" : ", every frame 12.8 ms (/C0)");
+    if (wlog_on) printf("braispk: wire log on, it keeps the first %u entries (/SHOW prints them)\r\n", WLOG_N);
     fflush(stdout);                            /* _dos_keep does not flush     */
     _dos_keep(0, paras);
     return 0;
