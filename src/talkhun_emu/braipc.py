@@ -27,6 +27,7 @@ import brailab_device
 import brai_synth as synth   # module renamed from 'synth' (too generic -> NVDA addon clash)
 import chip_synth
 import talkhun
+from pcf8200 import decode_control, FS_TAB
 
 #: float chip render (peak ~1) -> int16 at 10 kHz, the level/rate Speaker.play
 #: expects (it resamples to the device).  Renders through the rebuilt 10 kHz
@@ -34,11 +35,15 @@ import talkhun
 _CHIP_SCALE = 16000.0
 
 
-def _chiprender(seq, furcsa, pitch_factor=1.0):
+def _chiprender(seq, furcsa, pitch_factor=1.0, frame_ms=brailab_device.FRAME_MS):
+    """frame_ms: the chip's frame length, which its speed field (the tempo) picks.
+    render_chip_fast plays every frame at 12.8 ms unless told otherwise: since
+    2026-08-28 the tempo menu changed the control byte and nothing else (#34)."""
     import numpy as np
     if pitch_factor != 1.0:
         seq = chip_synth.transpose_seq(seq, pitch_factor)
-    x = chip_synth.render_chip_fast(seq, furcsa_override=furcsa)
+    x = chip_synth.render_chip_fast(seq, furcsa_override=furcsa,
+                                    time_scale=frame_ms / brailab_device.FRAME_MS)
     if not len(x):
         return np.zeros(0, dtype=np.int16)
     return np.clip(x * _CHIP_SCALE, -32767, 32767).astype(np.int16)
@@ -121,6 +126,10 @@ SIMPLE = {'\r': 0x1C0D, '\n': 0x1C0D, '\x1b': 0x011B, ' ': 0x3920,
 
 #: The four base frame durations the FS field can select, fastest last.
 TEMPOS = [('lassú', '1'), ('normál', '2'), ('gyors', '3'), ('leggyorsabb', '4')]
+#: The frame length each one gives: TALKHUN turns ESC S1 to S4 into speed
+#: codes 3, 0, 2 and 1 in its start write (measured), 17.6 to 8.8 ms.  The
+#: menu's own prompts are said at it, before the program's next start write.
+TEMPO_MS = {'1': FS_TAB[3][1], '2': FS_TAB[0][1], '3': FS_TAB[2][1], '4': FS_TAB[1][1]}
 #: ESC P takes a character; these are the three the archive shipped.
 PITCHES = [('mély', '!'), ('normál', '*'), ('magas', '=')]
 
@@ -235,6 +244,7 @@ class Session:
         self.seen = 0
         self.quiet = 0
         self.last_pitch = None
+        self.frame_ms = brailab_device.FRAME_MS
         self._last_len = 0
         self.ctrl_held = _ctrl_watcher()
         self._shutup = False
@@ -247,8 +257,9 @@ class Session:
     def say_ui(self, text):
         """Speak an interface prompt, out of band from the guest."""
         try:
+            # at the tempo chosen, which the program's next start write will carry
             self.speaker.play(_chiprender(self.ui.capture(text), self.furcsa,
-                                          TRIMS[self.trim][1]))
+                                          TRIMS[self.trim][1], TEMPO_MS[TEMPOS[self.tempo][1]]))
         except Exception:
             pass
 
@@ -278,9 +289,16 @@ class Session:
                 return
         stamps = self.dev.seq_time[self.seen:len(self.dev.seq)]
         self.seen = len(self.dev.seq)
+        # the batch is said at the speed its first start write asks for, else the
+        # speed the last batch ended with
+        frame_ms, started = self.frame_ms, False
         for kind, val in new:
             if kind == 'pitch':
                 self.last_pitch = val
+            elif kind == 'ctrl' and not decode_control(val)['stop']:
+                self.frame_ms = decode_control(val)['frame_ms']
+                if not started:
+                    frame_ms, started = self.frame_ms, True
         if new[0][0] != 'pitch' and self.last_pitch is not None:
             new = [('pitch', self.last_pitch)] + list(new)
         if self.trace and stamps:
@@ -292,7 +310,7 @@ class Session:
                      self.host.vtime - stamps[-1],
                      self.speaker.seconds_queued))
         try:
-            self.speaker.play(_chiprender(new, self.furcsa, TRIMS[self.trim][1]))
+            self.speaker.play(_chiprender(new, self.furcsa, TRIMS[self.trim][1], frame_ms))
         except Exception:
             pass
 
@@ -324,7 +342,7 @@ class Session:
             if self.last_pitch is not None:
                 head = [('pitch', self.last_pitch)] + head
             try:
-                self.speaker.play(_blip(_chiprender(head, self.furcsa)))
+                self.speaker.play(_blip(_chiprender(head, self.furcsa, frame_ms=self.frame_ms)))
             except Exception:
                 pass
         return True
@@ -440,10 +458,39 @@ def read_key(block=False):
         if ext == '\x86':
             return 'F12'
         return EXTENDED.get(ext, 0)
-    c = ch.decode('cp852', 'replace')
+    return key_ax(ch[0])
+
+
+#: Scan codes of the US layout's printable keys (IBM PC AT set 1), so a
+#: program that looks at AH sees the key it would have on a real machine.
+_SCAN_ROWS = (
+    (0x02, '1234567890-='), (0x10, 'qwertyuiop[]'), (0x1E, "asdfghjkl;'`"),
+    (0x2B, '\\zxcvbnm,./'),
+)
+_SHIFTED = dict(zip('!@#$%^&*()_+{}:"~|<>?', '1234567890-=[];\'`\\,./'))
+SCAN = {}
+for _start, _keys in _SCAN_ROWS:
+    for _i, _k in enumerate(_keys):
+        SCAN[_k] = _start + _i
+del _start, _keys, _i, _k
+
+
+def key_ax(byte):
+    """The AX INT 16h gives for one byte msvcrt.getch() read.
+
+    getch() gives the console's own OEM byte, which is what a DOS program
+    expects in AL: it was decoded as CP852 and its Unicode code point cut to a
+    byte, so á (A0h) reached the program as E1h and ő (8Bh) as the letter Q
+    (#35).  The byte goes through as it is; AH is the key's scan code where the
+    key is on the US layout, else 0 (an accented letter has no fixed key).
+    """
+    c = chr(byte)
     if c in SIMPLE:
         return SIMPLE[c]
-    return ord(c[0]) & 0xFF
+    if byte < 0x80:
+        base = c.lower() if c.isalpha() else _SHIFTED.get(c, c)
+        return (SCAN.get(base, 0) << 8) | byte
+    return byte
 
 
 def _ctrl_watcher():

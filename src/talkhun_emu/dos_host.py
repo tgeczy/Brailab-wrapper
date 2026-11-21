@@ -42,6 +42,14 @@ from unicorn.x86_const import (
     UC_X86_REG_IP, UC_X86_REG_EFLAGS, UC_X86_REG_AL, UC_X86_REG_AH,
 )
 
+FLAG_TF, FLAG_IF = 0x0100, 0x0200
+
+#: Everything of a 16-bit program's that a call into the resident driver may change.
+_GUEST_REGS = (UC_X86_REG_AX, UC_X86_REG_BX, UC_X86_REG_CX, UC_X86_REG_DX,
+               UC_X86_REG_SI, UC_X86_REG_DI, UC_X86_REG_BP, UC_X86_REG_SP,
+               UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES, UC_X86_REG_SS,
+               UC_X86_REG_IP, UC_X86_REG_EFLAGS)
+
 MEM_SIZE = 0x110000
 #: Conventional memory laid out like a real machine: PSPs and programs from
 #: 0x0800 up, with the BIOS data area and IVT below as usual.
@@ -91,6 +99,9 @@ OFF_TEXTBUF = 0x0400        # scratch for console strings
 TEXTBUF_MAX = 0x0C00
 OFF_CFGBUF = 0x1000         # scratch for driver control sequences
 OFF_CFGDONE = OFF_CFGSEND + 0x16
+#: send_com4: the most bytes the buffer takes, and the instructions one send may run
+SEND_MAX = 0x800
+SEND_BUDGET = 2_000_000_000
 OFF_IDLE = 0x0080           # `jmp $`, for letting the driver's pump drain
 BIOS_STACK = 0x2000
 
@@ -405,7 +416,8 @@ class DosHost:
         # the teletype loop ends in iret, so leave it a frame returning to the
         # idle spin, where the timer can go on draining the speech queue
         uc.reg_write(UC_X86_REG_IP, OFF_IDLE)
-        self._dispatch_far(BIOS_SEG, OFF_TELETYPE)
+        self._interrupts_on()                 # the idle spin it returns to waits on the timer
+        self._dispatch_far(BIOS_SEG, OFF_TELETYPE, interrupts_on=True)
         deadline = self.vtime + seconds
         keep, self.exited = self.exited, None
         self._pump(BIOS_SEG * 16 + OFF_TELETYPE, max_insns, deadline, 'say')
@@ -426,6 +438,7 @@ class DosHost:
         uc.reg_write(UC_X86_REG_SS, BIOS_SEG)
         uc.reg_write(UC_X86_REG_SP, BIOS_STACK)
         uc.reg_write(UC_X86_REG_IP, OFF_IDLE)
+        self._interrupts_on()
         self._pump(BIOS_SEG * 16 + OFF_IDLE, max_insns, deadline, 'idle')
         self.exited = keep
         return self.vtime
@@ -444,20 +457,36 @@ class DosHost:
         data = data.replace(b'\0', b'')
         if not data or 0x14 not in self.hooked_vectors:
             return False
+        if len(data) > SEND_MAX:
+            raise ValueError('%d bytes is more than one send takes (%d): split it'
+                             % (len(data), SEND_MAX))
         uc = self.uc
+        # A program may be running: the stub takes over CS:IP, the stack and
+        # DS, SI, DX and FLAGS, so every register goes back afterwards, or the
+        # program carries on from F000:0056 and dies (#33).
+        saved = [(r, uc.reg_read(r)) for r in _GUEST_REGS]
         uc.mem_write(BIOS_SEG * 16 + OFF_CFGBUF, data + b'\0')
         uc.reg_write(UC_X86_REG_CS, BIOS_SEG)
         uc.reg_write(UC_X86_REG_SS, BIOS_SEG)
         uc.reg_write(UC_X86_REG_SP, BIOS_STACK)
         uc.reg_write(UC_X86_REG_IP, OFF_CFGSEND)
         # this stretch runs to a fixed end address, so a timer interrupt
-        # stopping it early would abandon the rest of the string
+        # stopping it early would abandon the rest of the string.  TALKHUN
+        # speaks a text from inside the call, so its budget is the whole of it:
+        # two million instructions stopped a 54-byte sentence half way and
+        # still said it was done (#38).
         self._no_irq = True
         try:
             uc.emu_start(BIOS_SEG * 16 + OFF_CFGSEND,
-                         BIOS_SEG * 16 + OFF_CFGDONE, count=2_000_000)
+                         BIOS_SEG * 16 + OFF_CFGDONE, count=SEND_BUDGET)
+            done = uc.reg_read(UC_X86_REG_CS) == BIOS_SEG and \
+                uc.reg_read(UC_X86_REG_IP) == OFF_CFGDONE
         finally:
             self._no_irq = False
+            for r, v in saved:
+                uc.reg_write(r, v)
+        if not done:
+            raise RuntimeError('TALKHUN did not come back from taking %r' % (data[:40],))
         return True
 
     # -- ports -------------------------------------------------------------
@@ -536,7 +565,11 @@ class DosHost:
         if (0x08 in self.hooked_vectors and self._pending_irq is None
                 and not self._no_irq):
             tick = self.bios_ticks
-            if tick != self._irq0_tick:
+            # With interrupts off (IF clear) the PIC holds the request, and it
+            # is delivered at the first block after they are back on, however
+            # many ticks went by (it latches one).  It was delivered regardless,
+            # into code that had just said cli (#39).
+            if tick != self._irq0_tick and uc.reg_read(UC_X86_REG_EFLAGS) & FLAG_IF:
                 self._irq0_tick = tick
                 cs = uc.reg_read(UC_X86_REG_CS)
                 if not self.resident_lo <= cs < self.resident_hi:
@@ -628,6 +661,7 @@ class DosHost:
         uc.reg_write(UC_X86_REG_SP, sp)
         uc.reg_write(UC_X86_REG_CS, cs)
         uc.reg_write(UC_X86_REG_IP, ip)
+        self._interrupts_on()
         self.exited = None
         self._pending_irq = None
         self._name = os.path.basename(path)
@@ -666,12 +700,19 @@ class DosHost:
         uc.reg_write(UC_X86_REG_SP, sp)
         uc.reg_write(UC_X86_REG_CS, cs)
         uc.reg_write(UC_X86_REG_IP, ip)
+        self._interrupts_on()
         self.exited = None
         self._pending_irq = None
         return self._pump(cs * 16 + ip, max_insns, max_vtime,
                           os.path.basename(path))
 
     # -- interrupts --------------------------------------------------------
+    def _interrupts_on(self):
+        """IF set, as DOS leaves it for a program it starts (Unicorn starts with
+        it clear, and the timer is held while it is clear)."""
+        f = self.uc.reg_read(UC_X86_REG_EFLAGS)
+        self.uc.reg_write(UC_X86_REG_EFLAGS, f | FLAG_IF)
+
     def _cf(self, on):
         f = self.uc.reg_read(UC_X86_REG_EFLAGS)
         self.uc.reg_write(UC_X86_REG_EFLAGS, (f | 1) if on else (f & ~1))
@@ -702,31 +743,28 @@ class DosHost:
 
     def _dispatch_guest(self, intno):
         """Invoke a guest-installed handler the way a real INT would."""
-        uc = self.uc
-        off, seg = struct.unpack('<HH', uc.mem_read(intno * 4, 4))
+        off, seg = struct.unpack('<HH', self.uc.mem_read(intno * 4, 4))
         if not (seg or off):
             return False
-        for val in (uc.reg_read(UC_X86_REG_EFLAGS),
-                    uc.reg_read(UC_X86_REG_CS),
-                    uc.reg_read(UC_X86_REG_IP)):
-            sp = (uc.reg_read(UC_X86_REG_SP) - 2) & 0xFFFF
-            ss = uc.reg_read(UC_X86_REG_SS)
-            uc.mem_write(ss * 16 + sp, struct.pack('<H', val & 0xFFFF))
-            uc.reg_write(UC_X86_REG_SP, sp)
-        uc.reg_write(UC_X86_REG_CS, seg)
-        uc.reg_write(UC_X86_REG_IP, off)
+        self._dispatch_far(seg, off)
         return True
 
-    def _dispatch_far(self, seg, off):
-        """Enter seg:off as if by INT, so its `iret` returns to the caller."""
+    def _dispatch_far(self, seg, off, interrupts_on=False):
+        """Enter seg:off as if by INT, so its `iret` returns to the caller.
+
+        As the CPU does: FLAGS, CS and IP pushed, then IF and TF cleared, so
+        the handler starts with interrupts off until it says sti (#39).
+        interrupts_on: the code entered stands for DOS's own console driver,
+        whose INT 21h handler turned interrupts on before it printed."""
         uc = self.uc
-        for val in (uc.reg_read(UC_X86_REG_EFLAGS),
-                    uc.reg_read(UC_X86_REG_CS),
-                    uc.reg_read(UC_X86_REG_IP)):
+        flags = uc.reg_read(UC_X86_REG_EFLAGS)
+        for val in (flags, uc.reg_read(UC_X86_REG_CS), uc.reg_read(UC_X86_REG_IP)):
             sp = (uc.reg_read(UC_X86_REG_SP) - 2) & 0xFFFF
             ss = uc.reg_read(UC_X86_REG_SS)
             uc.mem_write(ss * 16 + sp, struct.pack('<H', val & 0xFFFF))
             uc.reg_write(UC_X86_REG_SP, sp)
+        flags &= ~(FLAG_IF | FLAG_TF)
+        uc.reg_write(UC_X86_REG_EFLAGS, flags | FLAG_IF if interrupts_on else flags)
         uc.reg_write(UC_X86_REG_CS, seg)
         uc.reg_write(UC_X86_REG_IP, off)
 
@@ -750,7 +788,7 @@ class DosHost:
             return False
         raw = text.encode('cp852', 'replace').replace(b'\0', b' ')[:TEXTBUF_MAX - 1]
         self.uc.mem_write(BIOS_SEG * 16 + OFF_TEXTBUF, raw + b'\0')
-        self._dispatch_far(BIOS_SEG, OFF_TELETYPE)
+        self._dispatch_far(BIOS_SEG, OFF_TELETYPE, interrupts_on=True)
         return True
 
     def _on_intr(self, uc, intno, user):

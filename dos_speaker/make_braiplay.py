@@ -96,30 +96,15 @@ def run_on(host, seconds):
 def send(host, data):
     """Hand bytes to TALKHUN through INT 14h, as `copy file com4` did, and let it finish.
 
-    DosHost.send_com4 does the same with a budget of two million instructions, which is plenty
-    for a line of settings.  But TALKHUN speaks a long text from INSIDE this call, and the
-    budget then runs out in the middle of a frame: the call is abandoned, and TALKHUN is left
-    half way through an utterance for good.  Here the call runs to its end."""
-    import dos_host as dh
-    from unicorn.x86_const import UC_X86_REG_CS, UC_X86_REG_SS, UC_X86_REG_SP, UC_X86_REG_IP
-    data = data.replace(b'\0', b'')
-    if not data:
-        return
-    if len(data) > 0x800:
-        raise SystemExit('one step of %d bytes is too long: split the text' % len(data))
-    uc = host.uc
-    uc.mem_write(dh.BIOS_SEG * 16 + dh.OFF_CFGBUF, data + b'\0')
-    uc.reg_write(UC_X86_REG_CS, dh.BIOS_SEG)
-    uc.reg_write(UC_X86_REG_SS, dh.BIOS_SEG)
-    uc.reg_write(UC_X86_REG_SP, dh.BIOS_STACK)
-    uc.reg_write(UC_X86_REG_IP, dh.OFF_CFGSEND)
-    host._no_irq = True
+    TALKHUN speaks a long text from INSIDE this call; DosHost.send_com4 runs it to its end and
+    raises if it does not come back (it had a small budget and stopped half way; this file had
+    its own copy until both were made one, with a capture of felv_program.py byte-identical)."""
     try:
-        uc.emu_start(dh.BIOS_SEG * 16 + dh.OFF_CFGSEND, dh.BIOS_SEG * 16 + dh.OFF_CFGDONE, count=2_000_000_000)
-    finally:
-        host._no_irq = False
-    if uc.reg_read(UC_X86_REG_IP) != dh.OFF_CFGDONE:
-        raise SystemExit('TALKHUN did not come back from taking %r' % (data[:40],))
+        host.send_com4(data)
+    except ValueError as e:
+        raise SystemExit('one step is too long: %s' % e)
+    except RuntimeError as e:
+        raise SystemExit(str(e))
 
 
 def capture(program, workdir):

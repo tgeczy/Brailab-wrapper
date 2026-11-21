@@ -31,6 +31,7 @@ LPT_CTRL = 0x37A
 #: sends one frame, decides nothing is listening, and goes quiet.
 STATUS_BUSY = 0x30          # bits 4 and 5 set -> "speaking, wait"
 STATUS_READY = 0x20         # bit 4 clear, bit 5 still healthy
+STATUS_AT_REST = 0x10       # bit 4 set, bit 5 clear: the chip is stopped and silent
 
 #: Wall-clock a frame represents, before the FS/FD multipliers.
 FRAME_MS = 12.8
@@ -70,6 +71,7 @@ class BraiLabDevice:
         self.utterances = []            # [(pitch, [frames], ctrl)] per unit
         self._singles = 0
         self._busy_until = 0.0
+        self.frame_ms = FRAME_MS        # the chip's speed, from the last start write
         self._armed = True              # busy for the first poll of an utterance
         self._cur = []
 
@@ -126,6 +128,7 @@ class BraiLabDevice:
         self.bits = []
         self._cur = []
         self._active = True
+        self._armed = False             # addressed: no longer at rest
 
     def _stop(self):
         self._finish()
@@ -151,6 +154,13 @@ class BraiLabDevice:
             self.seq_time.append(stamp)
             self._speak(body)
         elif len(body) == 2:
+            c = decode_control(body)
+            if c['stop']:
+                self._armed = True      # STOP: back at rest
+            else:
+                # a start write carries the speed: the frame length the chip
+                # then plays, and so how long the busy line holds (#34)
+                self.frame_ms = c['frame_ms']
             self.controls.append(body)
             self.seq.append(('ctrl', body))
             self.seq_time.append(stamp)
@@ -160,7 +170,6 @@ class BraiLabDevice:
                 self.pitches.append(body[0])
                 self.seq.append(('pitch', body[0]))
                 self.seq_time.append(stamp)
-                self.rearm()
             self._singles += 1
 
     def _speak(self, frame):
@@ -173,7 +182,7 @@ class BraiLabDevice:
         and skips the start sequence that carries pitch.
         """
         d = decode_frame(frame)
-        ms = FRAME_MS * FD_MULT[d['FD']]
+        ms = self.frame_ms * FD_MULT[d['FD']]
         base = max(self.now, self._busy_until)
         self._busy_until = min(base + ms / 1000.0, self.now + FIFO_S)
 
@@ -182,18 +191,27 @@ class BraiLabDevice:
         """What the guest reads from the printer status port.
 
         Busy while queued speech would still be sounding; that is what paces
-        the program.  The first poll of an utterance also reports busy, which
-        is what lets the start control write (carrying furcsa and tempo) go
+        the program.  Busy at rest too, which is what lets the start sequence
+        (settings, pitch, and the control write carrying furcsa and tempo) go
         out at all -- see talkhun.py for why that polarity is not uniform.
+
+        At rest is BRAISPK's model, which fits every caller: from power-on,
+        ready from the first transaction, back at rest after a STOP.  The model
+        before it took "busy" for the first poll only, and TALKHUN v4 spends
+        that poll on a STOP check: every start sequence was dropped, and with
+        it the pitch, tempo and furcsa the BraiLabPC menu sets.
         """
         if self.now < self._busy_until:
             return STATUS_BUSY
         if self._armed:
-            self._armed = False
-            return STATUS_BUSY
+            # at rest and silent: 10h, on which TALKHUN's start check goes ahead
+            # at once; on 30h it waits out four BIOS ticks first, 220 ms before
+            # every utterance (measured; BRAISPK answers the same)
+            return STATUS_AT_REST
         return STATUS_READY
 
     def rearm(self):
+        """Back at rest, as after a STOP."""
         self._armed = True
 
     def reset(self):
