@@ -30,7 +30,9 @@ TEXTS = ["Jó napot kívánok.", "BraiLab PC", "Mennyi az idő? Fél öt.", "sz�
          "1234, 56.", "A", "I", "kérem", "Ez egy mondat; és ez egy másik: vége!", "...", " , ",
          "a,b,c", "Ez – mondta – „idézet”… tovább.", "Egy hosszabb mondat, amely több tagmondatból áll, és elég hosszú ahhoz, hogy "
          "egy blokknál is tovább tartson, mert sok szót kell kimondani benne egymás után.",
-         "segítőszoftverek, élő, ÁRVÍZTŰRŐ TÜKÖRFÚRÓGÉP."]
+         "segítőszoftverek, élő, ÁRVÍZTŰRŐ TÜKÖRFÚRÓGÉP.",
+         # everyday numbers stay under the clause budget of #19 and go to TALKHUN0 whole, as the reference does
+         "A 2024-es bevétel 1500000 forint volt.", "Telefonszám 06 1 234 5678 vagy 06 30 123 4567."]
 HUNGARIAN = "áéíóöőúüűÁÉÍÓÖŐÚÜŰ"
 SETTINGS = [dict(),
             dict(pitch=2.0 ** 0.25, time_scale=0.625, gain=0.7),
@@ -149,3 +151,39 @@ def test_a_setting_out_of_range_is_refused(voice):
 def test_a_wrong_program_is_refused():
     with pytest.raises(RuntimeError):
         brailab_voice.Voice(b"\xc3")
+
+
+# ---- the 2026-11-21 audit (#19, #20, #21) ----
+
+def pcm_len(voice, text, **settings):
+    return sum(len(b) for b in voice.stream(text, **settings))
+
+
+def test_a_clause_with_many_numbers_keeps_its_end(voice):
+    """#19: TALKHUN0 spells a clause with numbers into about 255 bytes and drops the rest: "alma 1990" nine times
+    and "vege" lost the "vege"."""
+    for k in (9, 12, 20):
+        body = " ".join(["alma 1990"] * k)
+        assert pcm_len(voice, body + " vége.") > pcm_len(voice, body + "."), k
+    rows = " ".join(["1234567890"] * 8)
+    assert pcm_len(voice, rows + " alma.") > pcm_len(voice, rows + ".")
+
+
+def test_a_long_clause_starts_quickly(voice):
+    """#20: a clause was captured whole before its first sample: 4 s for 16 KB with no punctuation."""
+    import time
+    text = " ".join(["szó"] * 4000)
+    t0 = time.perf_counter()
+    voice.begin(text)
+    first = voice.read()
+    took = time.perf_counter() - t0
+    assert first and took < 0.5, took
+
+
+def test_an_escape_in_the_text_does_not_change_later_speech(voice):
+    """#21: ESC P in the text reached TALKHUN0's own parser and changed every later utterance's pitch."""
+    before = b"".join(voice.stream("Jó napot kívánok."))
+    for text in ("\x1bP1 alma.", "alma\x1bP.", "\x1bR1 körte.", "\x1b[31mHiba\x1b[0m."):
+        b"".join(voice.stream(text))
+        assert b"".join(voice.stream("Jó napot kívánok.")) == before, repr(text)
+    assert pcm_len(voice, "alma\x1bP.") > 0, "the text around an escape is spoken"

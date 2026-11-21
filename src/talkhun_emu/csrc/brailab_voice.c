@@ -64,13 +64,61 @@ static int has_text(const uint8_t *s, int n)
     return 0;
 }
 
+/* How much of a clause TALKHUN0 is given at once.
+ *
+ * Numbers (#19).  When a clause holds a number, TALKHUN0 spells the clause out
+ * into about 255 bytes and drops what does not fit, silently: "alma 1990" eight
+ * times and "vége" are spoken, nine times and the "vége" is lost.  Measured for
+ * one-digit to ten-digit numbers, with and without words between: the cut comes
+ * where the spelled-out clause passes about 250 bytes ("alma egy " x 28,
+ * "ezerkilencszázkilencven " x 10).  A clause with digits is therefore given in
+ * pieces whose spelled-out length, counted as DIGIT_COST bytes a digit and one a
+ * character (a number spells out to at most about 7.5 bytes a digit), stays
+ * within NUMBER_BUDGET.  A clause of words alone is never cut by TALKHUN0.
+ *
+ * Long clauses (#20).  A clause is captured whole before its first sample, and a
+ * stop waits for that: 4 s for 16 KB with no punctuation.  A clause of words is
+ * given in pieces of at most PLAIN_BUDGET bytes, a capture of about 0.1 s.
+ *
+ * A piece ends at the last space within its budget (inside a word only when the
+ * word alone is longer), and with a comma, so it keeps the rising melody of an
+ * unfinished sentence.  Everything shorter goes to TALKHUN0 exactly as before. */
+#define NUMBER_BUDGET 200
+#define PLAIN_BUDGET 400
+#define DIGIT_COST 7
+
+static int is_digit(uint8_t c)
+{
+    return c >= '0' && c <= '9';
+}
+
+static int piece_length(const uint8_t *s, int n)
+{
+    int i, cost = 0, last_space = -1, budget = PLAIN_BUDGET;
+    for (i = 0; i < n; i++)
+        if (is_digit(s[i])) {
+            budget = NUMBER_BUDGET;
+            break;
+        }
+    for (i = 0; i < n; i++) {
+        cost += is_digit(s[i]) ? DIGIT_COST : 1;
+        if (cost > budget)
+            break;
+        if (s[i] == ' ' && i > 0)
+            last_space = i;
+    }
+    if (i == n)
+        return n;
+    return last_space > 0 ? last_space + 1 : (i > 0 ? i : 1);
+}
+
 /* Capture the next clause that has anything in it.  0 when there is none left. */
 static int next_clause(brailab_voice *v)
 {
     while (v->pos < v->len) {
         const int start = v->pos;
         uint8_t esc[3] = {27, 'F', 0};
-        int n, i, female = 0;
+        int n, i, cut, split = 0, female = 0;
 
         while (v->pos < v->len && !is_delimiter(v->text[v->pos]))
             v->pos++;
@@ -79,13 +127,29 @@ static int next_clause(brailab_voice *v)
         n = v->pos - start;
         if (!has_text(v->text + start, n))
             continue;
+        cut = piece_length(v->text + start, n);
+        if (cut < n) {                  /* the rest is the next piece */
+            v->pos = start + cut;
+            n = cut;
+            split = 1;
+        }
         for (i = 0; i < n; i++) {
             const uint8_t c = v->text[start + i];
-            v->clause[i] = c == BRAILAB_VOICE_UNKNOWN ? '?' : c;
+            /* A control byte in the text would reach TALKHUN0's own command parser:
+             * ESC P and ESC R changed every later utterance's voice (#21).  The ESC F
+             * this file sends before each clause is not text and is not touched. */
+            v->clause[i] = c == BRAILAB_VOICE_UNKNOWN ? '?' : (c < 0x20 || c == 0x7F) ? ' ' : c;
+        }
+        if (split) {
+            /* a piece of a longer clause: a comma, for the melody of an unfinished
+             * sentence (TALKHUN0 would add a full stop) */
+            while (n > 1 && is_blank(v->clause[n - 1]))
+                n--;
+            v->clause[n++] = ',';
         }
         /* A lone capital reads as a Roman numeral ("I" is "first"); a trailing
          * space makes the engine read it as the letter. */
-        if (n == 1)
+        else if (n == 1)
             v->clause[n++] = ' ';
         /* An unknown character says '?' but ends nothing, so the clause still needs
          * its full stop, which talkhun_capture wouldn't add after a '?'. */
