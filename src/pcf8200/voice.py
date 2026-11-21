@@ -47,10 +47,11 @@ class Voice:
         """A voiced vowel with the given formant frequencies (Hz)."""
         return self._seg(formants, dur, amp, True, bw=bw, pitch=pitch)
 
-    def fricative(self, dur=0.12, amp=0.45, formants=(4000, 4200, 4800), bw=(700, 700, 700)):
+    def fricative(self, dur=0.12, amp=0.45, formants=(4200, 4800, 4000), bw=(700, 700, 700)):
         """An unvoiced (noise-excited) consonant -- hiss shaped by broad formants.  Keep
-        them below 5 kHz: the chip runs at 10 kHz, and higher ones fold back (the default
-        was (4200, 5200, 6000), which sounded as these)."""
+        them below 5 kHz: the chip runs at 10 kHz, and higher ones fold back.  The default
+        was (4200, 5200, 6000); each slot is now its mirror image, the same sound held,
+        a straight glide where the old one swept up to 5 kHz and back."""
         return self._seg(formants, dur, amp, False, bw=bw)
 
     def silence(self, dur=0.08):

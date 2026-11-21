@@ -260,6 +260,16 @@ if [ "$(cat "$D/etc/speechd.conf")" = "$(printf '# glued by an older install.sh\
     ok "uninstall mends a glued default" "DefaultModule espeak-ng"
 else fail "uninstall mends a glued default" "$(tr '\n' '|' < "$D/etc/speechd.conf")"; fi
 
+# a DefaultModule written with a tab, two spaces, or a trailing space comes back as it was
+for c in "tab:$(printf 'DefaultModule\tespeak-ng')" "twospaces:DefaultModule  espeak-ng" "trailing:DefaultModule espeak-ng "; do
+    name="${c%%:*}"; line="${c#*:}"
+    fresh "spacing-$name" "$(printf '# spacing\n%s\nDefaultLanguage en\n' "$line")"
+    install "file://$REL" --default
+    uninstall
+    if [ "$(cat "$D/etc/speechd.conf")" = "$(cat "$D/before.conf")" ]; then ok "uninstall restores ($name)" "the old default as it was"
+    else fail "uninstall restores ($name)" "$(tr '\n\t' '|>' < "$D/etc/speechd.conf")"; fi
+done
+
 # 8. --with-tts leaves nothing in the temporary folder: the download and the unpacked archive both go (#26)
 fresh tmpclean "$STOCK"
 mkdir "$D/tmp"

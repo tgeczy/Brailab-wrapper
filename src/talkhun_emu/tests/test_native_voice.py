@@ -32,7 +32,10 @@ TEXTS = ["Jó napot kívánok.", "BraiLab PC", "Mennyi az idő? Fél öt.", "sz�
          "egy blokknál is tovább tartson, mert sok szót kell kimondani benne egymás után.",
          "segítőszoftverek, élő, ÁRVÍZTŰRŐ TÜKÖRFÚRÓGÉP.",
          # everyday numbers stay under the clause budget of #19 and go to TALKHUN0 whole, as the reference does
-         "A 2024-es bevétel 1500000 forint volt.", "Telefonszám 06 1 234 5678 vagy 06 30 123 4567."]
+         "A 2024-es bevétel 1500000 forint volt.", "Telefonszám 06 1 234 5678 vagy 06 30 123 4567.",
+         # 181 characters and a year: split with a comma by the first budget (7 a digit, 200)
+         "Az iskola igazgatója bejelentette hogy a tanév végén minden diák aki legalább négy "
+         "tantárgyból jeles eredményt ér el különleges oklevelet kap a ballagási ünnepségen 2024 júniusában."]
 HUNGARIAN = "áéíóöőúüűÁÉÍÓÖŐÚÜŰ"
 SETTINGS = [dict(),
             dict(pitch=2.0 ** 0.25, time_scale=0.625, gain=0.7),
@@ -167,6 +170,10 @@ def test_a_clause_with_many_numbers_keeps_its_end(voice):
         assert pcm_len(voice, body + " vége.") > pcm_len(voice, body + "."), k
     rows = " ".join(["1234567890"] * 8)
     assert pcm_len(voice, rows + " alma.") > pcm_len(voice, rows + ".")
+    # nines spell out longest, almost 10 bytes a digit; a cost of 8 lost these ends
+    for num, k in (("999999999", 3), ("9999999", 4), ("99999999", 4)):
+        body = " ".join([num] * k)
+        assert pcm_len(voice, body + " vége.") > pcm_len(voice, body + "."), (num, k)
 
 
 def test_a_long_clause_starts_quickly(voice):
@@ -187,3 +194,21 @@ def test_an_escape_in_the_text_does_not_change_later_speech(voice):
         b"".join(voice.stream(text))
         assert b"".join(voice.stream("Jó napot kívánok.")) == before, repr(text)
     assert pcm_len(voice, "alma\x1bP.") > 0, "the text around an escape is spoken"
+
+
+# ---- the regression review of the same day ----
+
+def test_a_lone_closing_mark_is_not_spoken(voice):
+    """A clause cut just before its mark left "." (or "?") as a piece of its own, which TALKHUN0 said: 0.9 s."""
+    rate = brailab_voice.RATE
+    for mark in ".?":
+        long = "alma " * 80 + mark
+        trimmed = "alma " * 79 + "alma" + mark
+        assert abs(pcm_len(voice, long) - pcm_len(voice, trimmed)) < 0.15 * rate * 2, mark
+
+
+def test_a_long_run_of_blanks_is_not_a_spoken_comma(voice):
+    """More than 400 blanks (200 with digits) became a piece of its own, trimmed to " " and given a comma."""
+    rate = brailab_voice.RATE
+    assert abs(pcm_len(voice, " " * 450 + "alma.") - pcm_len(voice, "alma.")) < 0.15 * rate * 2
+    assert abs(pcm_len(voice, "1 " + " " * 250 + "alma.") - pcm_len(voice, "1 alma.")) < 0.15 * rate * 2

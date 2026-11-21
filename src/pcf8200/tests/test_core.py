@@ -239,15 +239,17 @@ def test_resample_matches_scipy_with_the_nyquist_bin():
     assert abs(np.max(np.abs(_resample(tone, 10000, 20000))) - 1.0) < 1e-9
 
 
-def test_the_starter_fricatives_sound_as_they_always_did():
-    """#40: the "s" and the fricative default asked for formants above 5 kHz, which fold back.  The values now
-    are their mirror images, and a resonator's coefficient 2cos(2 pi f / 10000) cannot tell the two apart."""
+def test_the_starter_fricatives_held_sound_as_they_always_did():
+    """#40: the "s" and the fricative default asked for formants above 5 kHz, which fold back.  Each slot is
+    now its mirror image, and a resonator's coefficient 2cos(2 pi f / 10000) cannot tell the two apart, so a
+    held fricative renders the same, slot for slot.  (In a glide the old values swept up to 5 kHz and back.)"""
     import warnings
     from pcf8200.chip import render
     from pcf8200.phonemes import FRICATIVES
     for old, new in (((4500, 5500, 6500), FRICATIVES["s"]["formants"]),
                      ((1200, 4000, 6000), FRICATIVES["f"]["formants"]),
-                     ((4200, 5200, 6000), (4000, 4200, 4800))):
+                     ((4200, 5200, 6000), (4200, 4800, 4000))):
+        assert all(abs((o if o <= 5000 else 10000 - o) - n) < 1e-9 for o, n in zip(old, new)), (old, new)
         renders = []
         for formants in (old, new):
             v = Voice()
@@ -256,9 +258,10 @@ def test_the_starter_fricatives_sound_as_they_always_did():
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 renders.append(render(fc, bw, amp, p, voiced))
-        # the same three resonators in another order: equal to the last bits of rounding
-        assert np.allclose(renders[0], renders[1], atol=1e-7), (old, new)
+        assert np.allclose(renders[0], renders[1], atol=1e-9), (old, new)
     assert all(f <= 5000 for f in FRICATIVES["s"]["formants"] + FRICATIVES["f"]["formants"])
+    import inspect
+    assert inspect.signature(Voice.fricative).parameters["formants"].default == (4200, 4800, 4000)
 
 
 def test_render_warns_about_a_formant_above_5khz():

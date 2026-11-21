@@ -31,9 +31,11 @@ POLISH = {
 
 # a couple of unvoiced consonants as (formants, bandwidths) for Voice.fricative.  The
 # chip runs at 10 kHz, so nothing is above 5 kHz: "s" was (4500, 5500, 6500) and "f"
-# (1200, 4000, 6000), which fold back to the values here -- what they always sounded like.
+# (1200, 4000, 6000), and each slot here is the old one's mirror image below 5 kHz.  Held,
+# they sound exactly as before; in a glide from a vowel the old ones swept up to 5 kHz and
+# back down to the mirror, where these glide straight.
 FRICATIVES = {
-    "s": dict(formants=(3500, 4500, 4500), bw=(600, 600, 600)),
+    "s": dict(formants=(4500, 4500, 3500), bw=(600, 600, 600)),
     "sz": dict(formants=(2500, 3500, 4500), bw=(700, 700, 700)),   # Polish sz [ʃ]
     "f": dict(formants=(1200, 4000, 4000), bw=(1000, 1000, 1000)),
 }

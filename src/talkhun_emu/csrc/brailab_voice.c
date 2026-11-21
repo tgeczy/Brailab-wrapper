@@ -73,8 +73,11 @@ static int has_text(const uint8_t *s, int n)
  * where the spelled-out clause passes about 250 bytes ("alma egy " x 28,
  * "ezerkilencszázkilencven " x 10).  A clause with digits is therefore given in
  * pieces whose spelled-out length, counted as DIGIT_COST bytes a digit and one a
- * character (a number spells out to at most about 7.5 bytes a digit), stays
- * within NUMBER_BUDGET.  A clause of words alone is never cut by TALKHUN0.
+ * character (nines spell out longest, at most 9.7 bytes a digit: 999999999 is
+ * "kilencszázkilencvenkilencmillió..."), stays within NUMBER_BUDGET.  A clause of
+ * words alone is never cut by TALKHUN0.  (It was 7 and 200, which split a
+ * 181-character sentence with one year in it; then 8, which lost the end of
+ * 999999999 three times.)
  *
  * Long clauses (#20).  A clause is captured whole before its first sample, and a
  * stop waits for that: 4 s for 16 KB with no punctuation.  A clause of words is
@@ -83,13 +86,23 @@ static int has_text(const uint8_t *s, int n)
  * A piece ends at the last space within its budget (inside a word only when the
  * word alone is longer), and with a comma, so it keeps the rising melody of an
  * unfinished sentence.  Everything shorter goes to TALKHUN0 exactly as before. */
-#define NUMBER_BUDGET 200
+#define NUMBER_BUDGET 240
 #define PLAIN_BUDGET 400
-#define DIGIT_COST 7
+#define DIGIT_COST 10
 
 static int is_digit(uint8_t c)
 {
     return c >= '0' && c <= '9';
+}
+
+/* Anything to say: a character that is neither blank nor a punctuation mark. */
+static int has_speech(const uint8_t *s, int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        if (!is_blank(s[i]) && !is_delimiter(s[i]))
+            return 1;
+    return 0;
 }
 
 static int piece_length(const uint8_t *s, int n)
@@ -128,11 +141,17 @@ static int next_clause(brailab_voice *v)
         if (!has_text(v->text + start, n))
             continue;
         cut = piece_length(v->text + start, n);
+        /* what is left after the cut is only blanks and the closing mark: no piece of
+         * its own, or TALKHUN0 says the mark ("." alone was 0.9 s of speech) */
+        if (cut < n && !has_speech(v->text + start + cut, n - cut))
+            cut = n;
         if (cut < n) {                  /* the rest is the next piece */
             v->pos = start + cut;
             n = cut;
             split = 1;
         }
+        if (split && !has_speech(v->text + start, n))
+            continue;                   /* a run of blanks: a piece of nothing, not a spoken comma */
         for (i = 0; i < n; i++) {
             const uint8_t c = v->text[start + i];
             /* A control byte in the text would reach TALKHUN0's own command parser:

@@ -9,7 +9,7 @@ Layout produced:
         archive/         TALKHUN0.COM  (Arato's file, release only)
         BraiLab-jatek.cmd   launcher
 """
-import filecmp, os, shutil, sys, zipfile
+import filecmp, os, re, shutil, sys, zipfile
 
 BUILD = os.path.dirname(os.path.abspath(__file__))
 EMU = os.path.dirname(BUILD)                       # talkhun_emu
@@ -27,8 +27,35 @@ open(pth, "w").write("python313.zip\n.\n../app\n../lib\n")
 
 # 2) app: engine sources
 app = os.path.join(OUT, "app"); os.makedirs(app)
-APP_PY = ["braipc.py", "brailab_device.py", "dos_host.py", "brai_synth.py",
-          "chip_synth.py", "pcf8200.py", "pcf8200_tables.py", "talkhun.py"]
+
+
+def app_modules(start="braipc.py"):
+    """braipc.py and every module of talkhun_emu/ it imports, followed through.  The list
+    was written by hand, and when talkhun.py came to import brailab_voice and braipc.py
+    dos_keys, the bundle no longer started."""
+    found, todo = [], [start]
+    while todo:
+        name = todo.pop()
+        if name in found:
+            continue
+        found.append(name)
+        with open(os.path.join(EMU, name), encoding="utf-8") as f:
+            src = f.read()
+        for m in re.findall(r"^\s*(?:from\s+\.?\s*(\w+)\s+import|import\s+(\w+))", src, re.M):
+            mod = (m[0] or m[1]) + ".py"
+            if os.path.isfile(os.path.join(EMU, mod)):
+                todo.append(mod)
+        for m in re.findall(r"^\s*from\s+\.\s+import\s+(\w+)", src, re.M):
+            if os.path.isfile(os.path.join(EMU, m + ".py")):
+                todo.append(m + ".py")
+    return sorted(found)
+
+
+APP_PY = app_modules()
+for needed in ("braipc.py", "talkhun.py", "brailab_voice.py", "dos_keys.py", "dos_host.py", "chip_synth.py"):
+    if needed not in APP_PY:
+        raise SystemExit("assemble: %s is missing from the bundle's modules %s" % (needed, APP_PY))
+print("app modules:", " ".join(APP_PY))
 for m in APP_PY:
     shutil.copy2(os.path.join(EMU, m), os.path.join(app, m))
 shutil.copy2(os.path.join(os.path.dirname(EMU), "pcf8200", "pcf8200_core.py"),
