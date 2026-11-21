@@ -21,7 +21,13 @@ from synthDriverHandler import SynthDriver, synthDoneSpeaking, synthIndexReached
 from speech.commands import IndexCommand, PitchCommand
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 
+try:                                  # NVDA's pause (before a delayed character description)
+    from speech.commands import BreakCommand
+except ImportError:
+    BreakCommand = None
+
 from ._brailab_native import brailab_voice
+from ._brailab_native import brailab_feed   # an utterance's first feed, and indexes with no audio behind them (#13)
 
 # Point `_` at this add-on's own catalog (locale/<language>/LC_MESSAGES/nvda.mo).
 # This driver runs inside NVDA itself, so the standard call applies: it finds the
@@ -60,7 +66,7 @@ class SynthDriver(SynthDriver):
     # percentage" arrives as an offset on its own 0-100 scale.  A driver that
     # does not list it never sees one, so the setting silently does nothing at
     # every value, which is exactly what was happening here.
-    supportedCommands = {IndexCommand, PitchCommand}
+    supportedCommands = {IndexCommand, PitchCommand} | ({BreakCommand} if BreakCommand else set())
     supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
     @classmethod
@@ -87,7 +93,10 @@ class SynthDriver(SynthDriver):
             outputDevice = __import__("config").conf["speech"]["outputDevice"]
         except Exception:
             outputDevice = __import__("config").conf["audio"]["outputDevice"]
-        self._player = nvwave.WavePlayer(1, brailab_voice.RATE, 16, outputDevice=outputDevice)
+        # FirstFeed: when an utterance's indexes go down with no audio behind them (a lone "(" renders
+        # nothing), NVDA's player would never call them on a stopped stream; FirstFeed starts it (#13).
+        self._player = brailab_feed.FirstFeed(
+            nvwave.WavePlayer(1, brailab_voice.RATE, 16, outputDevice=outputDevice), brailab_voice.RATE)
 
         self._bgQueue = queue.Queue()
         self._bgThread = threading.Thread(target=self._bgRun,
@@ -123,18 +132,19 @@ class SynthDriver(SynthDriver):
     # ----- Say-All-friendly block building -----
 
     def _buildBlocks(self, speechSequence):
-        """Split the sequence into (text, indexesAfter, pitchAdj) blocks.
+        """Split the sequence into (text, indexesAfter, pitchAdj, pauseMs) blocks.
 
         A PitchCommand applies to everything after it, so a block is closed
         whenever the offset changes: that is what lets a capital be spoken
-        higher than the words on either side of it.
+        higher than the words on either side of it.  A BreakCommand closes the
+        block too and becomes that many milliseconds of silence after it (#17).
         """
         blocks = []
         buf = []
         pitchAdj = 0
 
-        def flush(indexesAfter, adj):
-            blocks.append((" ".join(buf).strip(), indexesAfter, adj))
+        def flush(indexesAfter, adj, pause=0):
+            blocks.append((" ".join(buf).strip(), indexesAfter, adj, pause))
             buf.clear()
 
         for item in speechSequence:
@@ -149,12 +159,14 @@ class SynthDriver(SynthDriver):
                 if buf:
                     flush([], pitchAdj)
                 pitchAdj = item.offset
+            elif BreakCommand is not None and isinstance(item, BreakCommand):
+                flush([], pitchAdj, max(0, int(getattr(item, "time", 0) or 0)))
         if buf:
             flush([], pitchAdj)
-        while blocks and (not blocks[-1][0]) and (not blocks[-1][1]):
+        while blocks and (not blocks[-1][0]) and (not blocks[-1][1]) and not blocks[-1][3]:
             blocks.pop()
-        anyText = any(t for (t, _, _) in blocks)
-        allIndexes = [i for (_, idxs, _) in blocks for i in idxs]
+        anyText = any(t or pause for (t, _, _, pause) in blocks)
+        allIndexes = [i for (_, idxs, _, _) in blocks for i in idxs]
         return blocks, anyText, allIndexes
 
     # ----- SynthDriver API -----
@@ -173,34 +185,71 @@ class SynthDriver(SynthDriver):
             return
         self._bgQueue.put(lambda: self._speakBg(blocks, gen))
 
-    def _speakBg(self, blocks, gen):
-        for (text, indexesAfter, pitchAdj) in blocks:
-            if gen != self._gen:
-                return
-            if text:
-                try:
-                    for pcm in self._renderStream(text, pitchAdj):
-                        if gen != self._gen:
-                            return
-                        if pcm:
-                            self._player.feed(pcm)
-                except Exception:
-                    log.error("brailabEmulated: render failed", exc_info=True)
-                    return
-            if gen == self._gen and indexesAfter:
-                idxs = list(indexesAfter)
+    def _feed(self, pcm, gen):
+        """Feed one block.  False when a cancel has come: then a block that went down
+        across it is stopped again from here, after the last feed (#16)."""
+        if gen != self._gen:
+            return False
+        self._player.feed(pcm)
+        if gen != self._gen:
+            try:
+                self._player.stop()
+            except Exception:
+                pass
+            return False
+        return True
 
-                def cb(idxs=idxs, gen=gen):
-                    if gen == self._gen:
-                        for i in idxs:
+    def _speakBg(self, blocks, gen):
+        handed = []                           # the indexes given to the player (#14)
+        try:
+            for (text, indexesAfter, pitchAdj, pauseMs) in blocks:
+                if gen != self._gen:
+                    return
+                if text:
+                    for pcm in self._renderStream(text, pitchAdj):
+                        if pcm and not self._feed(pcm, gen):
+                            return
+                if pauseMs and not self._feed(b"\x00\x00" * (brailab_voice.RATE * pauseMs // 1000), gen):
+                    return
+                if gen == self._gen and indexesAfter:
+                    idxs = list(indexesAfter)
+
+                    def cb(idxs=idxs, gen=gen):
+                        if gen == self._gen:
+                            for i in idxs:
+                                synthIndexReached.notify(synth=self, index=i)
+                    handed.extend(idxs)
+                    self._player.feed(b"", onDone=cb)
+        except Exception:
+            # A fault ended the job (#14): what was fed is let play, then the indexes
+            # never handed on are reported, and done, so NVDA, which waits for an
+            # utterance's last index before it says more, is not left waiting.
+            log.error("brailabEmulated: render failed", exc_info=True)
+            if gen == self._gen:
+                try:
+                    self._player.idle()
+                except Exception:
+                    pass
+                left = list(handed)
+                for (_, idxs, _, _) in blocks:
+                    for i in idxs:
+                        if i in left:
+                            left.remove(i)
+                        elif gen == self._gen:
                             synthIndexReached.notify(synth=self, index=i)
-                self._player.feed(b"", 0, onDone=cb)
+                if gen == self._gen:
+                    synthDoneSpeaking.notify(synth=self)
+            return
 
         def doneCb(gen=gen):
             if gen == self._gen:
                 synthDoneSpeaking.notify(synth=self)
-        self._player.feed(b"", 0, onDone=doneCb)
-        self._player.idle()
+        try:
+            self._player.feed(b"", onDone=doneCb)
+            self._player.idle()
+        except Exception:
+            log.error("brailabEmulated: the player failed at the utterance's end", exc_info=True)
+            doneCb()
 
     def cancel(self):
         self._gen += 1                    # invalidate the in-flight utterance + its callbacks

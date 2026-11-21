@@ -133,6 +133,73 @@ def test_the_first_audio_is_quick(driver):
     driver.cancel()
 
 
+def indexes():
+    return [k["index"] for _, k in reached.calls]
+
+
+def test_text_with_no_audio_still_reports_on_a_stopped_player(driver):
+    """#13: a lone ')' renders nothing; the player is stopped (first speech), so an index fed
+    with no audio behind it would wait forever, and NVDA would say nothing more."""
+    assert voice_pcm(")", time_scale=0.625, gain=1.15) == b""
+    say(driver, ")", IndexCommand(7))
+    assert indexes() == [7]
+
+
+def test_text_with_no_audio_still_reports_after_a_cancel(driver):
+    say(driver, "Jó napot.")
+    driver.cancel()
+    driver._bgQueue.join()
+    say(driver, "();", IndexCommand(8))
+    assert indexes() == [8]
+
+
+def test_text_with_no_audio_reports_after_the_idle_check(driver):
+    say(driver, "Jó napot.")
+    driver._player.idle_check()                  # NVDA's 10 s idle check stopped the stream
+    say(driver, "(", IndexCommand(9))
+    assert indexes() == [9]
+
+
+def test_an_engine_fault_mid_utterance_still_reports(driver, monkeypatch):
+    """#14: the job ends at the fault, but NVDA gets every index and done."""
+    real = driver._renderStream
+
+    def broken(text, pitchAdj=0):
+        blocks = real(text, pitchAdj)
+        yield next(blocks)
+        raise RuntimeError("forced fault")
+    monkeypatch.setattr(driver, "_renderStream", broken)
+    say(driver, "Egy hosszabb mondat, ami több blokkból áll.", IndexCommand(1), "Kettő.", IndexCommand(2))
+    assert indexes() == [1, 2]
+    assert len(done.calls) == 1
+
+
+def test_a_block_fed_across_a_cancel_is_stopped_again(driver):
+    """#16: a block the worker was feeding when the cancel came must not play on."""
+    inner = driver._player._p
+    real = inner.feed
+    hit = []
+
+    def feed(data, size=None, onDone=None):
+        if data and not hit:
+            hit.append(1)
+            driver.cancel()                      # the cancel lands while this block goes down
+        return real(data, size, onDone)
+    inner.feed = feed
+    driver.speak(["Egy nagyon hosszú mondat, sok szóval, ami sokáig tart, és közben megszakítjuk."])
+    driver._bgQueue.join()
+    assert hit and inner.stops >= 2
+
+
+def test_a_break_is_that_much_silence(driver):
+    """#17: NVDA's BreakCommand (before a delayed character description) is a pause."""
+    from speech.commands import BreakCommand
+    pcm = say(driver, "A", BreakCommand(500), "B")
+    a = voice_pcm("A", time_scale=0.625, gain=1.15)
+    b = voice_pcm("B", time_scale=0.625, gain=1.15)
+    assert pcm == a + b"\x00\x00" * 5000 + b
+
+
 def test_terminate_stops_the_thread_and_closes_the_player(driver):
     player = driver._player
     driver.terminate()

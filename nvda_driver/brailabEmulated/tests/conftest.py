@@ -2,13 +2,20 @@
 """Enough of NVDA to load and drive the emulated BraiLab driver outside NVDA.
 
 Lifted from panthera-speech's tests, which lifted it from TGSpeechBox.  The fakes
-model the behaviour that real driver bugs turned on, and nothing else:
+model the behaviour that real driver bugs turned on, and nothing else.  The player
+follows NVDA 2026.1's WASAPI player (nvdaHelper/local/wasapi.cpp: feed, sync,
+maybeFireCallback, completeStop, and nvwave.py's idle and idle check):
 
-* `WavePlayer.idle()` blocks until the audio drains, and `stop()` cuts it short.
-* `stop()` costs `STREAM_START` on the next `feed()`, as tearing a real output
-  stream down and starting it again does.
-* `feed()`'s `onDone` fires once that chunk has finished sounding, never sooner,
-  and `stop()` drops the waiting ones uncalled.  Indexes ride on exactly this.
+* The stream is stopped at first and after every `stop()`; only a `feed()` with
+  audio starts it, and starting costs `STREAM_START`, as a real output stream does.
+* `feed()`'s `onDone` fires once that chunk has finished sounding, never sooner, and
+  only while the stream is playing: a `feed(b"", onDone)` on a stopped stream just
+  waits (#13).  `stop()` drops the waiting ones uncalled.
+* `idle()` is NVDA's `sync()`: on a playing stream it waits until the audio has
+  played and fires what is due, and the stream stays playing; on a stopped stream it
+  returns at once and fires nothing.
+* `idle_check()` is NVDA's 10-second idle check: a sync, then a stop that drops what
+  is still waiting.
 * `synthDoneSpeaking` and `synthIndexReached` record when they fired.
 * `SynthDriver`'s metaclass turns `_get_x`/`_set_x` into properties from the class's
   own namespace, as NVDA's AutoPropertyType does.
@@ -50,22 +57,27 @@ class FakeWavePlayer(object):
         self._callbacks = []            # (when the chunk ends, callback), in feed order
 
     def feed(self, data, size=None, onDone=None):
+        data = bytes(data or b"")
         with self._lock:
             self.fed += 1
             self.pcm += data
             now = time.perf_counter()
-            if not self._running:
-                self._running = True
-                self.startups += 1
-                now += STREAM_START
-            self._until = max(self._until, now) + len(data) / 2.0 / OUT_RATE
+            if data:
+                if not self._running:
+                    self._running = True
+                    self.startups += 1
+                    now += STREAM_START
+                self._until = max(self._until, now) + len(data) / 2.0 / OUT_RATE
             if onDone is not None:
                 self._callbacks.append((self._until, onDone))
         self._fire()
 
     def _fire(self, everything=False):
+        """the callbacks whose audio has played; none while the stream is stopped"""
         due = []
         with self._lock:
+            if not self._running:
+                return
             now = time.perf_counter()
             while self._callbacks and (everything or self._callbacks[0][0] <= now):
                 due.append(self._callbacks.pop(0)[1])
@@ -82,15 +94,20 @@ class FakeWavePlayer(object):
     def idle(self):
         self.idles += 1
         while True:
-            self._fire()
             with self._lock:
+                if not self._running:
+                    return                      # sync() on a stopped stream does nothing
                 left = self._until - time.perf_counter()
+            self._fire()
             if left <= 0:
-                with self._lock:
-                    self._running = False
                 self._fire(everything=True)
                 return
             time.sleep(min(left, 0.005))
+
+    def idle_check(self):
+        """NVDA's 10 s idle check (nvwave.py _idleCheck -> wasPlay_idle): sync, then stop"""
+        self.idle()
+        self.stop()
 
     def pause(self, switch):
         pass
@@ -155,9 +172,13 @@ def _install_fake_nvda():
     class PitchCommand(object):
         def __init__(self, offset=0, multiplier=1):
             self.offset = offset
+
+    class BreakCommand(object):
+        def __init__(self, time=0):
+            self.time = time
     speech = mod("speech")
     speech.commands = mod("speech.commands", IndexCommand=IndexCommand,
-                          PitchCommand=PitchCommand)
+                          PitchCommand=PitchCommand, BreakCommand=BreakCommand)
 
     class _Setting(object):
         def __init__(self, *a, **k):

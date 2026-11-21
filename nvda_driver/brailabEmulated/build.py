@@ -92,6 +92,7 @@ def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=
     write(os.path.join(sd, name + ".py"), driver)
     open(os.path.join(eng, "__init__.py"), "w").close()
     shutil.copy2(os.path.join(EMU, "brailab_voice.py"), eng)
+    shutil.copy2(os.path.join(os.path.dirname(HERE), "brailab_feed.py"), eng)   # #13
     shutil.copy2(MAME_LICENSE, os.path.join(eng, "LICENSE-MAME-8086.txt"))
     for arch in ("x64", "x86"):
         dll = os.path.join(EMU, "_bin", arch, "talkhun.dll")
