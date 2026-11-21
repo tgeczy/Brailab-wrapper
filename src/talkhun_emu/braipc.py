@@ -115,14 +115,8 @@ BLIP_LEAD_S = 0.12
 OUT_RATE = 44100
 
 #: DOS keyboard: (scancode << 8) | ascii, which is what INT 16h AH=0 returns.
-EXTENDED = {
-    'H': 0x4800, 'P': 0x5000, 'K': 0x4B00, 'M': 0x4D00,   # arrows
-    'G': 0x4700, 'O': 0x4F00, 'I': 0x4900, 'Q': 0x5100,   # home/end/pgup/pgdn
-    'R': 0x5200, 'S': 0x5300,                             # insert/delete
-    ';': 0x3B00, '<': 0x3C00, '=': 0x3D00, '>': 0x3E00,   # F1-F4
-}
-SIMPLE = {'\r': 0x1C0D, '\n': 0x1C0D, '\x1b': 0x011B, ' ': 0x3920,
-          '\x08': 0x0E08, '\t': 0x0F09}
+from dos_keys import (EXTENDED, SIMPLE, K_ESC, K_UP, K_DOWN, K_LEFT, K_RIGHT,  # noqa: E402
+                      K_ENTER, key_ax)
 
 #: The four base frame durations the FS field can select, fastest last.
 TEMPOS = [('lassú', '1'), ('normál', '2'), ('gyors', '3'), ('leggyorsabb', '4')]
@@ -461,38 +455,6 @@ def read_key(block=False):
     return key_ax(ch[0])
 
 
-#: Scan codes of the US layout's printable keys (IBM PC AT set 1), so a
-#: program that looks at AH sees the key it would have on a real machine.
-_SCAN_ROWS = (
-    (0x02, '1234567890-='), (0x10, 'qwertyuiop[]'), (0x1E, "asdfghjkl;'`"),
-    (0x2B, '\\zxcvbnm,./'),
-)
-_SHIFTED = dict(zip('!@#$%^&*()_+{}:"~|<>?', '1234567890-=[];\'`\\,./'))
-SCAN = {}
-for _start, _keys in _SCAN_ROWS:
-    for _i, _k in enumerate(_keys):
-        SCAN[_k] = _start + _i
-del _start, _keys, _i, _k
-
-
-def key_ax(byte):
-    """The AX INT 16h gives for one byte msvcrt.getch() read.
-
-    getch() gives the console's own OEM byte, which is what a DOS program
-    expects in AL: it was decoded as CP852 and its Unicode code point cut to a
-    byte, so á (A0h) reached the program as E1h and ő (8Bh) as the letter Q
-    (#35).  The byte goes through as it is; AH is the key's scan code where the
-    key is on the US layout, else 0 (an accented letter has no fixed key).
-    """
-    c = chr(byte)
-    if c in SIMPLE:
-        return SIMPLE[c]
-    if byte < 0x80:
-        base = c.lower() if c.isalpha() else _SHIFTED.get(c, c)
-        return (SCAN.get(base, 0) << 8) | byte
-    return byte
-
-
 def _ctrl_watcher():
     """Return a callable reporting whether Ctrl is held in this console.
 
@@ -514,9 +476,6 @@ def _ctrl_watcher():
         return lambda: False
 
 
-#: AX values the menu steers by.
-K_ESC, K_UP, K_DOWN, K_LEFT, K_RIGHT = 0x011B, 0x4800, 0x5000, 0x4B00, 0x4D00
-K_ENTER = 0x1C0D
 
 
 #: Remembers the last program and the voice settings between launches.
