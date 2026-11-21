@@ -286,6 +286,7 @@ struct BL_STATE {
 	// callback (see utteranceWentQuiet).
 	std::atomic<int> writesInFlight{ 0 };
 	std::atomic<uint32_t> doneFallbacks{ 0 };
+	std::atomic<uint32_t> silentPieces{ 0 };   // pieces given up on: no audio NO_AUDIO_MS after their start
 
 	// Desired settings (setters store these; worker applies them before StartSay)
 	std::atomic<int> desiredTempo{ 0 };
@@ -541,6 +542,33 @@ static void applyCommaStyleLocked(BL_STATE* s) {
 // gap that long between two buffers does not happen while it is still speaking.
 static const ULONGLONG DONE_QUIET_MS = 500;
 
+// A piece TTS.dll says nothing for.  For some text it neither writes audio nor
+// calls back (a few hundred characters of phone numbers, a long run of colons),
+// and the worker used to wait out its watchdog with every index after it lost.
+// Measured over long prose, long words, numbers and amounts at tempos 0, 4 and 9:
+// the first audio always came within 3 ms of the start.  So a piece with no
+// audio NO_AUDIO_MS after its start is taken as silent: stopped, and the
+// utterance goes on to its next part (#2).
+static const ULONGLONG NO_AUDIO_MS = 2000;
+
+static bool pieceIsSilent(BL_STATE* s, ULONGLONG startedTick) {
+	if (s->lastAudioTick.load(std::memory_order_relaxed) != 0) return false;
+	if (s->writesInFlight.load(std::memory_order_relaxed) != 0) return false;
+	return GetTickCount64() - startedTick >= NO_AUDIO_MS;
+}
+
+// The watchdog for a piece that stops partway, counted from its last audio (or
+// its start), never from its start alone: at the slowest tempo two phone numbers
+// a line for 249 characters take 177.5 s of real speech, and a three-minute
+// limit from the start cut such a piece off with an error (#2).
+static const ULONGLONG STALL_MS = 60000;
+
+static bool pieceStalled(BL_STATE* s, ULONGLONG startedTick) {
+	const ULONGLONG last = s->lastAudioTick.load(std::memory_order_relaxed);
+	const ULONGLONG since = last > startedTick ? last : startedTick;
+	return GetTickCount64() - since > STALL_MS;
+}
+
 static bool utteranceWentQuiet(BL_STATE* s) {
 	if (s->writesInFlight.load(std::memory_order_relaxed) != 0) return false;
 	const ULONGLONG last = s->lastAudioTick.load(std::memory_order_relaxed);
@@ -712,21 +740,35 @@ static MMRESULT WINAPI hook_waveOutClose(HWAVEOUT hwo) {
 	return MMSYSERR_NOERROR;
 }
 
-static void ensureHooksInstalled() {
-	static LONG once = 0;
-	if (InterlockedCompareExchange(&once, 1, 0) != 0) return;
+// The hooks that keep TTS.dll's audio away from the sound card and hand it to us.
+// Every result is checked: a hook that did not go in means TTS.dll would play into
+// the device and return nothing, so the voice must not load then.  A failure is
+// not latched; the next bl_initW tries again (#9).
+static bool ensureHooksInstalled() {
+	static std::mutex mtx;
+	static bool installed = false;
+	std::lock_guard<std::mutex> lk(mtx);
+	if (installed) return true;
 
 	MH_STATUS st = MH_Initialize();
-	if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) return;
+	if (st != MH_OK && st != MH_ERROR_ALREADY_INITIALIZED) return false;
 
-	MH_CreateHookApi(L"winmm.dll", "waveOutOpen", (LPVOID)hook_waveOutOpen, (LPVOID*)&g_waveOutOpenOrig);
-	MH_CreateHookApi(L"winmm.dll", "waveOutPrepareHeader", (LPVOID)hook_waveOutPrepareHeader, (LPVOID*)&g_waveOutPrepareHeaderOrig);
-	MH_CreateHookApi(L"winmm.dll", "waveOutUnprepareHeader", (LPVOID)hook_waveOutUnprepareHeader, (LPVOID*)&g_waveOutUnprepareHeaderOrig);
-	MH_CreateHookApi(L"winmm.dll", "waveOutWrite", (LPVOID)hook_waveOutWrite, (LPVOID*)&g_waveOutWriteOrig);
-	MH_CreateHookApi(L"winmm.dll", "waveOutReset", (LPVOID)hook_waveOutReset, (LPVOID*)&g_waveOutResetOrig);
-	MH_CreateHookApi(L"winmm.dll", "waveOutClose", (LPVOID)hook_waveOutClose, (LPVOID*)&g_waveOutCloseOrig);
-
-	MH_EnableHook(MH_ALL_HOOKS);
+	struct { const char* name; LPVOID hook; LPVOID* orig; } hooks[] = {
+		{ "waveOutOpen", (LPVOID)hook_waveOutOpen, (LPVOID*)&g_waveOutOpenOrig },
+		{ "waveOutPrepareHeader", (LPVOID)hook_waveOutPrepareHeader, (LPVOID*)&g_waveOutPrepareHeaderOrig },
+		{ "waveOutUnprepareHeader", (LPVOID)hook_waveOutUnprepareHeader, (LPVOID*)&g_waveOutUnprepareHeaderOrig },
+		{ "waveOutWrite", (LPVOID)hook_waveOutWrite, (LPVOID*)&g_waveOutWriteOrig },
+		{ "waveOutReset", (LPVOID)hook_waveOutReset, (LPVOID*)&g_waveOutResetOrig },
+		{ "waveOutClose", (LPVOID)hook_waveOutClose, (LPVOID*)&g_waveOutCloseOrig },
+	};
+	for (auto& h : hooks) {
+		st = MH_CreateHookApi(L"winmm.dll", h.name, h.hook, h.orig);
+		if (st != MH_OK && st != MH_ERROR_ALREADY_CREATED) return false;
+	}
+	st = MH_EnableHook(MH_ALL_HOOKS);
+	if (st != MH_OK && st != MH_ERROR_ENABLED) return false;
+	installed = true;
+	return true;
 }
 
 // ------------------------------------------------------------
@@ -825,8 +867,8 @@ static void workerLoop(BL_STATE* s) {
 				}
 
 				// Wait for done or stop/cancel, with watchdog
-				const auto t0 = std::chrono::steady_clock::now();
-				const auto maxDur = std::chrono::seconds(180);
+				const ULONGLONG startedTick = GetTickCount64();
+				bool silent = false;
 				HANDLE waits[2] = { s->doneEvent, s->stopEvent };
 
 				while (true) {
@@ -849,11 +891,26 @@ static void workerLoop(BL_STATE* s) {
 					// TTS.dll's callback was lost: the chunk is over all the same.
 					if (utteranceWentQuiet(s)) break;
 
-					if (std::chrono::steady_clock::now() - t0 > maxDur) {
+					// Nothing at all from this piece: it is one TTS.dll says nothing for.
+					if (pieceIsSilent(s, startedTick)) { silent = true; break; }
+
+					if (pieceStalled(s, startedTick)) {
 						pushMarker(s, BL_ITEM_ERROR, 1002, gen);
 						stopped = true;
 						break;
 					}
+				}
+
+				if (silent) {
+					// Stop it and go on to the next part: the indexes after it still come.
+					{
+						std::lock_guard<std::mutex> tg(s->ttsMtx);
+						seh_ttsStop(s->ttsStop);
+					}
+					Sleep(30);
+					ResetEvent(s->doneEvent);
+					s->silentPieces.fetch_add(1, std::memory_order_relaxed);
+					continue;
 				}
 
 				if (stopped) {
@@ -930,8 +987,8 @@ static void workerLoop(BL_STATE* s) {
 		}
 
 		// Wait for done or stop/cancel, with watchdog
-		const auto t0 = std::chrono::steady_clock::now();
-		const auto maxDur = std::chrono::seconds(180);
+		const ULONGLONG startedTick = GetTickCount64();
+		bool silent = false;
 
 		HANDLE waits[2] = { s->doneEvent, s->stopEvent };
 
@@ -956,11 +1013,26 @@ static void workerLoop(BL_STATE* s) {
 			// TTS.dll's callback was lost: the utterance is over all the same.
 			if (utteranceWentQuiet(s)) break;
 
-			if (std::chrono::steady_clock::now() - t0 > maxDur) {
+			// Nothing at all: a text TTS.dll says nothing for (see pieceIsSilent).
+			if (pieceIsSilent(s, startedTick)) { silent = true; break; }
+
+			if (pieceStalled(s, startedTick)) {
 				pushMarker(s, BL_ITEM_ERROR, 1002, gen);
 				stopped = true;
 				break;
 			}
+		}
+
+		if (silent) {
+			{
+				std::lock_guard<std::mutex> tg(s->ttsMtx);
+				seh_ttsStop(s->ttsStop);
+			}
+			Sleep(30);
+			s->silentPieces.fetch_add(1, std::memory_order_relaxed);
+			s->activeGen.store(0, std::memory_order_relaxed);
+			pushMarker(s, BL_ITEM_DONE, 0, gen);
+			continue;
 		}
 
 		if (stopped) {
@@ -1086,7 +1158,14 @@ extern "C" BL_API BL_STATE* __cdecl bl_initW(const wchar_t* ttsDllPath, int init
 	s->commaSupported = commaSitesMatch(mod);
 
 	g_state = s;
-	ensureHooksInstalled();
+	if (!ensureHooksInstalled()) {
+		g_state = nullptr;
+		CloseHandle(s->doneEvent);
+		CloseHandle(s->stopEvent);
+		FreeLibrary(mod);
+		delete s;
+		return nullptr;
+	}
 
 	{
 		std::lock_guard<std::mutex> tg(s->ttsMtx);
