@@ -56,8 +56,17 @@ class FakeBrailab(object):
     def set_volume(self, v):
         self.calls.append(("set_volume", v))
 
-    def begin_utterance(self, noIntonation=0):
+    def sequence(self):
+        return self.stops
+
+    stops = 0
+
+    def begin_utterance(self, noIntonation=0, seq=None):
         self.calls.append(("begin_utterance",))
+        return seq is None or seq == self.stops
+
+    def push_silence(self, ms):
+        self.calls.append(("push_silence", ms))
 
     def add_text(self, t):
         # Record the pitch in force when the text was added, and the pitch the
@@ -67,13 +76,15 @@ class FakeBrailab(object):
     def add_index(self, i):
         self.calls.append(("add_index", i))
 
-    def commit_utterance(self):
-        self.calls.append(("commit_utterance", self.pitch))
+    def commit_utterance(self, final=True):
+        self.calls.append(("commit_utterance", self.pitch) if final else ("commit_part", self.pitch))
 
-    def speak(self, text, noIntonation=0):
+    def speak(self, text, noIntonation=0, seq=None):
         self.calls.append(("speak", text, self.pitch))
+        return seq is None or seq == self.stops
 
     def stop(self):
+        self.stops += 1
         self.calls.append(("stop",))
 
     def pause(self, s):

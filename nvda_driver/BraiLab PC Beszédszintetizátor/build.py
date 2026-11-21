@@ -29,6 +29,8 @@ ADDON_FILES = {
 	# SynthDriver Python files
 	"synthDrivers/brailab.py": os.path.join(SYNTH_DIR, "brailab.py"),
 	"synthDrivers/_brailab.py": os.path.join(SYNTH_DIR, "_brailab.py"),
+	# the first feed, and indexes with no audio behind them (shared with the emulated driver)
+	"synthDrivers/brailab_feed.py": os.path.join(os.path.dirname(ADDON_DIR), "brailab_feed.py"),
 
 	# 32-bit wrapper DLL
 	"synthDrivers/brailab_wrapper.dll": os.path.join(SYNTH_DIR, "brailab_wrapper.dll"),
@@ -56,12 +58,11 @@ def main():
 			print(f"  {arc_name} -> {src_path}")
 		print()
 
-	# Only require the Python files and manifest to exist
-	required = ["manifest.ini", "synthDrivers/brailab.py", "synthDrivers/_brailab.py"]
-	for r in required:
-		if r in [m[0] for m in missing]:
-			print(f"ERROR: Required file missing: {r}")
-			sys.exit(1)
+	# Every file is required: an add-on without the wrapper, TTS.dll or one of its
+	# two data files loads and then says nothing (#6), so none is built.
+	if missing:
+		print("ERROR: not building an add-on that cannot speak; the files above are missing")
+		sys.exit(1)
 
 	print(f"Creating {OUTPUT_NAME}...")
 	with zipfile.ZipFile(OUTPUT_PATH, "w", zipfile.ZIP_DEFLATED) as zf:

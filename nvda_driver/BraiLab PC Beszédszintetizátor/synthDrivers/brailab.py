@@ -14,6 +14,11 @@ from synthDriverHandler import SynthDriver, synthDoneSpeaking, synthIndexReached
 from speech.commands import IndexCommand, PitchCommand
 from autoSettingsUtils.driverSetting import BooleanDriverSetting
 
+try:                                  # NVDA's pause (before a delayed character description)
+	from speech.commands import BreakCommand
+except ImportError:
+	BreakCommand = None
+
 from . import _brailab
 
 
@@ -120,6 +125,13 @@ def _sanitizeText(s: str) -> str:
 _ENGINE_SPOKEN_RE = re.compile("[-‐‑‒–—―()«»]+")
 _ELLIPSIS_RE = re.compile(r"…|\.{2,}")
 
+# A run of one punctuation mark (a CSV row of empty fields: ",,,,"), with or
+# without spaces between, becomes the mark once.  TTS.dll says nothing for a long
+# run (323 commas, 170 colons), and 429 commas in a row leave it mute for good,
+# in that process, until NVDA restarts (#3, #2).  The marks are pauses to it, so
+# one says the same.
+_PUNCT_RUN_RE = re.compile(r"([,;:!])(?:\s*\1)+")
+
 
 def _brailabSafeText(s: str) -> str:
 	s = _sanitizeText(s)
@@ -127,6 +139,7 @@ def _brailabSafeText(s: str) -> str:
 		return ""
 	s = _ELLIPSIS_RE.sub(".", s)
 	s = _ENGINE_SPOKEN_RE.sub(" ", s)
+	s = _PUNCT_RUN_RE.sub(r"\1", s)
 	try:
 		s = s.encode("cp1250", errors="replace").decode("cp1250", errors="replace")
 	except Exception:
@@ -145,19 +158,36 @@ _CLAUSE_BREAK_RE = re.compile(r"[,;:]\s+")
 _WORD_BREAK_RE = re.compile(r"\s+")
 
 
+# Numbers are spoken as words, so a piece full of digits says far more than its
+# length suggests, and TTS.dll gives no audio at all for some well under the limit:
+# about 300 characters of phone numbers, 270 digits in a row (#2).  Pieces with
+# many digits are kept to DIGIT_DENSE_LENGTH, which every number list measured
+# speaks at.
+DIGIT_DENSE_LENGTH = 120
+DIGIT_DENSE_SHARE = 0.25
+
+
+def _limitFor(text: str, limit: int) -> int:
+	digits = sum(1 for c in text[:limit + 1] if c.isdigit())
+	if digits >= DIGIT_DENSE_SHARE * min(len(text), limit + 1):
+		return min(limit, DIGIT_DENSE_LENGTH)
+	return limit
+
+
 def _splitForEngine(text: str, limit: int = MAX_STRING_LENGTH) -> list:
 	pieces = []
 	text = text.strip()
-	while len(text) > limit:
-		window = text[:limit + 1]
+	while len(text) > _limitFor(text, limit):
+		limit_here = _limitFor(text, limit)
+		window = text[:limit_here + 1]
 		cut = 0
 		for pattern in (_SENTENCE_BREAK_RE, _CLAUSE_BREAK_RE, _WORD_BREAK_RE):
-			ends = [m.end() for m in pattern.finditer(window) if m.end() <= limit]
+			ends = [m.end() for m in pattern.finditer(window) if m.end() <= limit_here]
 			if ends:
 				cut = ends[-1]
 				break
 		if not cut:
-			cut = limit
+			cut = limit_here
 		piece = text[:cut].strip()
 		if piece:
 			pieces.append(piece)
@@ -256,7 +286,7 @@ class SynthDriver(SynthDriver):
 	# host latches settings at utterance start.  That is enough for capitals,
 	# which NVDA speaks as their own utterance; a pitch change mid-utterance
 	# would need the host protocol to carry it.
-	supportedCommands = {IndexCommand, PitchCommand}
+	supportedCommands = {IndexCommand, PitchCommand} | ({BreakCommand} if BreakCommand else set())
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
 	from collections import OrderedDict
@@ -381,12 +411,12 @@ class SynthDriver(SynthDriver):
 		seenNonEmptyText = False
 		pitchAdj = 0
 
-		def flush():
+		def flush(pause=0):
 			nonlocal seenNonEmptyText
 			raw = " ".join(textBuf)
 			textBuf.clear()
 			safe = _brailabSafeText(raw)
-			blocks.append((safe, pendingIndexes.copy(), pitchAdj))
+			blocks.append((safe, pendingIndexes.copy(), pitchAdj, pause))
 			pendingIndexes.clear()
 			seenNonEmptyText = False
 
@@ -403,9 +433,13 @@ class SynthDriver(SynthDriver):
 					flush()
 				pitchAdj = item.offset
 				continue
+			elif BreakCommand is not None and isinstance(item, BreakCommand):
+				# A pause: the block closes, and that much silence follows it (#17).
+				flush(max(0, int(getattr(item, "time", 0) or 0)))
+				continue
 			elif isinstance(item, IndexCommand):
 				if not seenNonEmptyText and not textBuf:
-					blocks.append(("", [item.index], pitchAdj))
+					blocks.append(("", [item.index], pitchAdj, 0))
 					continue
 				pendingIndexes.append(item.index)
 				if not coalesceSayAll:
@@ -425,9 +459,9 @@ class SynthDriver(SynthDriver):
 		while blocks and (not blocks[-1][0]) and (not blocks[-1][1]):
 			blocks.pop()
 
-		anyText = any(bool(t) for (t, _, _) in blocks)
+		anyText = any(bool(t) for (t, _, _, _) in blocks)
 		allIndexes = []
-		for (_, idxs, _) in blocks:
+		for (_, idxs, _, _) in blocks:
 			allIndexes.extend(idxs)
 
 		return blocks, anyText, allIndexes
@@ -461,25 +495,29 @@ class SynthDriver(SynthDriver):
 					synthDoneSpeaking.notify(synth=self)
 			return
 
+		# The job carries the stop count it was queued under: a cancel() after this
+		# bumps it, and the worker then refuses the job instead of taking it up (#4).
+		seq = _brailab.sequence()
 		if hasIndex and self._hasComposite:
-			_execWhenDone(self._speakBgComposite, blocks, mustBeAsync=True)
+			_execWhenDone(self._speakBgComposite, blocks, seq, mustBeAsync=True)
 		else:
-			_execWhenDone(self._speakBg, blocks, mustBeAsync=True)
+			_execWhenDone(self._speakBg, blocks, seq, mustBeAsync=True)
 
-	def _speakBgComposite(self, blocks):
+	def _speakBgComposite(self, blocks, seq=None):
 		"""Speak using the composite utterance API via IPC."""
-		self.speaking = True
 		noIntonation = 0 if self._useIntonation else 1
 
 		try:
-			_brailab.begin_utterance(noIntonation)
+			if not _brailab.begin_utterance(noIntonation, seq):
+				return            # cancelled since it was queued: NVDA wants nothing from it
 		except Exception:
 			log.error("Brailab: begin_utterance failed", exc_info=True)
 			self.speaking = False
 			synthDoneSpeaking.notify(synth=self)
 			return
+		self.speaking = True
 
-		for (text, indexesAfter, pitchAdj) in blocks:
+		for (text, indexesAfter, pitchAdj, pauseMs) in blocks:
 			if not self.speaking:
 				break
 
@@ -516,12 +554,23 @@ class SynthDriver(SynthDriver):
 						self.speaking = False
 						break
 
+			if self.speaking and pauseMs:
+				# NVDA's pause (#17): what was built so far is said, then that much
+				# silence, then a new utterance carries on; only the last one ends it.
+				try:
+					_brailab.commit_utterance(final=False)
+					self._restorePitch()
+					_brailab.push_silence(pauseMs)
+					if not _brailab.begin_utterance(noIntonation, seq):
+						return        # cancelled during the first part
+				except Exception:
+					log.error("Brailab: pause failed", exc_info=True)
+					self.speaking = False
+					break
+
 		if not self.speaking:
-			try:
-				_brailab.stop()
-			except Exception:
-				pass
-			self.speaking = False
+			# Cancelled (cancel() has stopped the engine already) or a call failed.
+			# Not stop() here: it would refuse the jobs queued after this one.
 			synthDoneSpeaking.notify(synth=self)
 			return
 
@@ -541,12 +590,14 @@ class SynthDriver(SynthDriver):
 			# exactly the bug that made this look like a bridge limitation.
 			self._restorePitch()
 
-	def _speakBg(self, blocks):
+	def _speakBg(self, blocks, seq=None):
 		"""Speak using legacy single-chunk API via IPC."""
+		if seq is not None and seq != _brailab.sequence():
+			return                # cancelled since it was queued (#4)
 		self.speaking = True
 		noIntonation = 0 if self._useIntonation else 1
 
-		for (text, indexesAfter, pitchAdj) in blocks:
+		for (text, indexesAfter, pitchAdj, pauseMs) in blocks:
 			if not self.speaking:
 				break
 
@@ -569,7 +620,8 @@ class SynthDriver(SynthDriver):
 						continue
 					try:
 						# speak() blocks until the host finishes reading all audio
-						_brailab.speak(seg, noIntonation)
+						if _brailab.speak(seg, noIntonation, seq) is False:
+							return
 					except Exception:
 						log.error("Brailab: speak failed", exc_info=True)
 						self.speaking = False
@@ -704,7 +756,4 @@ if _ctypes.sizeof(_ctypes.c_void_p) == 8:
 			if not super().check():
 				return False
 			base = os.path.dirname(__file__)
-			return (
-				os.path.isfile(os.path.join(base, "brailab_wrapper.dll"))
-				and _brailab._find_tts_dll(base) != ""
-			)
+			return _brailab.check(base)       # the wrapper, TTS.dll and its two data files (#6)

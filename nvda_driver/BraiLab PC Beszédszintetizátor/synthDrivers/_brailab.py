@@ -16,6 +16,28 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 LOGGER = logging.getLogger(__name__)
 
+def _load_first_feed():
+	"""brailab_feed.py: beside this file in the add-on (build.py puts it there), two
+	folders up in the repository, where the emulated driver shares it."""
+	try:
+		from . import brailab_feed
+		return brailab_feed
+	except ImportError:
+		pass
+	import importlib.util
+	path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+						"brailab_feed.py")
+	if not os.path.isfile(path):
+		return None
+	spec = importlib.util.spec_from_file_location("brailab_feed", path)
+	mod = importlib.util.module_from_spec(spec)
+	spec.loader.exec_module(mod)
+	return mod
+
+
+# an utterance's first feed, and indexes with no audio behind them (#3, #2)
+_first = _load_first_feed()
+
 # Stream item types from brailab_wrapper.h
 BL_ITEM_NONE = 0
 BL_ITEM_AUDIO = 1
@@ -86,6 +108,11 @@ class AudioWorker(threading.Thread):
 				with self._player_lock:
 					if not self._stopping and self._player:
 						self._player.feed(data, onDone=wrapped_on_done)
+						# A stop() that came while this chunk went down: the chunk
+						# would play at the head of the next utterance.  Stop again
+						# from here, after the feed (#10).
+						if data and seq < self._get_sequence():
+							self._player.stop()
 			except FileNotFoundError:
 				LOGGER.warning("Sound device not found during feed")
 			except Exception:
@@ -136,8 +163,9 @@ class BrailabDirectClient:
 		self._has_composite = False
 		self._api_version = 1
 		self._comma_supported = False
-		self._sequence = 0
+		self._sequence = 0          # bumped first thing by stop(); a job carries the value it was queued under
 		self._current_seq = 0
+		self._added_indexes = []    # the utterance's indexes not yet seen back from the wrapper (#2)
 		# Audio format
 		self._sample_rate = 0
 		self._channels = 0
@@ -296,46 +324,93 @@ class BrailabDirectClient:
 			device = config.conf["speech"]["outputDevice"]
 			player = nvwave.WavePlayer(channels, sample_rate, bits_per_sample,
 									   outputDevice=device, buffered=True)
+		if _first is not None:
+			# FirstFeed: indexes given with no audio behind them (a piece TTS.dll
+			# says nothing for) are never called by NVDA's player on a stopped
+			# stream; FirstFeed starts it with one silent sample (#2, #3).
+			player = _first.FirstFeed(player, sample_rate)
 		self._player = player
+		# A fresh queue for every worker: a stop sentinel a busy worker left
+		# behind must not end the next one at once (#7).
+		self._audio_queue = queue.Queue()
 		self._audio_worker = AudioWorker(player, self._audio_queue,
 										 lambda: self._sequence)
 		self._audio_worker.start()
 
 	# ------------------------------------------------------------------
-	# Speech (blocking — called from BgThread in the driver)
-	def do_speak(self, text: str, no_intonation: int) -> None:
-		self._should_stop = False
-		self._current_seq = self._sequence
+	# Speech (blocking — called from BgThread in the driver).  Each takes the
+	# sequence number the job was queued under: a stop() since then has bumped
+	# it, and the job is refused rather than taken up (#4).
+	def sequence(self) -> int:
+		return self._sequence
+
+	def _cancelled(self) -> bool:
+		return self._current_seq != self._sequence
+
+	def do_speak(self, text: str, no_intonation: int, seq: Optional[int] = None) -> bool:
+		self._current_seq = self._sequence if seq is None else seq
+		if self._cancelled():
+			return False
+		self._added_indexes = []
 		rc = self._dll.bl_startSpeakW(self._handle, text, no_intonation)
 		if rc != 0:
 			LOGGER.error("bl_startSpeakW returned %d", rc)
 			self._audio_queue.put((b"", None, True, self._current_seq))
-			return
+			return True
 		self._read_loop()
+		return True
 
-	def do_begin_utterance(self, no_intonation: int) -> None:
-		self._should_stop = False
-		self._current_seq = self._sequence
+	def do_begin_utterance(self, no_intonation: int, seq: Optional[int] = None) -> bool:
+		self._current_seq = self._sequence if seq is None else seq
+		if self._cancelled():
+			return False
+		self._added_indexes = []
 		self._dll.bl_beginUtterance(self._handle, no_intonation)
+		return True
 
 	def do_add_text(self, text: str) -> None:
 		self._dll.bl_addTextUtteranceW(self._handle, text)
 
 	def do_add_index(self, index: int) -> None:
+		self._added_indexes.append(index)
 		self._dll.bl_addIndexUtterance(self._handle, index)
 
-	def do_commit_utterance(self) -> None:
-		self._should_stop = False
+	def do_commit_utterance(self, final: bool = True) -> None:
+		"""Run the utterance built since begin.  final=False: a part of a longer one
+		(before NVDA's pause), so its end is not the utterance's end."""
+		if self._cancelled():
+			return
 		rc = self._dll.bl_commitUtterance(self._handle)
 		if rc != 0:
 			LOGGER.error("bl_commitUtterance returned %d", rc)
-			self._audio_queue.put((b"", None, True, self._current_seq))
+			self._owed_indexes()
+			if final:
+				self._audio_queue.put((b"", None, True, self._current_seq))
 			return
-		self._read_loop()
+		self._read_loop(final)
 
-	def _read_loop(self) -> None:
+	def do_push_silence(self, ms: int) -> None:
+		"""NVDA's pause (BreakCommand) between two parts of an utterance (#17)."""
+		if self._cancelled() or ms <= 0:
+			return
+		n = int(self._sample_rate * max(1, self._channels) * (self._bits_per_sample // 8) * ms / 1000)
+		n -= n % max(1, self._channels * (self._bits_per_sample // 8))
+		self._audio_queue.put((b"\x00" * n, None, False, self._current_seq))
+
+	def _owed_indexes(self) -> None:
+		"""The utterance's indexes the wrapper never gave back (it gave up on a piece
+		TTS.dll said nothing for, or failed): queued now, in order, so NVDA, which
+		waits for an utterance's last index before it says more, is not left waiting
+		(#2).  Not after a stop: NVDA wants none then."""
+		if self._cancelled():
+			return
+		for i in self._added_indexes:
+			self._audio_queue.put((b"", i, False, self._current_seq))
+		self._added_indexes = []
+
+	def _read_loop(self, final: bool = True) -> None:
 		"""Poll bl_read() and push audio chunks to the queue."""
-		while not self._should_stop:
+		while not self._cancelled():
 			try:
 				n = self._dll.bl_read(
 					self._handle,
@@ -346,7 +421,9 @@ class BrailabDirectClient:
 				)
 			except Exception:
 				LOGGER.exception("bl_read crashed")
-				self._audio_queue.put((b"", None, True, self._current_seq))
+				self._owed_indexes()
+				if final:
+					self._audio_queue.put((b"", None, True, self._current_seq))
 				return
 
 			t = self._out_type.value
@@ -355,21 +432,26 @@ class BrailabDirectClient:
 			if t == BL_ITEM_AUDIO and n > 0:
 				self._audio_queue.put((bytes(self._audio_buf.raw[:n]), None, False, self._current_seq))
 			elif t == BL_ITEM_INDEX:
+				if v in self._added_indexes:
+					self._added_indexes.remove(v)
 				self._audio_queue.put((b"", v, False, self._current_seq))
 			elif t == BL_ITEM_DONE:
-				self._audio_queue.put((b"", None, True, self._current_seq))
+				self._owed_indexes()
+				if final:
+					self._audio_queue.put((b"", None, True, self._current_seq))
 				return
 			elif t == BL_ITEM_ERROR:
 				LOGGER.error("Wrapper error %d", v)
-				self._audio_queue.put((b"", None, True, self._current_seq))
-				return
+				# The wrapper's DONE follows its ERROR: keep reading to it, so the
+				# next utterance does not get this one's end.
+				continue
 			elif t == BL_ITEM_NONE:
 				time.sleep(0.001)
 
 	# ------------------------------------------------------------------
 	# Control
 	def stop(self) -> None:
-		self._sequence += 1
+		self._sequence += 1           # first: a job queued before now is refused from here on (#4)
 		self._should_stop = True
 		if self._handle:
 			self._dll.bl_stop(self._handle)
@@ -450,15 +532,28 @@ def initialize(index_callback=None) -> Dict[str, Any]:
 	dll_path = os.path.join(addon_dir, "brailab_wrapper.dll")
 
 	result = _client.do_initialize(dll_path, tts_path, 1500)
+	try:
+		# TTS.dll loads without its data files and answers -1 to every getter;
+		# it then gives no audio at all (#6).  Refuse it, so NVDA uses another synth.
+		if -1 in (result.get("tempo"), result.get("pitch"), result.get("volume")):
+			raise RuntimeError("TTS.dll did not initialise (are BINADATA.BIN and BINAHANK.BIN beside it?)")
 
-	_format = result.get("format", {})
-	_has_composite = result.get("hasComposite", False)
+		_format = result.get("format", {})
+		_has_composite = result.get("hasComposite", False)
 
-	_client.initialize_audio(
-		channels=_format.get("channels", 1),
-		sample_rate=_format.get("sampleRate", 10000),
-		bits_per_sample=_format.get("bitsPerSample", 16),
-	)
+		_client.initialize_audio(
+			channels=_format.get("channels", 1),
+			sample_rate=_format.get("sampleRate", 10000),
+			bits_per_sample=_format.get("bitsPerSample", 16),
+		)
+	except Exception:
+		# Anything failing after the engine came up (no audio device yet, #5):
+		# hand the engine back, or every later load in this process is refused.
+		try:
+			_client.shutdown()
+		except Exception:
+			LOGGER.exception("shutdown after a failed initialize")
+		raise
 
 	return result
 
@@ -467,13 +562,19 @@ def has_composite() -> bool:
 	return _has_composite
 
 
-def speak(text: str, no_intonation: int = 0) -> None:
-	"""Legacy single-chunk speech (blocks until done)."""
-	_client.do_speak(text, no_intonation)
+def sequence() -> int:
+	"""The stop count now: a job queued under this value is refused once stop() has run (#4)."""
+	return _client.sequence()
 
 
-def begin_utterance(no_intonation: int = 0) -> None:
-	_client.do_begin_utterance(no_intonation)
+def speak(text: str, no_intonation: int = 0, seq: Optional[int] = None) -> bool:
+	"""Legacy single-chunk speech (blocks until done).  False: refused, a stop came since `seq`."""
+	return _client.do_speak(text, no_intonation, seq)
+
+
+def begin_utterance(no_intonation: int = 0, seq: Optional[int] = None) -> bool:
+	"""False: refused, a stop came since `seq` (#4)."""
+	return _client.do_begin_utterance(no_intonation, seq)
 
 
 def add_text(text: str) -> None:
@@ -484,8 +585,12 @@ def add_index(index: int) -> None:
 	_client.do_add_index(index)
 
 
-def commit_utterance() -> None:
-	_client.do_commit_utterance()
+def commit_utterance(final: bool = True) -> None:
+	_client.do_commit_utterance(final)
+
+
+def push_silence(ms: int) -> None:
+	_client.do_push_silence(ms)
 
 
 def stop() -> None:
@@ -525,12 +630,16 @@ def get_format() -> Dict[str, int]:
 	return dict(_format)
 
 
-def check() -> bool:
-	"""Check if the required files are available."""
-	base = os.path.abspath(os.path.dirname(__file__))
+def check(base: Optional[str] = None) -> bool:
+	"""Check if the required files are available: the wrapper, TTS.dll, and the
+	engine's two data files beside TTS.dll (without them it loads and is silent, #6)."""
+	base = base or os.path.abspath(os.path.dirname(__file__))
 	wrapper_dll = os.path.join(base, "brailab_wrapper.dll")
 	tts_dll = _find_tts_dll(base)
-	return os.path.isfile(wrapper_dll) and bool(tts_dll)
+	if not (os.path.isfile(wrapper_dll) and tts_dll):
+		return False
+	have = {f.lower() for f in os.listdir(os.path.dirname(tts_dll))}
+	return "binadata.bin" in have and "binahank.bin" in have
 
 
 def _find_tts_dll(base_path: str) -> str:
