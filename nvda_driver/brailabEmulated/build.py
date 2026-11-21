@@ -26,6 +26,8 @@ from po2mo import compile_mo  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(HERE))                 # repo root
 EMU = os.path.join(ROOT, "src", "talkhun_emu")                # engine sources
+sys.path.insert(0, os.path.join(EMU, "csrc"))
+import build_native  # noqa: E402  (the library's own list of what it is built from)
 ARCHIVE_SRC = os.path.join(ROOT, "third_party", "brailab")    # TALKHUN0.COM (NOTICE.md)
 ENGINE = "_brailab_native"
 MAME_LICENSE = os.path.join(EMU, "csrc", "cpu", "mame_i86", "LICENSE-BSD-3-Clause.txt")
@@ -98,6 +100,11 @@ def lay_out(stage, name="brailabEmulated", engine=ENGINE, manifest=None, driver=
         dll = os.path.join(EMU, "_bin", arch, "talkhun.dll")
         if not os.path.isfile(dll):
             raise SystemExit("%s isn't built: run src/talkhun_emu/csrc/build_native.py" % dll)
+        changed = build_native.stale(dll)
+        if changed:
+            raise SystemExit("%s is older than %s%s: run src/talkhun_emu/csrc/build_native.py"
+                             % (dll, os.path.relpath(changed[0], ROOT),
+                                " and %d more" % (len(changed) - 1) if len(changed) > 1 else ""))
         os.makedirs(os.path.join(eng, "_bin", arch))
         shutil.copy2(dll, os.path.join(eng, "_bin", arch))
     talkhun = os.path.join(ARCHIVE_SRC, "TALKHUN0.COM")

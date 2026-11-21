@@ -23,6 +23,23 @@ C_SOURCES = [os.path.join(HERE, "talkhun_host.c"), os.path.join(HERE, "brailab_v
              os.path.join(CHIP, "pcf8200.c")]
 
 
+def inputs():
+    """Every file the library is built from: the sources, their headers, and this script."""
+    out = [os.path.abspath(__file__)] + C_SOURCES
+    for folder in (HERE, CPU, CHIP, os.path.join(CPU, "mame_i86")):
+        if os.path.isdir(folder):
+            out += [os.path.join(folder, f) for f in os.listdir(folder)
+                    if f.endswith((".c", ".cpp", ".h", ".hxx", ".ipp"))]
+    return sorted(set(out))
+
+
+def stale(lib):
+    """The inputs changed since `lib` was built (empty when it is current), so a package is
+    never made from a library older than its source (#18)."""
+    built = os.path.getmtime(lib)
+    return [f for f in inputs() if os.path.getmtime(f) > built]
+
+
 def compile_and_link(gcc, gxx, out, obj_dir, env, link, extra=()):
     os.makedirs(obj_dir, exist_ok=True)
     objs = [os.path.join(obj_dir, "i86_mame.o")]

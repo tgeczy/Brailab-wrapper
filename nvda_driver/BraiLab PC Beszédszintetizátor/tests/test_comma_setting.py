@@ -13,7 +13,7 @@ from test_pitch_path import driverModule  # noqa: F401  (a fixture)
 def _make(driverModule, commaSupported):
     brailab, fake = driverModule
     fake.commaSupported = commaSupported
-    d = brailab.SynthDriver()
+    d = brailab.HostSynthDriver()
     fake.calls[:] = []
     return d, fake
 

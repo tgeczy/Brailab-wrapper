@@ -241,11 +241,13 @@ class SynthDriver(SynthDriver):
 		cached = getattr(self, "_settingsCache", None)
 		if cached is not None:
 			return cached
+		# self, not the module's SynthDriver: that name is the 64-bit proxy when the
+		# module is imported in a 64-bit process
 		settings = [
-			SynthDriver.VoiceSetting(),
-			SynthDriver.RateSetting(minStep=10),
-			SynthDriver.PitchSetting(minStep=50),
-			SynthDriver.VolumeSetting(minStep=25),
+			self.VoiceSetting(),
+			self.RateSetting(minStep=10),
+			self.PitchSetting(minStep=50),
+			self.VolumeSetting(minStep=25),
 			BooleanDriverSetting(
 				"useIntonation",
 				# Translators: a checkbox in NVDA's voice settings; unchecked, the voice speaks in a monotone.
@@ -698,6 +700,11 @@ class SynthDriver(SynthDriver):
 		self._cachedVolume = raw
 		_brailab.set_volume(raw)
 
+
+#: The driver itself, under a name the 64-bit block below does not take over:
+#: the 32-bit host runs it as SynthDriver, and the tests reach it here at
+#: either width.
+HostSynthDriver = SynthDriver
 
 # ---------------------------------------------------------------------------
 # 64-bit NVDA 2026.1+: use the built-in bridge to run the full driver in a

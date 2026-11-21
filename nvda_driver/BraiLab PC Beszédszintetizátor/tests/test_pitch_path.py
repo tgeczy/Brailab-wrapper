@@ -303,18 +303,48 @@ def _load_driver():
     pkg.__path__ = [DRIVERS]
     sys.modules["synthDrivers"] = pkg
     sys.modules["synthDrivers._brailab"] = fake
+    _stub_bridge()
     import importlib
     brailab = importlib.import_module("synthDrivers.brailab")
     return brailab, fake
+
+
+class FakeProxy32(object):
+    """NVDA 2026.1's SynthDriverProxy32, as far as the driver's 64-bit block needs it."""
+
+
+def _stub_bridge():
+    """Under 64-bit Python the driver's last block subclasses NVDA's bridge proxy (#11): the tests ran only
+    under 32-bit Python.  The driver itself is HostSynthDriver at either width; this is only so the module
+    imports, and test_the_64_bit_driver_is_the_bridge_proxy looks at what it builds."""
+    names = ("_bridge", "_bridge.clients", "_bridge.clients.synthDriverHost32",
+             "_bridge.clients.synthDriverHost32.synthDriver")
+    for name in names:
+        if name not in sys.modules:
+            sys.modules[name] = types.ModuleType(name)
+    sys.modules[names[-1]].SynthDriverProxy32 = FakeProxy32
 
 
 @pytest.fixture
 def driver(driverModule):
     brailab, fake = driverModule
     fake.calls[:] = []
-    d = brailab.SynthDriver()
+    d = brailab.HostSynthDriver()
     fake.calls[:] = []
     return d, brailab, fake
+
+
+def test_the_64_bit_driver_is_the_bridge_proxy(driverModule):
+    """What 64-bit NVDA loads is the proxy to the 32-bit host, named and pointed at this folder; on 32-bit it
+    is the driver itself."""
+    import ctypes
+    brailab, _ = driverModule
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        assert issubclass(brailab.SynthDriver, FakeProxy32)
+        assert brailab.SynthDriver.name == "brailab" and brailab.SynthDriver.synthDriver32Name == "brailab"
+        assert os.path.samefile(brailab.SynthDriver.synthDriver32Path, DRIVERS)
+    else:
+        assert brailab.SynthDriver is brailab.HostSynthDriver
 
 
 def _speakAndWait(d, brailab, seq, timeout=5.0):

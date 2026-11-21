@@ -204,3 +204,20 @@ def test_terminate_stops_the_thread_and_closes_the_player(driver):
     player = driver._player
     driver.terminate()
     assert player.closed and not driver._bgThread.is_alive()
+
+
+def test_a_library_older_than_its_sources_is_not_packed(tmp_path):
+    """#18: build.py packed whatever talkhun.dll was there, however old."""
+    import time
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    sys.path.insert(0, os.path.join(root, "src", "talkhun_emu", "csrc"))
+    import build_native
+    lib = tmp_path / "talkhun.dll"
+    lib.write_bytes(b"")
+    os.utime(lib, (0, 0))                                  # built in 1970: older than every source
+    assert build_native.stale(str(lib))
+    future = time.time() + 3600
+    os.utime(lib, (future, future))
+    assert build_native.stale(str(lib)) == []
+    assert any(f.endswith("brailab_voice.c") for f in build_native.inputs())
+    assert any(f.endswith("pcf8200.c") for f in build_native.inputs())
