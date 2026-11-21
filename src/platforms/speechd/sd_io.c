@@ -41,6 +41,8 @@ char *sd_readline(void)
         if (nl) {
             size_t n = (size_t)(nl - rbuf);
             char *line = (char *)malloc(n + 1);
+            if (!line)
+                exit(1);                             /* as rappend: the server restarts a module that is gone */
             memcpy(line, rbuf, n);
             line[n] = 0;
             if (n && line[n - 1] == '\r')
@@ -98,11 +100,19 @@ int sd_poll_stop(void)
     return paused ? SD_PAUSED : SD_GO;
 }
 
-/* The line that ends a message: 702 when it was said to the end, 703 after a STOP, 704 after a PAUSE.  On 703 the
- * server gives the message up; on 704 it keeps it, to speak again on RESUME (speech-dispatcher's output.c). */
+/* The line that ends a message: 702 when it was said to the end, 703 after a STOP or a PAUSE (#22).
+ *
+ * The protocol has 704 for a pause, but on 704 the server waits for the playback to reach an index mark before it
+ * calls the message paused, and this module reports none: on 0.11.1 RESUME then speaks nothing (measured with a
+ * real server by tgeczy/ssi263-speech, its commit 9dd5206).  On 703 the server stops, keeps the message on its
+ * paused list, and on RESUME speaks it again from the start.  test_real_server.sh checks this on a real server;
+ * SD_BRAILAB_TEST_PAUSE_704=1 is its control, the 704 this module answered up to 2026-11-21. */
 void sd_send_end(int stopped)
 {
-    sd_send_line(stopped == SD_PAUSED ? "704 PAUSE" : stopped ? "703 STOP" : "702 END");
+    if (stopped == SD_PAUSED && getenv("SD_BRAILAB_TEST_PAUSE_704"))
+        sd_send_line("704 PAUSE");
+    else
+        sd_send_line(stopped ? "703 STOP" : "702 END");
 }
 
 void sd_send_line(const char *s)

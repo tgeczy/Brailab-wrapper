@@ -11,9 +11,13 @@ USER_HOME="$HOME"
 for CONF in ${BRAILAB_SPD_CONF:-"$USER_HOME/.config/speech-dispatcher/speechd.conf" /etc/speech-dispatcher/speechd.conf}; do
     [ -f "$CONF" ] || continue
     if grep -q 'brailab' "$CONF"; then
-        sed -i -e '/^# --- the BraiLab voices (brailab install.sh) ---$/d' \
+        # In order, on each line: a "DefaultModule brailab" an older install.sh glued to a last line that had no
+        # newline is taken off it (#25); the module's own lines go; and a DefaultModule install.sh commented out is
+        # restored only when it is one whole "DefaultModule <name>", never a glued line.
+        sed -i -e 's/^\(..*[^[:space:]]\)DefaultModule brailab$/\1/' \
+               -e '/^# --- the BraiLab voices (brailab install.sh) ---$/d' \
                -e '/^[[:space:]]*AddModule[[:space:]]*"brailab"/d' -e '/^DefaultModule brailab$/d' \
-               -e 's/^# (before brailab) DefaultModule/DefaultModule/' "$CONF"
+               -e 's/^# (before brailab) \(DefaultModule [^[:space:]]*\)$/\1/' "$CONF"
         echo "cleaned $CONF"
     fi
     rm -f "$(dirname "$CONF")/modules/brailab.conf"

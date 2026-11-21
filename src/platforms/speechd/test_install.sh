@@ -234,4 +234,56 @@ uninstall
 if cmp -s "$D/before.conf" "$D/etc/speechd.conf"; then ok "uninstall (--default)" "the old default back"
 else fail "uninstall (--default)" "$(diff "$D/before.conf" "$D/etc/speechd.conf" | tr '\n' ' ')"; fi
 
+# 7. a config whose last line has no newline (#25): --default puts its line on a line of its own, and uninstall
+#    gives the config back (with that newline); a DefaultModule as the last line comes back active and whole
+for c in "lastlang:DefaultLanguage en" "lastdefault:DefaultModule espeak-ng"; do
+    name="${c%%:*}"; last="${c#*:}"
+    fresh "$name" "$(printf '# no newline at the end\n%s' "$last")"
+    install "file://$REL" --default
+    if grep -qx 'DefaultModule brailab' "$D/etc/speechd.conf" && ! grep -q '.DefaultModule brailab' "$D/etc/speechd.conf"; then
+        ok "no final newline ($name): --default" "its own line"
+    else fail "no final newline ($name): --default" "$(tr '\n' '|' < "$D/etc/speechd.conf")"; fi
+    uninstall
+    if [ "$(cat "$D/etc/speechd.conf")" = "$(cat "$D/before.conf")" ]; then
+        ok "no final newline ($name): uninstall" "the config back"
+    else fail "no final newline ($name): uninstall" "$(tr '\n' '|' < "$D/etc/speechd.conf")"; fi
+done
+# a config an older installer had glued that way: uninstall mends it, and never makes an active glued DefaultModule
+fresh glued "$(printf '# glued by an older install.sh\nDefaultLanguage enDefaultModule brailab\n')"
+uninstall
+if [ "$(cat "$D/etc/speechd.conf")" = "$(printf '# glued by an older install.sh\nDefaultLanguage en')" ]; then
+    ok "uninstall mends a glued line" "DefaultLanguage en"
+else fail "uninstall mends a glued line" "$(tr '\n' '|' < "$D/etc/speechd.conf")"; fi
+fresh glued2 "$(printf '# glued by an older install.sh\n# (before brailab) DefaultModule espeak-ngDefaultModule brailab\n')"
+uninstall
+if [ "$(cat "$D/etc/speechd.conf")" = "$(printf '# glued by an older install.sh\nDefaultModule espeak-ng')" ]; then
+    ok "uninstall mends a glued default" "DefaultModule espeak-ng"
+else fail "uninstall mends a glued default" "$(tr '\n' '|' < "$D/etc/speechd.conf")"; fi
+
+# 8. --with-tts leaves nothing in the temporary folder: the download and the unpacked archive both go (#26)
+fresh tmpclean "$STOCK"
+mkdir "$D/tmp"
+export TMPDIR="$D/tmp"
+install "file://$REL" --with-tts
+unset TMPDIR
+if [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa,BraiLab TTS" ] && [ -z "$(ls -A "$D/tmp")" ]; then
+    ok "--with-tts cleans up" "the temporary folder is empty"
+else fail "--with-tts cleans up" "$(voices) | left: $(ls -A "$D/tmp" | tr '\n' ' ')"; fi
+
+# 9. --tts-file with an archive that holds no plug-in, run from a folder that has one: refused, and nothing from
+#    that folder is copied (dirname "" is ".", #27)
+fresh noplugin "$STOCK"
+cp -r "$PKG" "$D/pkg"
+printf 'not a plug-in' > "$D/pkg/libbrailab_tts.so"
+printf 'notes' > "$D/pkg/notes.txt"
+mkdir -p "$D/arch/brailab-tts-plugin" && printf 'readme' > "$D/arch/brailab-tts-plugin/README"
+(cd "$D/arch" && tar -czf "$D/noplugin.tar.gz" brailab-tts-plugin)
+SAVED_PKG="$PKG"; PKG="$D/pkg"
+install "file://$T/nowhere" --tts-file "$D/noplugin.tar.gz"
+PKG="$SAVED_PKG"
+if grep -q "no libbrailab_tts.so in" "$D/install.log" && [ ! -e "$D/prefix/share/brailab/notes.txt" ] \
+        && [ ! -e "$D/prefix/share/brailab/libbrailab_tts.so" ] && [ "$(voices)" = "BraiLab PC,BraiLab PC furcsa" ]; then
+    ok "--tts-file with no plug-in in it" "refused; nothing copied from the current folder"
+else fail "--tts-file with no plug-in in it" "$(ls "$D/prefix/share/brailab" | tr '\n' ' ') | $(grep 'TTS' "$D/install.log" | tr '\n' ' ')"; fi
+
 if [ $FAIL = 0 ]; then echo "install: all passed"; else echo "install: FAILED"; exit 1; fi

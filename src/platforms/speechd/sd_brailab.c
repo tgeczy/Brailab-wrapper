@@ -8,8 +8,8 @@
  * module_process.c, as ssi263-speech's sd_ssi263 does, which this is modelled on; every reply line is the one
  * speech-dispatcher's own modules give, which has not changed from 0.11.0 to 0.12.1.  0.11 is the oldest server
  * this can speak on: it is the first that plays a module's audio.  Synthesis is synchronous: stdin
- * is polled for STOP and PAUSE between blocks (a STOP is answered 703, a PAUSE 704, which lets the server speak the
- * message again on RESUME).  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
+ * is polled for STOP and PAUSE between blocks, both answered 703, on which the server speaks a paused message again
+ * on RESUME (sd_io.c says why not 704).  Two voices: "BraiLab PC" and "BraiLab PC furcsa" (the weird voice), Hungarian.
  * Rate, pitch and volume come from SSIP, mapped as the NVDA driver maps its sliders.
  *
  * A third voice, "BraiLab TTS", is offered when an optional binary plug-in is in the data folder with its two data
@@ -50,6 +50,12 @@ static void read_config(const char *path)
     if (!f)
         return;
     while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n') && !feof(f)) {      /* longer than the buffer: skip it whole, not read its rest as a line */
+            int c;
+            while ((c = fgetc(f)) != EOF && c != '\n')
+                ;
+            continue;
+        }
         if (line[0] == '#')
             continue;
         if (sscanf(line, "%127s \"%1023[^\"]\"", key, val) != 2 && sscanf(line, "%127s %1023s", key, val) != 2)
@@ -118,6 +124,11 @@ static int have(int v)
     return v == TTS ? sd_plugin_loaded() : voice != NULL;
 }
 
+static int default_voice(void)
+{
+    return voice ? PC : TTS;
+}
+
 static int to100(int ssip)                           /* SSIP -100..100 to the NVDA driver's 0..100 (0 is 50) */
 {
     int v = (ssip + 100) / 2;
@@ -131,7 +142,6 @@ static void speak_tts(char *text)
     const int rate = to100(ssip_rate), pitch = to100(ssip_pitch);
     int stopped;
 
-    sd_strip_ssml(text);
     sd_send_line("200 OK SPEAKING");
     sd_send_line("701 BEGIN");
     if ((stopped = sd_poll_stop()) != SD_GO) {          /* already stopped (key repeat): nothing to say */
@@ -143,18 +153,21 @@ static void speak_tts(char *text)
     sd_send_end(stopped);
 }
 
-static void speak(char *text)
+/* ssml: the text is SSML (SPEAK).  CHAR and KEY come bare, a "<" or "&" among them, as speech-dispatcher 0.11.1 was
+ * seen to send them (tgeczy/ssi263-speech#47); taken for SSML, a "<" was a tag and said nothing (#23). */
+static void speak(char *text, int ssml)
 {
     static int16_t pcm[BRAILAB_VOICE_BLOCK];
     const double rate = to100(ssip_rate), pitch = to100(ssip_pitch), volume = to100(ssip_volume);
     const int furcsa = which == FURCSA;
     int len, n, stopped = 0;
 
+    if (ssml)
+        sd_strip_ssml(text);
     if (which == TTS) {
         speak_tts(text);
         return;
     }
-    sd_strip_ssml(text);
     len = sd_to_cwi2(text);
     if ((stopped = sd_poll_stop()) != SD_GO) {          /* already stopped (key repeat): nothing to say */
         sd_send_line("200 OK SPEAKING");
@@ -190,7 +203,16 @@ static char *read_text(void)
         if (s[0] == '.')                             /* a leading dot is escaped as two */
             s++;
         k = strlen(s);
-        text = (char *)realloc(text, n + k + 2);
+        {
+            char *grown = text ? (char *)realloc(text, n + k + 2) : NULL;
+            if (!grown) {                            /* out of memory: read the message to its end, keep nothing */
+                free(text);
+                text = NULL;
+                free(line);
+                continue;
+            }
+            text = grown;
+        }
         if (n)
             text[n++] = ' ';
         memcpy(text + n, s, k);
@@ -212,8 +234,13 @@ static void set_param(char *key, const char *val)
         ssip_pitch = atoi(val);
     else if (!strcmp(key, "volume"))
         ssip_volume = atoi(val);
-    else if (!strcmp(key, "synthesis_voice")) {      /* "NULL" or a name we haven't got: no change */
+    else if (!strcmp(key, "synthesis_voice")) {
+        /* The server sends every message's settings whole (its output.c), synthesis_voice=NULL for a client that
+         * named none: that is the default voice, not the last client's choice (#24).  A name not offered here is
+         * a voice of another module: the default too.  "voice=MALE1" (a voice type) is not looked at: the three
+         * voices are not male, female and child. */
         int v;
+        which = default_voice();
         for (v = 0; v < NVOICES; v++)
             if (have(v) && !strcmp(val, VOICES[v]))
                 which = v;
@@ -266,22 +293,23 @@ int main(int argc, char **argv)
     sd_send_line("299 OK LOADED SUCCESSFULLY");
     while ((cmd = sd_readline()) != NULL) {
         if (!strcmp(cmd, "SPEAK") || !strcmp(cmd, "CHAR") || !strcmp(cmd, "KEY") || !strcmp(cmd, "SOUND_ICON")) {
-            int is_key = !strcmp(cmd, "KEY"), icon = !strcmp(cmd, "SOUND_ICON");
+            const int is_key = !strcmp(cmd, "KEY"), is_char = !strcmp(cmd, "CHAR"), icon = !strcmp(cmd, "SOUND_ICON");
             char *text;
             sd_send_line("202 OK RECEIVING MESSAGE");
             text = read_text();
-            if (is_key) {
-                char *c;
-                for (c = text; *c; c++)
-                    if (*c == '_')
-                        *c = ' ';
+            if (text && (is_key || is_char)) {       /* a key's name, or the word for a space, in Hungarian */
+                char *said = is_key ? sd_key_text(text) : sd_char_text(text);
+                free(text);
+                text = said;
             }
-            if (icon || !*text) {                    /* no sound icons: an empty message still completes */
+            if (!text) {                             /* out of memory: the message is answered, not spoken */
+                sd_send_line("301 ERROR CANT SPEAK");
+            } else if (icon || !*text) {             /* no sound icons: an empty message still completes */
                 sd_send_line("200 OK SPEAKING");
                 sd_send_line("701 BEGIN");
                 sd_send_line("702 END");
             } else {
-                speak(text);
+                speak(text, !is_key && !is_char);
             }
             free(text);
         } else if (!strcmp(cmd, "STOP") || !strcmp(cmd, "CANCEL") || !strcmp(cmd, "PAUSE")) {
@@ -330,14 +358,15 @@ int main(int argc, char **argv)
         } else if (!strncmp(cmd, "LIST VOICES", 11) && (!cmd[11] || cmd[11] == ' ')) {
             /* "LIST VOICES", and from speech-dispatcher 0.12 "LIST VOICES <language> [<variant>]".  Every voice here
              * is Hungarian: a request for hu (hu-HU, HU_hu) gets them all, one for another language none.  The
-             * variant is not looked at. */
+             * variant is not looked at, and none is given: Orca 51 shows a voice's variant in place of its name,
+             * so "MALE1" there listed the voices as MALE1, MALE2, MALE3 (#24; tgeczy/ssi263-speech PR 29). */
             char lang[16] = "";
             int v, any = 0;
             sscanf(cmd + 11, "%15s", lang);
             if (!*lang || ((lang[0] | 32) == 'h' && (lang[1] | 32) == 'u' && (!lang[2] || lang[2] == '-' || lang[2] == '_')))
                 for (v = 0; v < NVOICES; v++)
                     if (have(v)) {
-                        printf("200-%s\thu\tMALE%d\n", VOICES[v], v + 1);
+                        printf("200-%s\thu\t\n", VOICES[v]);
                         any = 1;
                     }
             sd_send_line(any ? "200 OK VOICE LIST SENT" : "304 CANT LIST VOICES");

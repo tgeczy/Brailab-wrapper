@@ -1,7 +1,8 @@
 /*
- * sd_text.c -- a message's text made ready for a voice: SSML taken off, and UTF-8 turned into the BraiLab PC's
- * own character set.  MIT.
+ * sd_text.c -- a message's text made ready for a voice: SSML taken off, key names said in Hungarian, and UTF-8
+ * turned into the BraiLab PC's own character set.  MIT.
  */
+#include <stdlib.h>
 #include <string.h>
 
 #include "brailab_voice.h"
@@ -43,6 +44,95 @@ void sd_strip_ssml(char *s)
         *w++ = *r++;
     }
     *w = 0;
+}
+
+/* SSIP's key names (its manual's appendix "Key Names") as a Hungarian voice says them (#28).  The words are NVDA's
+ * Hungarian translation where it has one ("szóköz", "balnyíl", "numerikus plusz"); the English names it keeps
+ * ("escape", "page up") are written as a Hungarian reader says them, since TALKHUN0 reads by Hungarian rules.
+ * espeak-ng's module does the same in each voice's language. */
+static const char *const KEY_WORDS[][2] = {
+    {"space", "szóköz"}, {"underscore", "aláhúzás"}, {"double-quote", "macskaköröm"},
+    {"alt", "alt"}, {"control", "kontrol"}, {"hyper", "hájper"}, {"meta", "meta"}, {"shift", "sift"},
+    {"super", "Start gomb"},
+    {"backspace", "bekszpész"}, {"break", "megszakít"}, {"delete", "dilít"}, {"down", "lenyíl"}, {"end", "end"},
+    {"enter", "enter"}, {"escape", "eszkép"}, {"home", "hóm"}, {"insert", "inzert"}, {"left", "balnyíl"},
+    {"menu", "menü"}, {"next", "pédzs daun"}, {"num-lock", "num lokk"}, {"pause", "póz"}, {"print", "print"},
+    {"prior", "pédzs ap"}, {"return", "enter"}, {"right", "jobbnyíl"}, {"scroll-lock", "szkrol lokk"},
+    {"shift-lock", "sift lokk"}, {"caps-lock", "kepsz lokk"}, {"tab", "tab"}, {"up", "felnyíl"},
+    {"window", "Start gomb"},
+    {"kp-*", "numerikus csillag"}, {"kp-+", "numerikus plusz"}, {"kp--", "numerikus mínusz"},
+    {"kp-.", "numerikus vessző"}, {"kp-/", "numerikus per"}, {"kp-enter", "numerikus enter"},
+};
+
+static const char *key_word(const char *name, size_t n)
+{
+    size_t i;
+    for (i = 0; i < sizeof KEY_WORDS / sizeof KEY_WORDS[0]; i++)
+        if (strlen(KEY_WORDS[i][0]) == n && !strncmp(KEY_WORDS[i][0], name, n))
+            return KEY_WORDS[i][1];
+    return NULL;
+}
+
+static int is_modifier(const char *name, size_t n)
+{
+    static const char *const MODIFIERS[] = {"alt", "control", "hyper", "meta", "shift", "super"};
+    size_t i;
+    for (i = 0; i < sizeof MODIFIERS / sizeof MODIFIERS[0]; i++)
+        if (strlen(MODIFIERS[i]) == n && !strncmp(MODIFIERS[i], name, n))
+            return 1;
+    return 0;
+}
+
+/* One key name in words, appended at w; kp-0..kp-9 and f1..f24 as "numerikus 5" and the letter with its number. */
+static char *put_key(char *w, const char *name, size_t n)
+{
+    const char *word = key_word(name, n);
+    if (word) {
+        size_t k = strlen(word);
+        memcpy(w, word, k);
+        return w + k;
+    }
+    if (n == 4 && !strncmp(name, "kp-", 3)) {
+        memcpy(w, "numerikus ", 10);
+        w[10] = name[3];
+        return w + 11;
+    }
+    memcpy(w, name, n);
+    for (; n; n--, w++)
+        if (*w == '-')
+            *w = ' ';
+    return w;
+}
+
+char *sd_key_text(const char *key)
+{
+    /* the longest word is 17 bytes; a name is at least one byte; so 24 a byte of the name is room enough */
+    char *out = (char *)malloc(strlen(key) * 24 + 1), *w = out;
+    const char *p = key;
+    if (!out)
+        return NULL;
+    if (!strcmp(key, "_"))                           /* not a valid name, but espeak-ng's module takes it */
+        p = "underscore";
+    else if (!strcmp(key, "\""))
+        p = "double-quote";
+    /* prefixes "shift_", "control_alt_": each name before an underscore that is a modifier */
+    for (;;) {
+        const char *u = strchr(p, '_');
+        if (!u || u == p || !is_modifier(p, (size_t)(u - p)) || !u[1])
+            break;
+        w = put_key(w, p, (size_t)(u - p));
+        *w++ = ' ';
+        p = u + 1;
+    }
+    w = put_key(w, p, strlen(p));
+    *w = 0;
+    return out;
+}
+
+char *sd_char_text(const char *ch)
+{
+    /* the server sends a space as the word "space" (its output.c); every other character comes bare */
+    return strdup(!strcmp(ch, "space") || !strcmp(ch, " ") ? "szóköz" : ch);
 }
 
 /* TALKHUN0 (1991) reads CWI-2, the Hungarian DOS page from before CP852: CP437, with o and u double acute in

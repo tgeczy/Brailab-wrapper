@@ -5,7 +5,7 @@ given.  Needs no TALKHUN0.COM and no real plug-in, so it runs anywhere the modul
   speak    the text reaches the plug-in as UTF-8 with SSML taken off, in blocks, at the plug-in's sample rate
   set      SSIP rate to the ten tempos (0 is the voice's own, 4), pitch to the three pitches, volume as a gain
            here, the plug-in's own volume left alone
-  stop     STOP after a block ends the message with 703, PAUSE with 704; the next message is whole
+  stop     STOP after a block ends the message with 703, and PAUSE too (#22); the next message is whole
   replies  every reply line is the one speech-dispatcher's own modules give (0.11.0 to 0.12.1): voices, also
            asked for with a language as 0.12 does, AUDIO, LOGLEVEL, SET
   lines    DEBUG ON and OFF are answered; a command that merely holds the word STOP does not stop the message;
@@ -75,7 +75,7 @@ def same(label, got, want):
           if got == want else "got %d, want %d samples" % (len(got) // 2, len(want) // 2))
 
 
-TTS = b"200-BraiLab TTS\thu\tMALE3"
+TTS = b"200-BraiLab TTS\thu\t"                          # no variant: Orca 51 shows it as the name (#24)
 LISTED = b"200 OK VOICE LIST SENT"
 TEXT = "Jó napot kívánok, árvíztűrő tükörfúrógép."
 
@@ -115,7 +115,7 @@ check("stop", end == b"703 STOP" and 0 < len(pcm) < len(stub(stop_text)), "%s af
       % (end.decode(), len(pcm) // 2, len(stub(stop_text)) // 2))
 same("after", m.speak(TEXT)[0], stub(TEXT))
 pcm, end = m.speak(stop_text, stop_after=1, stop_with="PAUSE")
-check("pause", end == b"704 PAUSE" and 0 < len(pcm) < len(stub(stop_text)), "%s after %d of %d samples"
+check("pause", end == b"703 STOP" and 0 < len(pcm) < len(stub(stop_text)), "%s after %d of %d samples"
       % (end.decode(), len(pcm) // 2, len(stub(stop_text)) // 2))
 same("p_after", m.speak(TEXT)[0], stub(TEXT))
 check("debug", m.command("DEBUG ON /tmp/sd_brailab.log") == b"200 OK DEBUGGING ON"
@@ -126,10 +126,15 @@ same("dbg_mid", pcm, stub(long_text))
 check("dbg_end", end == b"702 END" and m.line() == b"200 OK DEBUGGING ON", end.decode())
 check("unknown", m.command("NO SUCH COMMAND") == b"300 ERR UNKNOWN COMMAND")
 same("char", m.speak("b" * 20, cmd="CHAR")[0], stub("b" * 20))
-same("key", m.speak("shift_a" * 4, cmd="KEY")[0], stub("shift a" * 4))
+same("key", m.speak("control_alt_delete", cmd="KEY")[0], stub("kontrol alt dilít"))      # Hungarian words (#28)
+same("key_kp", m.speak("shift_kp-5", cmd="KEY")[0], stub("sift numerikus 5"))
+same("key__", m.speak("_", cmd="KEY")[0], stub("aláhúzás"))
+check("key_lt", m.speak("<", cmd="KEY")[0] == stub("<") != b"", "KEY < is said, not taken for SSML (#23)")
+same("char_sp", m.speak("space", cmd="CHAR")[0], stub("szóköz"))
+check("char_lt", m.speak("a<b&c", cmd="CHAR")[0] == stub("a<b&c"), "CHAR a<b&c whole, no SSML taken off")
 pcm, end = m.speak("")
 check("empty", pcm == b"" and end == b"702 END")
-m.set(synthesis_voice="BraiLab PC")                     # a voice this module hasn't got: no change
+m.set(synthesis_voice="BraiLab PC")                     # a voice this module hasn't got: its default
 same("novoice", m.speak(TEXT)[0], stub(TEXT))
 check("quit", m.quit() == b"210 OK QUIT" and m.p.returncode == 0)
 
@@ -149,9 +154,30 @@ m = Module(MODULE, folder(plugin=None), conf='BrailabTtsPlugin "%s"\n' % os.path
 check("conf", m.init[-1] == b"299 OK LOADED SUCCESSFULLY" and m.voices() == [TTS, LISTED])
 same("confsay", m.speak(TEXT)[0], stub(TEXT))
 m.quit()
+# its data files beside it, none in the data folder: found there (#31)
+m = Module(MODULE, folder(plugin=None, data=False),
+           conf='BrailabTtsPlugin "%s"\n' % os.path.join(elsewhere, "another_name.so"))
+check("conf_own", m.init[-1] == b"299 OK LOADED SUCCESSFULLY" and m.voices() == [TTS, LISTED],
+      b" | ".join(m.init).decode()[:160])
+m.quit()
+# a path that is not there, and a bare name: refused with a reason (#31)
+for label, path, want in (("conf_gone", "/nonexistent/libbrailab_tts.so", b"is not there"),
+                          ("conf_bare", "libbrailab_tts.so", b"not a path")):
+    m = Module(MODULE, folder(plugin=None, data=False), conf='BrailabTtsPlugin "%s"\n' % path)
+    why = b" | ".join(m.init)
+    check(label, m.init[-1] == b"399 ERR CANT INIT MODULE" and want in why, why.decode(errors="replace")[:160])
+    m.p.wait(10)
+# a config line longer than the reader's buffer (1,199 characters) is skipped whole (#32): read in two, its tail
+# was a line of its own, here one that names a plug-in that is not there, after the good one
+m = Module(MODULE, folder(plugin=None, data=False),
+           conf='BrailabTtsPlugin "%s"\n' % os.path.join(elsewhere, "another_name.so")
+           + "#" + "x" * 1198 + 'BrailabTtsPlugin "/nonexistent/x.so"\n')
+check("conf_long", m.init[-1] == b"299 OK LOADED SUCCESSFULLY" and m.voices() == [TTS, LISTED],
+      b" | ".join(m.init).decode()[:160])
+m.quit()
 
 if TALKHUN:
-    PC, FURCSA = b"200-BraiLab PC\thu\tMALE1", b"200-BraiLab PC furcsa\thu\tMALE2"
+    PC, FURCSA = b"200-BraiLab PC\thu\t", b"200-BraiLab PC furcsa\thu\t"
     m = Module(MODULE, folder(talkhun=True))
     check("three", m.voices() == [PC, FURCSA, TTS, LISTED])
     first, end = m.speak(TEXT)                          # the default voice is still the BraiLab PC
@@ -163,6 +189,10 @@ if TALKHUN:
     check("furcsa", furcsa != first and furcsa != stub(TEXT) and len(furcsa) > 20000)
     m.set(synthesis_voice="BraiLab PC")
     check("back", m.speak(TEXT)[0] == first, "the first voice says it as it did before")
+    m.set(synthesis_voice="BraiLab PC furcsa")
+    m.speak(TEXT)
+    m.set(synthesis_voice="NULL")                       # a client that names no voice: the default, not furcsa (#24)
+    check("null", m.speak(TEXT)[0] == first, "synthesis_voice=NULL is the default voice")
     m.quit()
     m = Module(MODULE, folder(plugin=STUB_OTHER, talkhun=True))
     check("refused", m.init[-1] == b"299 OK LOADED SUCCESSFULLY" and m.voices() == [PC, FURCSA, LISTED]

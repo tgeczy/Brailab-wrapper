@@ -59,12 +59,13 @@ jobs:
       - name: Run the klatt suite
         run: python -m pytest src/klatt/tests -v
 
-      # The voice's tests need TALKHUN0, so they skip here, but it must still build.
+      # The voice library, for the module and for the module tests' reference.
       - name: Build the voice
         run: python src/talkhun_emu/csrc/build_native.py
 
-      # The speech-dispatcher module must build, and its loading of an optional voice
-      # plug-in is tested with a stand-in, which needs no TALKHUN0 either.
+      # The speech-dispatcher module must build; its loading of an optional voice plug-in
+      # is tested with a stand-in, and the BraiLab PC voices with TALKHUN0, which is in
+      # third_party/brailab.
       - name: Build the speech-dispatcher module
         run: sh build_linux.sh
 
@@ -72,6 +73,11 @@ jobs:
         run: >
           python src/platforms/speechd/test_sd_plugin.py build/linux/sd_brailab
           build/linux/test/libbrailab_tts.so build/linux/test/libbrailab_tts_other.so
+          third_party/brailab
+
+      # every message's audio against the voice the NVDA add-on speaks, byte for byte
+      - name: Run the module's voice tests
+        run: python src/platforms/speechd/test_sd_brailab.py build/linux/sd_brailab third_party/brailab
 
       # install.sh and uninstall.sh on a real package, against scratch folders.
       - name: Run the installer's test

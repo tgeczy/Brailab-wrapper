@@ -95,6 +95,8 @@ put() {             # put FILE DESTINATION MODE
 
 # ---- the BraiLab PC voices: everything in the package -------------------------------------------------------------
 echo "Installing the BraiLab voices"
+MODCONF_MADE=0
+[ -d "$MODCONF" ] || MODCONF_MADE=1                           # made here: the user's own, when CONF is (#29)
 mkdir -p "$DATA" "$MODCONF"
 [ -f "$HERE/share/brailab/TALKHUN0.COM" ] || { echo "the package has no share/brailab/TALKHUN0.COM"; exit 1; }
 for f in "$HERE"/share/brailab/*; do                          # the files; the speech-dispatcher folder is not data
@@ -129,34 +131,40 @@ if [ $MAKE_DEFAULT -eq 1 ]; then
         if grep -q '^DefaultModule' "$CONF"; then
             sed -i 's/^DefaultModule/# (before brailab) DefaultModule/' "$CONF"
         fi
+        [ -n "$(tail -c1 "$CONF")" ] && echo >> "$CONF"        # a last line with no newline: not glued to it (#25)
         echo "DefaultModule brailab" >> "$CONF"
     fi
     echo "  made the default synthesizer"
 fi
 if [ -n "$SUDO_USER" ] && [ "$CONF" != "/etc/speech-dispatcher/speechd.conf" ]; then
     chown "$SUDO_USER" "$CONF" "$MODCONF/brailab.conf"
+    [ $MODCONF_MADE -eq 1 ] && chown "$SUDO_USER" "$MODCONF"
 fi
 
 # ---- the BraiLab TTS voice: the optional plug-in ------------------------------------------------------------------
 # From a file, or fetched from the release this package was made for (share/brailab/release-tag), never from
 # "the latest release": this repository's releases are of several kinds, and the latest need not have it.
+# sh has no local variables: each function keeps its own names, or install_tts's folder replaced fetch_tts's and the
+# download was never removed (#26).
 install_tts() {     # install_tts ARCHIVE: unpack, check it is what it says, copy into the data folder
-    work="$(mktemp -d)"
-    if ! tar -xzf "$1" -C "$work" 2>/dev/null; then
+    unpack="$(mktemp -d)"
+    if ! tar -xzf "$1" -C "$unpack" 2>/dev/null; then
         echo "  BraiLab TTS: $1 is not a package of the voice; left out"
-        rm -rf "$work"
+        rm -rf "$unpack"
         return 1
     fi
-    dir="$(dirname "$(find "$work" -name "$PLUGIN_LIB" | head -n 1)")"
-    if [ ! -f "$dir/$PLUGIN_LIB" ]; then
+    found="$(find "$unpack" -name "$PLUGIN_LIB" | head -n 1)"
+    # none found: dirname "" is ".", the folder the installer was run from (#27)
+    if [ -z "$found" ] || [ ! -f "$found" ]; then
         echo "  BraiLab TTS: no $PLUGIN_LIB in $1; left out"
-        rm -rf "$work"
+        rm -rf "$unpack"
         return 1
     fi
+    dir="$(dirname "$found")"
     for f in "$dir"/*; do
         [ -f "$f" ] && put "$f" "$DATA/$(basename "$f")" 644
     done
-    rm -rf "$work"
+    rm -rf "$unpack"
     echo "  BraiLab TTS: installed in $DATA"
 }
 
@@ -188,23 +196,23 @@ fetch_tts() {
         fi
         base="https://github.com/tgeczy/Brailab-wrapper/releases/download/$tag"
     fi
-    work="$(mktemp -d)"
+    download="$(mktemp -d)"
     echo "  BraiLab TTS: fetching $base/$name"
-    if ! fetch "$base/$name" "$work/$name" || ! fetch "$base/$name.sha256" "$work/$name.sha256"; then
+    if ! fetch "$base/$name" "$download/$name" || ! fetch "$base/$name.sha256" "$download/$name.sha256"; then
         echo "  BraiLab TTS: the download did not work (no network, or no build for $arch); left out"
-        rm -rf "$work"
+        rm -rf "$download"
         return 1
     fi
-    want="$(cut -d' ' -f1 "$work/$name.sha256")"
-    got="$(sha256sum "$work/$name" | cut -d' ' -f1)"
+    want="$(cut -d' ' -f1 "$download/$name.sha256")"
+    got="$(sha256sum "$download/$name" | cut -d' ' -f1)"
     if [ -z "$want" ] || [ "$want" != "$got" ]; then
         echo "  BraiLab TTS: the download does not match its checksum; left out"
-        rm -rf "$work"
+        rm -rf "$download"
         return 1
     fi
-    install_tts "$work/$name"
-    ret=$?
-    rm -rf "$work"
+    ret=0
+    install_tts "$download/$name" || ret=$?
+    rm -rf "$download"
     return $ret
 }
 

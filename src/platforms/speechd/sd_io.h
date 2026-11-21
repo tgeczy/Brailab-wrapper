@@ -12,7 +12,7 @@ char *sd_readline(void);                             /* the next line without it
 enum { SD_GO = 0, SD_STOPPED, SD_PAUSED };
 int sd_poll_stop(void);
 void sd_send_line(const char *s);
-void sd_send_end(int stopped);                      /* 702 END, 703 STOP or 704 PAUSE, from sd_poll_stop's answer */
+void sd_send_end(int stopped);                      /* 702 END, or 703 STOP after a STOP or a PAUSE (sd_io.c says why) */
 void sd_send_audio(const int16_t *pcm, int n, int rate);   /* one 705 block: 16-bit mono */
 
 #endif

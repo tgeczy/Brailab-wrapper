@@ -8,8 +8,8 @@ driver would give it, so the module must be the add-on's voice:
            against Python's codec) and a lone capital
   set      rate, pitch and volume from SET (SSIP -100..100 to the driver's 0..100)
   furcsa   SET synthesis_voice picks the weird voice, and back
-  stop     STOP after two blocks ends the message with 703, PAUSE with 704, and the next message is whole and clean
-  char     CHAR and KEY (shift_a is said as "shift a")
+  stop     STOP after two blocks ends the message with 703, PAUSE too (#22), and the next message is whole and clean
+  char     CHAR and KEY: key names in Hungarian words (#28), "<" said and not taken for SSML (#23)
   conf     BrailabIntonation 0 in the module's file, and this user's file winning over it
 
     python3 test_sd_brailab.py <sd_brailab> <folder with TALKHUN0.COM>
@@ -61,7 +61,7 @@ TEXTS = ["Jó napot kívánok.", "árvíztűrő tükörfúrógép, ÁRVÍZTŰRŐ
 m = Module()
 check("init", m.init[-1] == b"299 OK LOADED SUCCESSFULLY", m.init[-1].decode())
 voices = m.voices()
-check("voices", voices == [b"200-BraiLab PC\thu\tMALE1", b"200-BraiLab PC furcsa\thu\tMALE2",
+check("voices", voices == [b"200-BraiLab PC\thu\t", b"200-BraiLab PC furcsa\thu\t",      # no variant (#24)
                            b"200 OK VOICE LIST SENT"], repr(voices))
 for i, text in enumerate(TEXTS):
     pcm, end = m.speak(text)
@@ -78,10 +78,22 @@ pcm, end = m.speak(long_text, stop_after=2)
 check("stop", end == b"703 STOP" and len(pcm) < len(reference(long_text)), end.decode())
 same("after", m.speak(TEXTS[0])[0], reference(TEXTS[0]))
 pcm, end = m.speak(long_text, stop_after=2, stop_with="PAUSE")
-check("pause", end == b"704 PAUSE" and len(pcm) < len(reference(long_text)), end.decode())
+check("pause", end == b"703 STOP" and len(pcm) < len(reference(long_text)), end.decode())
 same("p_after", m.speak(TEXTS[0])[0], reference(TEXTS[0]))
 same("char", m.speak("b", cmd="CHAR")[0], reference("b"))
-same("key", m.speak("shift_a", cmd="KEY")[0], reference("shift a"))
+same("key", m.speak("shift_a", cmd="KEY")[0], reference("sift a"))
+same("key_esc", m.speak("escape", cmd="KEY")[0], reference("eszkép"))
+same("key__", m.speak("_", cmd="KEY")[0], reference("aláhúzás"))
+key_lt = m.speak("<", cmd="KEY")[0]
+check("key_lt", key_lt == reference("<") and len(key_lt) > 1000, "%d samples" % (len(key_lt) // 2))
+char_lt = m.speak("a<b", cmd="CHAR")[0]
+check("char_lt", char_lt == reference("a<b") and char_lt != reference("a"), "CHAR a<b is not CHAR a")
+same("char_sp", m.speak("space", cmd="CHAR")[0], reference("szóköz"))
+same("ssml", m.speak('<speak>Jó <mark name="x"/>napot &amp; kívánok.</speak>')[0], reference("Jó napot & kívánok."))
+m.set(synthesis_voice="BraiLab PC furcsa")
+m.speak(TEXTS[0])
+m.set(synthesis_voice="NULL")
+same("null", m.speak(TEXTS[0])[0], reference(TEXTS[0]))
 m.quit()
 
 m = Module(conf='BrailabIntonation 0\n')

@@ -25,14 +25,29 @@ static struct {
 
 int sd_plugin_load(const char *file, const char *datadir)
 {
-    char path[1100];
+    char path[1100], own[1100], *slash;
+    const int given = file && *file;
     int (*version)(void), (*rate)(void), ret;
-    if (file && *file)
+    if (given)
         snprintf(path, sizeof path, "%s", file);
     else
         snprintf(path, sizeof path, "%s/libbrailab_tts.so", datadir);
-    if (!strchr(path, '/') || access(path, R_OK) != 0)   /* a bare name would be searched for: never that */
+    if (!strchr(path, '/')) {                        /* a bare name would be searched for: never that */
+        snprintf(tts.why, sizeof tts.why, "BrailabTtsPlugin \"%.300s\" is not a path (it needs a /)", path);
         return 0;
+    }
+    if (access(path, R_OK) != 0) {
+        if (given)                                   /* none in the data folder is the usual case: said only if named */
+            snprintf(tts.why, sizeof tts.why, "BrailabTtsPlugin \"%.300s\" is not there", path);
+        return 0;
+    }
+    /* the plug-in's own folder, where its data files are looked for first (#31) */
+    snprintf(own, sizeof own, "%s", path);
+    slash = strrchr(own, '/');
+    if (slash == own)
+        own[1] = 0;
+    else
+        *slash = 0;
     tts.lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!tts.lib) {
         snprintf(tts.why, sizeof tts.why, "%.390s", dlerror());
@@ -49,8 +64,9 @@ int sd_plugin_load(const char *file, const char *datadir)
     else if (version() != BRAILAB_TTS_API)
         snprintf(tts.why, sizeof tts.why, "%.250s speaks version %d of the interface, this module version %d", path,
                  version(), BRAILAB_TTS_API);
-    else if ((ret = tts.open(datadir)) != 0)
-        snprintf(tts.why, sizeof tts.why, "the plug-in did not open on the data folder %.300s (%d)", datadir, ret);
+    else if ((ret = tts.open(own)) != 0 && (!strcmp(own, datadir) || (ret = tts.open(datadir)) != 0))
+        snprintf(tts.why, sizeof tts.why, "the plug-in did not open on its own folder or the data folder %.300s (%d)",
+                 datadir, ret);
     else if ((tts.rate = rate()) < 4000 || tts.rate > 96000)
         snprintf(tts.why, sizeof tts.why, "the plug-in's sample rate is %d", tts.rate);
     else
