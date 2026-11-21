@@ -222,3 +222,53 @@ def test_one_amplitude_is_two_with_the_other_at_zero():
     b = core.Core(len(fc)).run(np.where(voiced, amp, 0.0), p, None, fc, bw,
                                noise_amp=np.where(voiced, 0.0, amp))
     assert np.array_equal(a, b)
+
+
+def test_resample_matches_scipy_with_the_nyquist_bin():
+    """#46: with an even length the Nyquist bin was copied as it is; scipy halves it upsampling and doubles it
+    downsampling.  Up to 0.04 off on noise, and a Nyquist tone at twice its level."""
+    signal = pytest.importorskip("scipy.signal")
+    from pcf8200.chip import _resample
+    rng = np.random.default_rng(7)
+    for n, src, dst in ((1000, 10000, 44100), (1000, 10000, 8000), (999, 10000, 44100), (1024, 10000, 22050),
+                        (1000, 10000, 5000), (1001, 10000, 16000)):
+        x = rng.standard_normal(n)
+        m = int(round(n * dst / src))
+        assert np.allclose(_resample(x, src, dst), signal.resample(x, m), atol=1e-9), (n, src, dst)
+    tone = np.cos(np.pi * np.arange(1000))                       # the Nyquist tone, peak 1
+    assert abs(np.max(np.abs(_resample(tone, 10000, 20000))) - 1.0) < 1e-9
+
+
+def test_the_starter_fricatives_sound_as_they_always_did():
+    """#40: the "s" and the fricative default asked for formants above 5 kHz, which fold back.  The values now
+    are their mirror images, and a resonator's coefficient 2cos(2 pi f / 10000) cannot tell the two apart."""
+    import warnings
+    from pcf8200.chip import render
+    from pcf8200.phonemes import FRICATIVES
+    for old, new in (((4500, 5500, 6500), FRICATIVES["s"]["formants"]),
+                     ((1200, 4000, 6000), FRICATIVES["f"]["formants"]),
+                     ((4200, 5200, 6000), (4000, 4200, 4800))):
+        renders = []
+        for formants in (old, new):
+            v = Voice()
+            v.fricative(formants=formants)
+            fc, bw, amp, p, voiced = v.tracks()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                renders.append(render(fc, bw, amp, p, voiced))
+        # the same three resonators in another order: equal to the last bits of rounding
+        assert np.allclose(renders[0], renders[1], atol=1e-7), (old, new)
+    assert all(f <= 5000 for f in FRICATIVES["s"]["formants"] + FRICATIVES["f"]["formants"])
+
+
+def test_render_warns_about_a_formant_above_5khz():
+    import warnings
+    from pcf8200.chip import render
+    n = 256
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        render([[700.0] * n, [5500.0] * n], [[90.0] * n] * 2, 0.5, 110.0)
+    assert any("fold back" in str(w.message) for w in caught)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        render([[700.0] * n, [4900.0] * n], [[90.0] * n] * 2, 0.5, 110.0)

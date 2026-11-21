@@ -8,13 +8,15 @@ measurement to real silicon.
 It wraps the chip the way this project wraps a vendor DLL: you drive it with the
 chip's *own command stream* (5-byte frames + control writes), or phonetically
 from formant frequencies. It speaks whatever formants you give it — Hungarian,
-Spanish, **Polish**, a sine sweep, anything.
+Spanish, **Polish**, a sine sweep, anything — up to 5 kHz: the chip runs at
+10 kHz, so a formant above that folds back to its mirror image (5500 Hz sounds
+as 4500), and `render()` warns when asked for one.
 
 Only dependency: **numpy**. (scipy is used *only* if you ask for an output
 low-pass at a cutoff other than 4200 Hz; by default there is none.)
 
 ```
-pip install pcf8200-2.0.0-py3-none-<your platform>.whl
+pip install pcf8200-<version>-py3-none-<your platform>.whl
 import pcf8200
 ```
 

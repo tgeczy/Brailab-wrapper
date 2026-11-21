@@ -12,6 +12,8 @@ The chip runs a periodic-pulse / noise excitation into five cascaded resonators
 gentle glottal tilt on the voice and a low-passed noise source.  Internal rate is
 10 kHz; ask for any output rate and it band-limit-resamples.
 """
+import warnings
+
 import numpy as np
 
 from .pcf8200_core import (make_core, RATE, TILT_HZ, LOWPASS_HZ, LP_SOS_HZ, HIGHPASS_HZ,
@@ -20,7 +22,11 @@ from .pcf8200_core import (make_core, RATE, TILT_HZ, LOWPASS_HZ, LP_SOS_HZ, HIGH
 
 
 def _resample(x, src, dst):
-    """Band-limited FFT resample (same method as scipy.signal.resample), numpy only."""
+    """Band-limited FFT resample (the method of scipy.signal.resample, Nyquist bin
+    included), numpy only.  The Nyquist bin of the shorter length is shared between
+    the positive and negative frequency: halved when upsampling from an even length,
+    doubled when downsampling to one.  It was copied as it is, which was up to 0.04
+    off on noise and put a Nyquist tone at twice its level (#46)."""
     if src == dst or len(x) == 0:
         return x
     n = len(x)
@@ -28,12 +34,15 @@ def _resample(x, src, dst):
     if m <= 0:
         return x[:0]
     X = np.fft.rfft(x)
-    nb = m // 2 + 1
-    Y = np.zeros(nb, dtype=complex)
-    kc = min(nb, len(X))
-    Y[:kc] = X[:kc]
-    if m % 2 == 0 and kc == nb and nb > 1:
-        Y[-1] = Y[-1].real
+    short = min(m, n)
+    keep = short // 2 + 1
+    Y = np.zeros(m // 2 + 1, dtype=complex)
+    Y[:keep] = X[:keep]
+    if short % 2 == 0:
+        if m < n:
+            Y[short // 2] *= 2.0
+        elif m > n:
+            Y[short // 2] *= 0.5
     return np.fft.irfft(Y, m) * (float(m) / n)
 
 
@@ -79,6 +88,13 @@ def render(fc, bw, amp, pitch, voiced=None, *, rate=RATE, source_tilt=TILT_HZ,
     fc = np.atleast_2d(np.asarray(fc, dtype=float))
     bw = np.atleast_2d(np.asarray(bw, dtype=float))
     nf, N = fc.shape
+    if nf == 0:
+        raise ValueError("render needs at least one formant track")
+    if N and np.nanmax(fc) > RATE / 2.0:
+        # the core runs at 10 kHz: a resonator asked for above 5 kHz peaks at its
+        # mirror image, 5500 Hz at about 4500 and 6500 at about 3500 (#40)
+        warnings.warn("formants above %d Hz fold back at the chip's %d Hz rate (asked for %.0f Hz)"
+                      % (RATE // 2, RATE, float(np.nanmax(fc))), stacklevel=2)
     if bw.shape != fc.shape:
         bw = np.broadcast_to(bw, fc.shape).copy()
     amp = np.broadcast_to(np.asarray(amp, dtype=float), (N,)).astype(float)

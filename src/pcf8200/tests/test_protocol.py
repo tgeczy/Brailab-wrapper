@@ -241,3 +241,14 @@ def test_mf_change_after_frames_is_refused():
     chip.frame_codes(F1=10, F2=10, F3=4, AM=13, PI=2, FD=1)
     with pytest.raises(ValueError, match="mid-stream"):
         chip.tracks()
+
+
+def test_reset_keeps_the_voice_the_chip_was_set_to():
+    """#36: reset() kept the speed and the start pitch but not M/F: a chip set to female decoded as male."""
+    chip = PCF8200(voice="male").control(female=True)
+    chip.frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+    assert len(chip.tracks()[0]) == 4
+    chip.reset().frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+    assert len(chip.tracks()[0]) == 4, "still the four-formant female tables"
+    chip.control(female=False).reset().frame_codes(F1=22, F2=13, F3=4, AM=13, PI=2, FD=1)
+    assert len(chip.tracks()[0]) == 5

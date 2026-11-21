@@ -159,3 +159,12 @@ def test_bare_chip_has_no_output_stage():
     seq = steady()
     bare = chip_synth.render_chip_fast(seq, scale=20.0, highpass=0.0)
     assert abs(bare).max() > 1.0, "bare chip must be left unbounded"
+
+
+def test_the_fast_renders_refuse_the_plain_sawtooth():
+    """#45: source='saw' was taken and played as the band-limited 'blsaw'."""
+    seq = [('pitch', 46), ('frame', bytes([0x16, 0x22, 0x4D, 0x0D, 0x00]))]
+    for render in (chip_synth.render_chip_fast, lambda s, **kw: list(chip_synth.render_chip_stream(s, **kw))):
+        with pytest.raises(ValueError):
+            render(seq, source='saw')
+        assert len(render(seq, source='blsaw')) > 0

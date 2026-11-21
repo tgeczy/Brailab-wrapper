@@ -144,6 +144,66 @@ def test_frames_match_the_library_exactly(female, time_scale):
             assert np.array_equal(np.concatenate([g[4][i] for g in got]), bw[i])
 
 
+def test_an_out_of_range_pitch_byte_is_masked_in_c_as_in_the_stream():
+    """#41: the C tracker took byte 300 as 732 Hz, the Python stream as 44 (107 Hz).  The register is one
+    byte; the friendly Python calls refuse what does not fit."""
+    frame = bytes([0x16, 0x22, 0x4D, 0x0D, 0x00])
+    for out_of_range, byte in ((300, 44), (256, 0), (-1, 255), (511, 255)):
+        a = native.NativeTracker(female=False, honour_fs=True)
+        a.pitch(out_of_range)
+        b = native.NativeTracker(female=False, honour_fs=True)
+        b.pitch(byte)
+        assert np.array_equal(a.frame(frame)[1], b.frame(frame)[1]), out_of_range
+    chip = PCF8200()
+    for bad in (300, 256, -1):
+        with pytest.raises(ValueError):
+            chip.pitch(bad)
+    for bad in (700, 1000, -10, float("nan")):
+        with pytest.raises(ValueError):
+            chip.pitch_hz(bad)
+
+
+def test_a_short_frame_is_refused():
+    """#42: the C read five bytes whatever it was given: a 2-byte frame gave lengths and F4 from past its end."""
+    t = native.NativeTracker()
+    for bad in (b"\x13\x02", b"", b"\x00" * 6):
+        with pytest.raises(ValueError):
+            t.frame(bad)
+
+
+def test_a_nan_pitch_is_one_silent_sample_in_both_cores():
+    """#43: one NaN pitch sample made every sample after it NaN, for good, in both cores."""
+    n = 400
+    amp = np.full(n, 0.5)
+    pitch = np.full(n, 110.0)
+    pitch[100] = np.nan
+    pitch[200] = np.inf
+    fc = np.array([[700.0] * n, [1200.0] * n, [2500.0] * n, [3300.0] * n, [3800.0] * n])
+    bw = np.full((5, n), 90.0)
+    outs = []
+    for c in (core.Core(5), native.NativeCore(5)):
+        out = c.run(amp, pitch, np.ones(n, bool), fc, bw)
+        assert np.all(np.isfinite(out)), type(c).__name__
+        assert np.all(np.isfinite(c.run(amp, np.full(n, 110.0), np.ones(n, bool), fc, bw)))
+        outs.append(out)
+    assert np.allclose(outs[0], outs[1], atol=1e-9)
+
+
+def test_a_wild_time_scale_is_defined_in_c():
+    """#43: the C turned the frame length into an int unchecked: a huge or infinite time_scale was undefined."""
+    frame = bytes([0x16, 0x22, 0x4D, 0x0D, 0x00])
+    for ts in (float("inf"), float("nan"), 1e300, -1.0, 0.0):
+        n = len(native.NativeTracker(time_scale=ts).frame(frame)[0])
+        assert 1 <= n <= 128 * 5 * 1000, (ts, n)
+
+
+def test_zero_formants_are_refused_by_both_cores():
+    """#44: Core(0) ran in Python and raised in C."""
+    for make in (core.Core, native.NativeCore):
+        with pytest.raises(ValueError):
+            make(0)
+
+
 def test_tables_header_is_current():
     gen = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "csrc", "gen_tables.py")

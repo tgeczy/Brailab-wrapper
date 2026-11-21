@@ -100,11 +100,15 @@ jobs:
         run: |
           python - <<'PY'
           import sys
+          # find_spec: Python 3.12 and later never call find_module, so a guard
+          # written with it blocked nothing
           class Blocked:
-              def find_module(self, name, path=None):
+              def find_spec(self, name, path=None, target=None):
                   if name == "scipy" or name.startswith("scipy."):
                       raise ImportError("scipy must not be required by pcf8200")
+                  return None
           sys.meta_path.insert(0, Blocked())
+          sys.modules.pop("scipy", None)
           from pcf8200 import PCF8200, Voice, protocol, tables
           chip = PCF8200(voice="male")
           chip.pitch_hz(110)

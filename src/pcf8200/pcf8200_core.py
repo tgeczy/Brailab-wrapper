@@ -236,6 +236,8 @@ class Core:
     def __init__(self, nf, source_tilt=TILT_HZ, noise_gain=NOISE_GAIN, seed=SEED,
                  lowpass=False, highpass=HIGHPASS_HZ, gain=1.0, knee=0.0,
                  noise_lowpass=NOISE_LOWPASS_HZ):
+        if int(nf) < 1:                      # as the C core refuses it (#44)
+            raise ValueError('nf must be at least 1 (a chip has formants)')
         self.nf = nf
         self.noise_gain = noise_gain
         self.noise = Noise(seed)
@@ -339,6 +341,9 @@ class Core:
             return np.zeros(0)
         nf = self.nf
         p = np.abs(np.asarray(pitch, dtype=np.float64))    # a negative pitch sounds as the positive one
+        # NaN or infinite: silence for that sample, as in C.  The phase is a running sum,
+        # and one NaN in it was every sample after it, for good (#43).
+        p = np.where(np.isfinite(p), p, 0.0)
         vsrc = self._voiced(p)
         noise = self._noise(n)
         if noise_amp is None:

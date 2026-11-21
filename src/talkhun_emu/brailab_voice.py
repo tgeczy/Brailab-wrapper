@@ -15,6 +15,7 @@ RATE = 10000
 _short_p = ctypes.POINTER(ctypes.c_short)
 
 # BRAILAB_VOICE_UNKNOWN, for each character CWI-2 hasn't got
+BRAILAB_VOICE_UNKNOWN = 0x1A
 codecs.register_error("brailab_voice", lambda e: (b"\x1a" * (e.end - e.start), e.end))
 
 # TALKHUN0 (1991) reads CWI-2, the Hungarian DOS page from before CP852: CP437 with o and u double acute in the
@@ -26,6 +27,16 @@ CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
 def encode(text):
     """Text as the engine reads it."""
     return text.translate(CWI2_FOLD).encode("cp437", "brailab_voice")
+
+
+def engine_bytes(text):
+    """Text as TALKHUN0 itself is given it, for the paths that capture from it directly
+    (talkhun.py, talkhun_native.py): what brailab_voice.c hands it, an unknown character
+    as '?'.  One place, so those paths cannot drift from the voice (#37); whether an
+    unknown character should be '?' at all is #8's question."""
+    if isinstance(text, str):
+        text = encode(text)
+    return text.replace(bytes([BRAILAB_VOICE_UNKNOWN]), b"?")
 
 
 def _lib_path():

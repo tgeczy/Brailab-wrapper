@@ -40,6 +40,11 @@ furcsa and tempo is skipped entirely.
 import os
 import struct
 
+try:
+    from . import brailab_voice
+except ImportError:
+    import brailab_voice
+
 from unicorn import (
     Uc, UcError, UC_ARCH_X86, UC_MODE_16, UC_PROT_ALL,
     UC_HOOK_INSN, UC_HOOK_INTR, UC_HOOK_BLOCK, UC_HOOK_CODE,
@@ -52,9 +57,8 @@ from unicorn.x86_const import (
     UC_X86_REG_SS, UC_X86_REG_IP, UC_X86_REG_EFLAGS,
 )
 
-#: TALKHUN0 reads CWI-2: CP437 with o and u double acute in the circumflex
-#: slots, capitals folded (see brailab_voice.CWI2_FOLD).
-_CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
+#: Text goes to TALKHUN0 as brailab_voice.engine_bytes() makes it: the voice's own CWI-2, an
+#: unknown character as the '?' brailab_voice.c gives it.  This file had its own copy (#37).
 
 MEM_SIZE = 0x110000
 #: The installer's already-resident check walks every segment below CS, so a
@@ -270,7 +274,7 @@ class Talkhun:
     def feed(self, text):
         """Push characters through the ESC parser without forcing a flush."""
         if isinstance(text, str):
-            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
+            text = brailab_voice.engine_bytes(text)
         for ch in text:
             self._call_int14(1, ch)
 
@@ -300,8 +304,10 @@ class Talkhun:
         """
         if not text:
             return []
-        if text[-1] not in DELIMITERS:
-            text = text + '.'
+        if isinstance(text, str):
+            text = brailab_voice.engine_bytes(text)
+        if chr(text[-1]) not in DELIMITERS:          # bytes, as talkhun_native takes them too
+            text = text + b'.'
         mark = len(self.events)
         self.feed(text)
         groups = self.transactions(mark)

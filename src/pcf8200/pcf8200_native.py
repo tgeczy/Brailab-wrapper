@@ -125,6 +125,8 @@ class NativeTracker:
     def frame(self, data):
         """(voice_amp, pitch, noise_amp, fc, bw) for one 5-byte frame."""
         data = bytes(data)
+        if len(data) != 5:                  # the C reads five bytes, whatever it is given (#42)
+            raise ValueError("a PCF8200 frame is 5 bytes")
         n = self.lib.pcf8200_tracker_length(self._state, data)
         voice_amp = np.empty(n)
         noise_amp = np.empty(n)
@@ -147,6 +149,8 @@ class NativeCore:
         self.nf = nf
         self._state = ctypes.create_string_buffer(self.lib.pcf8200_core_size())
         self._params = params(**kw)
+        if int(nf) < 1:
+            raise ValueError("nf must be at least 1 (a chip has formants)")
         if self.lib.pcf8200_init(self._state, nf, ctypes.byref(self._params)):
             raise ValueError("nf must be 1 to %d" % MAX_FORMANTS)
 

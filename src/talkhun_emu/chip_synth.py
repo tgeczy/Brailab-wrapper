@@ -307,8 +307,12 @@ def _render_blocks(amp, p, noise, fc, bw, nf, N, noise_gain, source_tilt, seed,
 
 
 def _blsaw_only(source):
-    if source not in ('blsaw', 'saw'):
-        raise ValueError("source %r: the A/B sources are in render_chip" % (source,))
+    """The fast and streaming renders play the band-limited sawtooth only.  'saw' was
+    taken and played as 'blsaw' (#45); the plain sawtooth, like the other A/B
+    sources, is render_chip's."""
+    if source != 'blsaw':
+        raise ValueError("source %r: these renders play 'blsaw' only; the plain 'saw' and "
+                         "the other A/B sources are in render_chip" % (source,))
 
 
 def render_chip_fast(seq, out_rate=CHIP_RATE, source='blsaw', a0=False,

@@ -118,7 +118,9 @@ void pcf8200_run(pcf8200_core *c, const double *voice_amp, const double *noise_a
 
     for (s = 0; s < n; s++) {
         /* no floor and no ceiling; a negative pitch sounds as the positive one */
-        double p = fabs(pitch[s]), src, noise, wrapped, v;
+        /* a pitch that is not a number (NaN, infinite) is silence for that sample: the phase
+         * is a running sum, and one NaN in it was every sample after it (#43) */
+        double p = isfinite(pitch[s]) ? fabs(pitch[s]) : 0.0, src, noise, wrapped, v;
 
         /* both sources run on every sample, whichever one is heard */
         c->phase += p / rate;
@@ -187,13 +189,17 @@ void pcf8200_tracker_init(pcf8200_tracker *t, const pcf8200_params *p, int femal
     t->nf = female ? 4 : 5;
     t->honour_fs = honour_fs;
     t->flat_pitch = flat_pitch;
-    t->time_scale = time_scale;
+    /* a frame's length is converted to int: a time_scale that is not a number, or one that
+     * would overflow it, was undefined behaviour (#43).  Kept within 1/1000 to 1000. */
+    t->time_scale = !isfinite(time_scale) || time_scale <= 0.0 ? 1.0
+                  : time_scale < 1e-3 ? 1e-3 : time_scale > 1e3 ? 1e3 : time_scale;
     pcf8200_tracker_pitch(t, pitch_byte);
 }
 
 void pcf8200_tracker_pitch(pcf8200_tracker *t, int pitch_byte)
 {
-    t->anchor = pitch_byte * PCF8200_PITCH_HZ_PER_UNIT;
+    /* the chip's pitch register is one byte, as the Python stream has it (#41) */
+    t->anchor = (pitch_byte & 0xFF) * PCF8200_PITCH_HZ_PER_UNIT;
     t->pitch = t->anchor;
 }
 

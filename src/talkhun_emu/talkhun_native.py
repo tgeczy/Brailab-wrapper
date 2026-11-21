@@ -8,10 +8,14 @@ import os
 import platform
 import struct
 
+try:
+    from . import brailab_voice
+except ImportError:
+    import brailab_voice
+
 DELIMITERS = '.,;:?!'
-# TALKHUN0 reads CWI-2: CP437 with o and u double acute in the circumflex slots, capitals folded
-# (see brailab_voice.CWI2_FOLD).
-_CWI2_FOLD = str.maketrans("őŐűŰÁÍÓÚ", "ôôûûáíóú")
+# Text goes to TALKHUN0 as brailab_voice.engine_bytes() makes it: the voice's own CWI-2, an
+# unknown character as the '?' brailab_voice.c gives it.  This file had its own copy (#37).
 _KINDS = ('frame', 'ctrl', 'pitch')
 _LENGTHS = (5, 2, 1)
 
@@ -68,7 +72,7 @@ class Talkhun:
 
     def feed(self, text):
         if isinstance(text, str):
-            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
+            text = brailab_voice.engine_bytes(text)
         if self.lib.talkhun_feed(self._t, text, len(text)):
             raise RuntimeError("feed did not return")
 
@@ -77,7 +81,7 @@ class Talkhun:
         if not text:
             return []
         if isinstance(text, str):
-            text = text.translate(_CWI2_FOLD).encode('cp437', 'replace')
+            text = brailab_voice.engine_bytes(text)
         items = ctypes.POINTER(_Item)()
         n = self.lib.talkhun_capture(self._t, text, len(text), ctypes.byref(items))
         if n < 0:

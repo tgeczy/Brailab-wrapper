@@ -13,6 +13,8 @@ stream to audio.
     chip.stop()
     chip.to_wav("a.wav")
 """
+import math
+
 import numpy as np
 from . import protocol as P
 from . import tables as T
@@ -51,11 +53,18 @@ class PCF8200:
 
     # ---- the chip's commands ----
     def pitch(self, byte):
-        """Start-pitch command (raw byte); Hz = byte * PITCH_HZ_PER_UNIT."""
-        self._pitch_byte = int(byte) & 0xFF
+        """Start-pitch command (raw byte, 0 to 255); Hz = byte * PITCH_HZ_PER_UNIT."""
+        byte = int(byte)
+        if not 0 <= byte <= 255:            # it was masked: 300 played as 44 (#41)
+            raise ValueError("the pitch register is one byte: 0 to 255, not %d" % byte)
+        self._pitch_byte = byte
         self._seq.append(('pitch', self._pitch_byte)); return self
 
     def pitch_hz(self, hz):
+        """Start pitch in hertz, 0 to about 650 (byte 255); outside that it raises."""
+        if not math.isfinite(hz) or not 0 <= hz <= 255.5 * T.PITCH_HZ_PER_UNIT:
+            raise ValueError("%r Hz is outside the chip's start pitch, 0 to %.0f Hz"
+                             % (hz, 255 * T.PITCH_HZ_PER_UNIT))
         return self.pitch(int(round(hz / T.PITCH_HZ_PER_UNIT)))
 
     def frame(self, f):
@@ -82,6 +91,10 @@ class PCF8200:
         return self.control(stop=True)
 
     def reset(self):
+        """Forget the stream; the chip keeps its state, as it would.  Speed, start pitch and
+        M/F are where the last commands left them, and the next stream starts from all
+        three: M/F was left behind, so a chip set to female decoded as male (#36)."""
+        self._female0 = self.female
         self._seq = []; return self
 
     # ---- render the accumulated command stream ----

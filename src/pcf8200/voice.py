@@ -47,15 +47,18 @@ class Voice:
         """A voiced vowel with the given formant frequencies (Hz)."""
         return self._seg(formants, dur, amp, True, bw=bw, pitch=pitch)
 
-    def fricative(self, dur=0.12, amp=0.45, formants=(4200, 5200, 6000), bw=(700, 700, 700)):
-        """An unvoiced (noise-excited) consonant -- hiss shaped by broad formants."""
+    def fricative(self, dur=0.12, amp=0.45, formants=(4000, 4200, 4800), bw=(700, 700, 700)):
+        """An unvoiced (noise-excited) consonant -- hiss shaped by broad formants.  Keep
+        them below 5 kHz: the chip runs at 10 kHz, and higher ones fold back (the default
+        was (4200, 5200, 6000), which sounded as these)."""
         return self._seg(formants, dur, amp, False, bw=bw)
 
     def silence(self, dur=0.08):
         return self._seg([300, 900, 2400], dur, 0.0, True)
 
     def hold(self, formants, dur, amp=0.85, pitch=None, bw=None):
-        """Alias for vowel() -- a steady held sound."""
+        """Alias for vowel(): it glides from the previous segment's targets across its
+        whole length, as every segment does, so it is not held steady (#47)."""
         return self.vowel(formants, dur, amp, pitch, bw)
 
     # ---- assemble per-sample tracks ----
